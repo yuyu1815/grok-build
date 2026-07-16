@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 
+use serde::de::Error as _;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -23,6 +24,9 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 const RESULT_LIMIT: usize = 100;
 const MAX_LINE_LENGTH: usize = 2000;
+/// Claude Code's embedded-rg capture limit.  This is deliberately expressed
+/// in UTF-16 code units, not bytes; JavaScript `String#length` uses this unit.
+const EMBEDDED_CAPTURE_UTF16_CAP: usize = 20_000_000;
 
 // ───────────────────────────────────────────────────────────────────────────
 // Description
@@ -59,6 +63,57 @@ pub struct GrepInput {
     pub include: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SemanticNumber(f64);
+
+impl SemanticNumber {
+    fn ripgrep_arg(self) -> String {
+        self.0.to_string()
+    }
+
+    fn javascript_integer(self) -> isize {
+        self.0.trunc() as isize
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SemanticNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let number = match value {
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::String(text)
+                if text
+                    .strip_prefix('-')
+                    .unwrap_or(&text)
+                    .split_once('.')
+                    .map_or_else(
+                        || !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || c == '-'),
+                        |(whole, fraction)| {
+                            !whole.is_empty()
+                                && !fraction.is_empty()
+                                && whole
+                                    .strip_prefix('-')
+                                    .unwrap_or(whole)
+                                    .chars()
+                                    .all(|c| c.is_ascii_digit())
+                                && fraction.chars().all(|c| c.is_ascii_digit())
+                        },
+                    ) =>
+            {
+                text.parse::<f64>().ok()
+            }
+            _ => None,
+        };
+        number
+            .filter(|number| number.is_finite())
+            .map(Self)
+            .ok_or_else(|| D::Error::custom("expected a finite number or decimal numeric string"))
+    }
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceGrepInput {
@@ -67,21 +122,94 @@ struct SourceGrepInput {
     glob: Option<String>,
     output_mode: Option<String>,
     #[serde(rename = "-B")]
-    before: Option<usize>,
+    before: Option<SemanticNumber>,
     #[serde(rename = "-A")]
-    after: Option<usize>,
+    after: Option<SemanticNumber>,
     #[serde(rename = "-C")]
-    context_short: Option<usize>,
-    context: Option<usize>,
+    context_short: Option<SemanticNumber>,
+    context: Option<SemanticNumber>,
     #[serde(rename = "-n")]
     line_numbers: Option<bool>,
     #[serde(rename = "-i")]
     case_insensitive: Option<bool>,
     #[serde(rename = "type")]
     file_type: Option<String>,
-    head_limit: Option<usize>,
-    offset: Option<usize>,
+    head_limit: Option<SemanticNumber>,
+    offset: Option<SemanticNumber>,
     multiline: Option<bool>,
+}
+
+fn timeout_override_secs(value: Option<&str>) -> Option<u64> {
+    // JavaScript parseInt(value, 10): consume an optional sign and decimal
+    // prefix only.  A positive result is the only effective override.
+    let text = value.unwrap_or_default().trim_start();
+    let digits = text
+        .strip_prefix('+')
+        .or_else(|| text.strip_prefix('-'))
+        .unwrap_or(text)
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    let parsed = digits.parse::<u64>().ok()?;
+    if text.starts_with('-') || parsed == 0 {
+        None
+    } else {
+        Some(parsed)
+    }
+}
+
+fn source_default_timeout_secs() -> u64 {
+    #[cfg(target_os = "linux")]
+    if std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|release| release.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+    {
+        return 60;
+    }
+    20
+}
+
+fn truncate_utf16(text: String, cap: usize) -> String {
+    if text.encode_utf16().count() <= cap {
+        return text;
+    }
+    let mut units = text.encode_utf16().take(cap).collect::<Vec<_>>();
+    // JS slice may leave an unpaired surrogate. Rust strings cannot represent
+    // one, so retain the largest valid UTF-16 prefix instead.
+    if matches!(units.last(), Some(unit) if (0xD800..=0xDBFF).contains(unit)) {
+        units.pop();
+    }
+    String::from_utf16_lossy(&units)
+}
+
+fn source_slice<T: Clone>(
+    items: &[T],
+    offset: SemanticNumber,
+    limit: Option<SemanticNumber>,
+) -> Vec<T> {
+    let len = items.len() as isize;
+    let normalize = |index: isize| {
+        if index < 0 {
+            (len + index).max(0)
+        } else {
+            index.min(len)
+        }
+    };
+    let raw_start = offset.javascript_integer();
+    let start = normalize(raw_start) as usize;
+    let end = match limit {
+        Some(limit) if limit.javascript_integer() == 0 => len as usize,
+        Some(limit) => normalize(raw_start.saturating_add(limit.javascript_integer())) as usize,
+        None => normalize(raw_start.saturating_add(250)) as usize,
+    };
+    if end <= start {
+        Vec::new()
+    } else {
+        items[start..end].to_vec()
+    }
 }
 
 async fn run_source_grep(
@@ -114,13 +242,13 @@ async fn run_source_grep(
             }
             let c = input.context.or(input.context_short);
             if let Some(n) = c {
-                args.extend(["-C".into(), n.to_string()]);
+                args.extend(["-C".into(), n.ripgrep_arg()]);
             } else {
                 if let Some(n) = input.before {
-                    args.extend(["-B".into(), n.to_string()]);
+                    args.extend(["-B".into(), n.ripgrep_arg()]);
                 }
                 if let Some(n) = input.after {
-                    args.extend(["-A".into(), n.to_string()]);
+                    args.extend(["-A".into(), n.ripgrep_arg()]);
                 }
             }
         }
@@ -155,7 +283,13 @@ async fn run_source_grep(
         }
     }
     args.push(path.clone());
-    let timeout_secs = if cfg!(target_os = "windows") { 60 } else { 20 };
+    let displayed_timeout_secs = source_default_timeout_secs();
+    let timeout_secs = timeout_override_secs(
+        std::env::var("CLAUDE_CODE_GLOB_TIMEOUT_SECONDS")
+            .ok()
+            .as_deref(),
+    )
+    .unwrap_or(displayed_timeout_secs);
     let cancellation = ctx.get::<xai_tool_runtime::Cancellation>();
     let mut attempt = 0;
     let (stdout, stderr, code) = loop {
@@ -226,6 +360,20 @@ async fn run_source_grep(
                 })?,
             None => Vec::new(),
         };
+        // We do not have a source-proven embedded/system command selector in
+        // this Rust path.  Preserve the source embedded capture boundary for
+        // the adapter's observable strings without claiming that selection or
+        // Darwin preparation is implemented.
+        let out = truncate_utf16(
+            String::from_utf8_lossy(&out).into_owned(),
+            EMBEDDED_CAPTURE_UTF16_CAP,
+        )
+        .into_bytes();
+        let err = truncate_utf16(
+            String::from_utf8_lossy(&err).into_owned(),
+            EMBEDDED_CAPTURE_UTF16_CAP,
+        )
+        .into_bytes();
         if cancelled {
             return Err(xai_tool_runtime::ToolError::cancelled(
                 xai_tool_protocol::ToolId::new("grep").expect("valid tool id"),
@@ -242,7 +390,7 @@ async fn run_source_grep(
                 return Err(xai_tool_runtime::ToolError::timeout(
                     xai_tool_protocol::ToolId::new("grep").expect("valid tool id"),
                     format!(
-                        "Ripgrep search timed out after {timeout_secs} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."
+                        "Ripgrep search timed out after {displayed_timeout_secs} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."
                     ),
                 ));
             }
@@ -271,17 +419,10 @@ async fn run_source_grep(
         ));
     }
     let text = String::from_utf8_lossy(&stdout);
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let offset = input.offset.unwrap_or(0);
-    let limit = input.head_limit.unwrap_or(250);
-    if offset >= lines.len() {
-        lines.clear();
-    } else {
-        lines = lines.into_iter().skip(offset).collect();
-    }
-    if limit != 0 {
-        lines.truncate(limit);
-    }
+    let all_lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let offset = input.offset.unwrap_or(SemanticNumber(0.0));
+    let limit = input.head_limit;
+    let lines = source_slice(&all_lines, offset, limit);
     let content = lines.join("\n");
     let rendered = match mode {
         "content" => {
@@ -290,15 +431,16 @@ async fn run_source_grep(
             } else {
                 content
             };
-            let applied_limit = limit != 0
-                && offset + lines.len() < String::from_utf8_lossy(&stdout).lines().count();
-            if applied_limit || offset > 0 {
+            let effective_limit = limit.unwrap_or(SemanticNumber(250.0));
+            let applied_limit = effective_limit.javascript_integer() != 0
+                && (all_lines.len() as f64 - offset.0) > effective_limit.0;
+            if applied_limit || offset.0 > 0.0 {
                 let mut parts = Vec::new();
                 if applied_limit {
-                    parts.push(format!("limit: {limit}"));
+                    parts.push(format!("limit: {}", effective_limit.ripgrep_arg()));
                 }
-                if offset > 0 {
-                    parts.push(format!("offset: {offset}"));
+                if offset.0 > 0.0 {
+                    parts.push(format!("offset: {}", offset.ripgrep_arg()));
                 }
                 result.push_str(&format!(
                     "\n\n[Showing results with pagination = {}]",
@@ -719,6 +861,49 @@ mod tests {
         assert_eq!(parsed.pattern, "hello");
         assert!(parsed.path.is_none());
         assert!(parsed.include.is_none());
+    }
+
+    #[test]
+    fn source_numeric_fields_accept_finite_numbers_and_decimal_strings() {
+        let input: SourceGrepInput = serde_json::from_value(serde_json::json!({
+            "pattern": "needle",
+            "-B": "-5",
+            "-A": 3.14,
+            "-C": "0",
+            "context": -2.5,
+            "head_limit": "1.25",
+            "offset": -1,
+        }))
+        .unwrap();
+        assert_eq!(input.before.unwrap().0, -5.0);
+        assert_eq!(input.after.unwrap().0, 3.14);
+        assert_eq!(input.context_short.unwrap().0, 0.0);
+        assert_eq!(input.context.unwrap().0, -2.5);
+        assert_eq!(input.head_limit.unwrap().0, 1.25);
+        assert_eq!(input.offset.unwrap().0, -1.0);
+
+        for rejected in ["\"1e3\"", "\"Infinity\"", "\"\"", "true"] {
+            let value = format!(r#"{{"pattern":"needle","offset":{rejected}}}"#);
+            assert!(
+                serde_json::from_str::<SourceGrepInput>(&value).is_err(),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_override_uses_parse_int_prefix_rules() {
+        assert_eq!(timeout_override_secs(Some("5.9")), Some(5));
+        assert_eq!(timeout_override_secs(Some("+12seconds")), Some(12));
+        assert_eq!(timeout_override_secs(Some("-5")), None);
+        assert_eq!(timeout_override_secs(Some("0")), None);
+        assert_eq!(timeout_override_secs(Some("nope")), None);
+    }
+
+    #[test]
+    fn embedded_capture_cap_counts_utf16_units() {
+        assert_eq!(truncate_utf16("a😀b".to_owned(), 3), "a😀");
+        assert_eq!(truncate_utf16("a😀b".to_owned(), 4), "a😀b");
     }
 
     #[tokio::test]
