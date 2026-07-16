@@ -204,7 +204,7 @@ mod tests {
 
     use super::*;
     use crate::computer::local::LocalFs;
-    use crate::notification::types::ToolNotificationHandle;
+    use crate::notification::types::{ToolNotification, ToolNotificationHandle};
     use crate::types::resources::Resources;
     use tempfile::TempDir;
 
@@ -459,9 +459,38 @@ mod tests {
 
     // ── Notification fields ───────────────────────────────────
 
-    #[test]
-    fn notification_fields() {
-        // Notification verification requires capturing handle.
-        // Covered at integration layer.
+    #[tokio::test]
+    async fn write_emits_file_written_notification_for_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("notified.txt");
+        let (notification_handle, mut receiver) = ToolNotificationHandle::channel();
+        let mut resources = Resources::new();
+        resources.insert(Cwd(tmp.path().to_path_buf()));
+        resources.insert(FileSystem(Arc::new(LocalFs)));
+        resources.insert(NotificationHandle(notification_handle));
+
+        let tool = WriteTool;
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(resources.into_shared()),
+            WriteInput {
+                file_path: file_path.to_string_lossy().into_owned(),
+                content: "notification content\n".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(result, SearchReplaceOutput::EditsApplied(_)));
+        match receiver.recv().await.expect("Write must emit FileWritten") {
+            ToolNotification::FileWritten(written) => {
+                assert_eq!(written.absolute_path, file_path);
+                assert_eq!(written.content, "notification content\n");
+                assert_eq!(written.previous_content, None);
+                assert!(written.is_new_file);
+                assert!(!written.tool_call_id.is_empty());
+            }
+            other => panic!("expected FileWritten notification, got {other:?}"),
+        }
     }
 }
