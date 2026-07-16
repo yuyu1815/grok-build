@@ -25,6 +25,15 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 const RESULT_LIMIT: usize = 100;
 const MAX_LINE_LENGTH: usize = 2000;
+/// The only model-facing result permitted for the uppercase, source-facing
+/// `Grep` route until its production parity requirements are implemented.
+///
+/// This route is evaluated before any OpenCode success can be projected.  The
+/// source requirements have a fixed unsupported order (configured rg,
+/// Darwin preparation, telemetry, modes/buffers, then projection), but every
+/// currently unmet row intentionally reports this same explicit failure.
+const SOURCE_GREP_UNSUPPORTED_MESSAGE: &str =
+    "unsupported: Claude Code parity for Grep is not implemented";
 /// Claude Code's embedded-rg capture limit.  This is deliberately expressed
 /// in UTF-16 code units, not bytes; JavaScript `String#length` uses this unit.
 #[cfg(test)]
@@ -603,7 +612,7 @@ impl xai_tool_runtime::Tool for GrepTool {
             // below remains independent and unchanged.
             return Err(xai_tool_runtime::ToolError::custom(
                 "unsupported_source_grep",
-                "unsupported: Claude Code parity for Grep is not implemented",
+                SOURCE_GREP_UNSUPPORTED_MESSAGE,
             ));
         }
 
@@ -941,10 +950,8 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_err(),
-            "source-facing Grep must not report success"
-        );
+        let error = result.expect_err("source-facing Grep must not report success");
+        assert_eq!(error.to_string(), SOURCE_GREP_UNSUPPORTED_MESSAGE);
     }
 
     // ── basic_match ──────────────────────────────────────────────────
