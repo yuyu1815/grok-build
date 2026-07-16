@@ -132,10 +132,13 @@ fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLit
     let Ok(value) = value.parse::<f64>() else {
         return SourceIntegerLiteral::Invalid;
     };
-    // A decimal source literal can become Infinity through `Number()`. It is
-    // source-valid at this adapter boundary but cannot cross the fixed-width
-    // Rust transport, so preserve the explicit unsupported classification.
-    if !value.is_finite() || value > f64::from(u32::MAX) {
+    // `semanticNumber` rejects Number()-infinite values during source schema
+    // validation. Only finite source-valid integers beyond the target width
+    // reach the explicit unsupported boundary.
+    if !value.is_finite() {
+        return SourceIntegerLiteral::Invalid;
+    }
+    if value > f64::from(u32::MAX) {
         return SourceIntegerLiteral::OutOfTargetRange;
     }
     if value < 0.0 || value.fract() != 0.0 {
@@ -243,8 +246,19 @@ fn source_read_input_for_registry(
 ) -> Result<serde_json::Value, SourceReadInputError> {
     let source_input: SourceReadRequiredInput = serde_json::from_value(raw_input.clone())
         .map_err(|err| xai_tool_runtime::ToolError::invalid_arguments(err.to_string()))?;
-    // Claude validates `pages` before permission or execution.  That source
-    // result must also win over this Rust-only unsupported transport boundary.
+    // `limit` positivity is part of the source schema, so it must win over
+    // every `pages` validation result.
+    if source_input.limit.as_ref().is_some_and(
+        |limit| matches!(limit, SourceReadNumber::U32(limit) if limit.as_u64() == Some(0)),
+    ) {
+        return Err(SourceReadInputError::Invalid(
+            xai_tool_runtime::ToolError::invalid_arguments(
+                "limit must be greater than 0".to_string(),
+            ),
+        ));
+    }
+    // Claude validates pages after schema validation but before permission or
+    // this Rust-only target-width boundary.
     if let Some(pages) = source_input.pages.as_deref() {
         validate_source_read_pages(pages)?;
     }
@@ -256,15 +270,6 @@ fn source_read_input_for_registry(
         return Err(SourceReadInputError::Unsupported(
             xai_tool_runtime::ToolError::not_implemented(
                 "unsupported: source-valid Read numeric value exceeds the target u32 transport",
-            ),
-        ));
-    }
-    if source_input.limit.as_ref().is_some_and(
-        |limit| matches!(limit, SourceReadNumber::U32(limit) if limit.as_u64() == Some(0)),
-    ) {
-        return Err(SourceReadInputError::Invalid(
-            xai_tool_runtime::ToolError::invalid_arguments(
-                "limit must be greater than 0".to_string(),
             ),
         ));
     }
@@ -3161,13 +3166,38 @@ mod permission_access_classification_tests {
     }
 
     #[test]
-    fn source_read_huge_finite_decimal_is_explicit_unsupported() {
+    fn source_read_number_infinity_is_source_schema_validation_failure() {
         let error = source_read_input_for_registry(&serde_json::json!({
             "file_path": "src/file.txt",
             "offset": "9".repeat(400),
         }))
-        .expect_err("a Number()-infinite source decimal must stop at unsupported");
-        assert!(matches!(error, SourceReadInputError::Unsupported(_)));
+        .expect_err("a Number()-infinite source decimal must fail source schema validation");
+        assert!(matches!(error, SourceReadInputError::Invalid(_)));
+    }
+
+    #[test]
+    fn source_read_schema_validation_precedes_pages_validation() {
+        for input in [
+            serde_json::json!({
+                "file_path": "src/file.pdf",
+                "limit": 0,
+                "pages": "invalid",
+            }),
+            serde_json::json!({
+                "file_path": "src/file.pdf",
+                "limit": "0",
+                "pages": "1-21",
+            }),
+            serde_json::json!({
+                "file_path": "src/file.pdf",
+                "offset": "9".repeat(400),
+                "pages": "1-21",
+            }),
+        ] {
+            let error = source_read_input_for_registry(&input)
+                .expect_err("source schema validation must precede pages validation");
+            assert!(matches!(error, SourceReadInputError::Invalid(_)));
+        }
     }
 
     #[test]
