@@ -57,25 +57,104 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
-    let number = match value {
-        serde_json::Value::Number(number) => number.as_f64(),
+    let (literal, string_input, original_number) = match value {
+        serde_json::Value::Number(number) => (number.to_string(), false, Some(number)),
         serde_json::Value::String(string) if is_decimal_number_literal(&string) => {
-            string.parse::<f64>().ok()
+            (string, true, None)
         }
-        _ => None,
+        _ => return Err(serde::de::Error::custom("expected a finite decimal number")),
     };
-    let Some(number) = number.filter(|number| number.is_finite()) else {
-        return Err(serde::de::Error::custom("expected a finite decimal number"));
-    };
-    if number < 0.0 || number.fract() != 0.0 {
-        return Err(serde::de::Error::custom("expected a non-negative integer"));
+
+    match source_integer_literal(&literal, !string_input) {
+        SourceIntegerLiteral::U32(value) => Ok(Some(serde_json::Number::from(value))),
+        // The source schema accepts integral values beyond `u32`; their target
+        // transport is intentionally unresolved. Preserve a numeric JSON value
+        // here rather than classifying it as a source validation failure.
+        SourceIntegerLiteral::OutOfTargetRange => original_number
+            .or_else(|| literal.parse::<serde_json::Number>().ok())
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("expected a finite decimal number")),
+        SourceIntegerLiteral::Invalid => {
+            Err(serde::de::Error::custom("expected a non-negative integer"))
+        }
     }
-    // Preserve source-valid values even where the registered target's `u32`
-    // transport cannot carry them; that unresolved target outcome is not a
-    // source-schema rejection.
-    let number = serde_json::Number::from_f64(number)
-        .ok_or_else(|| serde::de::Error::custom("expected a finite decimal number"))?;
-    Ok(Some(number))
+}
+
+enum SourceIntegerLiteral {
+    U32(u32),
+    OutOfTargetRange,
+    Invalid,
+}
+
+/// Parse a source semantic-number literal without passing through `f64`.
+///
+/// Strings intentionally use the narrower source decimal grammar, while JSON
+/// numbers additionally retain JSON exponent syntax. Values representable by
+/// the registered `u32` target are emitted as integer JSON, so `"3.0"`
+/// reaches the target as `3`, not as a quoted string or float JSON token.
+fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLiteral {
+    let (negative, unsigned) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value),
+    };
+    let (mantissa, exponent) = if allow_exponent {
+        match unsigned.find(['e', 'E']) {
+            Some(index) => {
+                let (mantissa, exponent) = unsigned.split_at(index);
+                let exponent = exponent[1..].parse::<i32>();
+                let Ok(exponent) = exponent else {
+                    return SourceIntegerLiteral::Invalid;
+                };
+                (mantissa, exponent)
+            }
+            None => (unsigned, 0),
+        }
+    } else {
+        (unsigned, 0)
+    };
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, fraction),
+        None => (mantissa, ""),
+    };
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (!fraction.is_empty() && !fraction.bytes().all(|byte| byte.is_ascii_digit()))
+        || (mantissa.contains('.') && fraction.is_empty())
+    {
+        return SourceIntegerLiteral::Invalid;
+    }
+
+    let digits = format!("{whole}{fraction}");
+    let significant = digits.trim_start_matches('0');
+    if significant.is_empty() {
+        return SourceIntegerLiteral::U32(0);
+    }
+    if negative {
+        return SourceIntegerLiteral::Invalid;
+    }
+
+    let shift = i64::from(exponent) - fraction.len() as i64;
+    let integer = if shift >= 0 {
+        let length = significant.len().saturating_add(shift as usize);
+        if length > 10 {
+            return SourceIntegerLiteral::OutOfTargetRange;
+        }
+        format!("{significant}{}", "0".repeat(shift as usize))
+    } else {
+        let places = (-shift) as usize;
+        if places > significant.len()
+            || !significant[significant.len().saturating_sub(places)..]
+                .bytes()
+                .all(|byte| byte == b'0')
+        {
+            return SourceIntegerLiteral::Invalid;
+        }
+        significant[..significant.len() - places].to_string()
+    };
+    match integer.parse::<u32>() {
+        Ok(value) => SourceIntegerLiteral::U32(value),
+        Err(_) => SourceIntegerLiteral::OutOfTargetRange,
+    }
 }
 
 fn is_decimal_number_literal(value: &str) -> bool {
@@ -159,7 +238,10 @@ fn validate_source_read_pages(pages: &str) -> Result<(), xai_tool_runtime::ToolE
             "Invalid pages parameter: \"{pages}\""
         )));
     }
-    if last.is_none() || last.is_some_and(|last| last - first + 1.0 > SOURCE_READ_MAX_PAGES as f64)
+    if last.is_none()
+        || last.is_some_and(|last| {
+            last.is_infinite() || last - first + 1.0 > SOURCE_READ_MAX_PAGES as f64
+        })
     {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
             "Page range \"{pages}\" exceeds maximum of {SOURCE_READ_MAX_PAGES} pages per request"
@@ -179,7 +261,7 @@ fn source_read_input_for_registry(
     if source_input
         .limit
         .as_ref()
-        .is_some_and(|limit| limit.as_f64() == Some(0.0))
+        .is_some_and(|limit| limit.as_u64() == Some(0))
     {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(
             "limit must be greater than 0".to_string(),
@@ -3005,27 +3087,17 @@ mod permission_access_classification_tests {
     }
 
     #[test]
-    fn source_read_keeps_source_valid_values_beyond_u32_for_target_transport() {
-        let mapped = source_read_input_for_registry(&serde_json::json!({
-            "file_path": "src/file.txt",
-            "offset": 4_294_967_296_u64,
-            "limit": "4294967296"
-        }))
-        .expect("source semanticNumber has no u32 bound");
-        assert_eq!(mapped["offset"], 4_294_967_296_u64);
-        assert_eq!(mapped["limit"], 4_294_967_296_u64);
-    }
-
-    #[test]
-    fn source_read_accepts_arbitrary_digit_single_pages_without_new_width_rule() {
+    fn source_read_rejects_infinite_single_page_range_as_oversize_before_dispatch() {
         let pages = "9".repeat(400);
-        assert!(validate_source_read_pages(&pages).is_ok());
+        let error = validate_source_read_pages(&pages)
+            .expect_err("source Infinity page range must use the oversize rejection class");
+        assert!(error.to_string().contains("exceeds maximum"));
         assert!(
             source_read_input_for_registry(&serde_json::json!({
                 "file_path": "src/file.pdf",
                 "pages": pages,
             }))
-            .is_ok()
+            .is_err()
         );
     }
 }

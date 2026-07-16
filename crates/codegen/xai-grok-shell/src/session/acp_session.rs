@@ -1618,6 +1618,7 @@ mod tool_meta_stamp_tests {
     //! ToolCallUpdate (a dropped `stamp_tool_meta` call would regress silently).
     use super::replay_buffer_send_update_tests::make_replay_send_update_fixture;
     use super::support::test_agent_with_tools;
+    use super::tool_dispatch::dispatch_tool;
     use super::*;
     use tokio::sync::mpsc;
     use xai_grok_tools::registry::types::ToolConfig;
@@ -1735,6 +1736,109 @@ mod tool_meta_stamp_tests {
                 assert_eq!(t["name"], "read_file");
                 assert_eq!(t["kind"], "read");
                 assert_eq!(t["input"]["path"], "/tmp/stamp.txt");
+            })
+            .await;
+    }
+
+    /// The source-facing Read adapter must survive the complete execution
+    /// seam. A mapper-only assertion would miss either a lost registry target
+    /// or a later replacement of the converted numeric payload.
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_read_prepare_permission_and_dispatch_use_converted_registry_payload() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut fixture = make_replay_send_update_fixture().await;
+                fixture.actor.agent = std::cell::RefCell::new(
+                    test_agent_with_tools(vec![ToolConfig::for_tool::<
+                        xai_grok_tools::implementations::opencode::OpenCodeReadTool,
+                    >()])
+                    .await,
+                );
+
+                let (perm_tx, mut perm_rx) = mpsc::unbounded_channel();
+                fixture.actor.permissions = PermissionHandle::Actor {
+                    cmd_tx: perm_tx,
+                    yolo_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    auto_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    side_query_wired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    yolo_pin: None,
+                    deny_read_globs: Arc::new(vec![]),
+                    in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                };
+                let seen_access = Arc::new(tokio::sync::Mutex::new(None));
+                let seen_access_in_task = seen_access.clone();
+                tokio::task::spawn_local(async move {
+                    while let Some(cmd) = perm_rx.recv().await {
+                        if let PermissionCommand::Request {
+                            access, respond_to, ..
+                        } = cmd
+                        {
+                            *seen_access_in_task.lock().await = Some(access);
+                            let _ = respond_to.send(Decision::Allow);
+                        }
+                    }
+                });
+
+                let file = tempfile::NamedTempFile::new().expect("create source Read fixture");
+                std::fs::write(file.path(), "one\ntwo\nthree\nfour\n")
+                    .expect("write source Read fixture");
+                let call = crate::sampling::types::ToolCallResponse {
+                    id: "source-read-seam".to_string(),
+                    kind: "function".to_string(),
+                    function: crate::sampling::types::ToolCallFunction::new(
+                        "Read",
+                        serde_json::json!({
+                            "file_path": file.path(),
+                            "offset": "2",
+                            "limit": "3.0",
+                        })
+                        .to_string(),
+                    ),
+                };
+                let prepared = fixture
+                    .actor
+                    .prepare_tool_call(call, &mut Vec::new())
+                    .await
+                    .expect("prepare source Read must not error")
+                    .expect("source Read must pass permission");
+
+                assert_eq!(prepared.dispatch_target_name.as_deref(), Some("read"));
+                assert_eq!(
+                    prepared.parsed_args["filePath"],
+                    file.path().to_string_lossy()
+                );
+                assert_eq!(prepared.parsed_args["offset"], 2);
+                assert_eq!(prepared.parsed_args["limit"], 3);
+                assert!(prepared.parsed_args.get("file_path").is_none());
+                assert!(matches!(
+                    seen_access.lock().await.as_ref(),
+                    Some(xai_grok_workspace::permission::AccessKind::Read(Some(path)))
+                        if path == &file.path().to_string_lossy()
+                ));
+
+                fixture
+                    .actor
+                    .workspace_ops
+                    .bind_local_session(
+                        &fixture.actor.session_id_string(),
+                        fixture.actor.tool_context.cwd.as_path().to_path_buf(),
+                        fixture.actor.tool_context.hunk_tracker_handle.clone(),
+                        fixture.actor.agent.borrow().tool_bridge().toolset(),
+                        None,
+                    )
+                    .expect("bind source Read workspace session");
+                let result = dispatch_tool(
+                    &fixture.actor.workspace_ops,
+                    &prepared,
+                    &fixture.actor.session_id_string(),
+                )
+                .await
+                .expect("transformed source Read must reach the registered tool");
+                assert!(!result.output.is_error());
+                assert!(result.prompt_text.contains("two"));
+                assert!(result.prompt_text.contains("four"));
+                assert!(!result.prompt_text.contains("one"));
             })
             .await;
     }
