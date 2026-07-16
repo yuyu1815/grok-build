@@ -769,6 +769,28 @@ mod tests {
     }
 
     #[test]
+    fn test_acp_tool_update_read_file_error_is_failed_text() {
+        let message = "unsupported: Claude Code parity for PDF/pages is not implemented";
+        let output = ToolOutput::ReadFile(ReadFileOutput::FileReadError(message.to_string()));
+
+        let update = acp_tool_update(&output, "call-1", None, None).unwrap();
+        assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+
+        let content = update
+            .fields
+            .content
+            .expect("failure should have text content");
+        let text = match &content[0] {
+            acp::ToolCallContent::Content(acp::Content {
+                content: acp::ContentBlock::Text(t),
+                ..
+            }) => t.text.as_str(),
+            other => panic!("expected text content, got {other:?}"),
+        };
+        assert_eq!(text, message);
+    }
+
+    #[test]
     fn test_acp_tool_update_todo_returns_completed() {
         let output = ToolOutput::Todo(TodoWriteOutput::TodosUpdated(TodoWriteSuccess {
             summary_for_prompt: "tasks".to_string(),

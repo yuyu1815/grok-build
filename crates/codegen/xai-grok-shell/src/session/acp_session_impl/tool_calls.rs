@@ -27,6 +27,61 @@ fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool
         _ => false,
     }
 }
+/// Convert the source-facing Claude `Read` schema to the registered OpenCode
+/// `read` schema. Only the exact case-sensitive source name is accepted.
+#[derive(serde::Deserialize)]
+struct SourceReadRequiredInput {
+    file_path: String,
+}
+
+fn source_read_input_for_registry(
+    raw_input: &serde_json::Value,
+) -> Result<serde_json::Value, xai_tool_runtime::ToolError> {
+    let source_input: SourceReadRequiredInput = serde_json::from_value(raw_input.clone())
+        .map_err(|err| xai_tool_runtime::ToolError::invalid_arguments(err.to_string()))?;
+    let mut registry_input = raw_input.clone();
+    let object = registry_input
+        .as_object_mut()
+        .expect("deserialized source Read input is an object");
+    object.remove("file_path");
+    object.insert(
+        "filePath".to_string(),
+        serde_json::Value::String(source_input.file_path),
+    );
+    Ok(registry_input)
+}
+
+fn registry_tool_name_for_source(source_tool_name: &str) -> &str {
+    match source_tool_name {
+        "Read" => "read",
+        _ => source_tool_name,
+    }
+}
+
+/// Classify the exact source-facing Claude Read input for permission.
+///
+/// Dynamic input is shared by unrelated tools, so the projection stays at the
+/// parsed request seam and only accepts `Read` with its source `file_path`.
+fn access_kind_for_permission_request(
+    source_tool_name: &str,
+    raw_input: &serde_json::Value,
+    tool_input: &ToolInput,
+    cwd: &std::path::Path,
+    display_cwd: Option<&std::path::Path>,
+) -> AccessKind {
+    if source_tool_name == "Read"
+        && matches!(tool_input, ToolInput::Dynamic(_))
+        && let Some(file_path) = raw_input
+            .get("file_path")
+            .and_then(serde_json::Value::as_str)
+    {
+        let resolved =
+            xai_grok_tools::types::resources::resolve_model_path(cwd, display_cwd, file_path);
+        return AccessKind::Read(Some(resolved.to_string_lossy().into_owned()));
+    }
+
+    AccessKind::from(tool_input)
+}
 async fn wait_for_pending_interjection(buf: &InterjectionBuffer<acp::ImageContent>) {
     loop {
         if !buf.is_empty() {
@@ -869,11 +924,35 @@ impl SessionActor {
                 }
             }
         };
+        // Claude's source-facing `Read` schema is case-sensitive and uses
+        // `file_path`; OpenCode's registered runtime tool is `read` with
+        // `filePath`. Invalid source Read input intentionally remains
+        // unparseable and therefore follows the existing model-facing failure.
+        let registry_tool_name = registry_tool_name_for_source(&call.function.name);
+        let registry_raw_input = if call.function.name == "Read" {
+            match source_read_input_for_registry(&raw_input) {
+                Ok(input) => input,
+                Err(err) => {
+                    self.handle_tool_parse_error(
+                        &tool_call_id,
+                        &call.id,
+                        &call.function.name,
+                        err,
+                        &call.function.arguments,
+                        &model_id_str,
+                    )
+                    .await?;
+                    return Ok(Err(ToolLoop::ToolParsingError));
+                }
+            }
+        } else {
+            raw_input.clone()
+        };
         let tool_input = match self
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(&call.function.name, raw_input.clone())
+            .try_parse(registry_tool_name, registry_raw_input)
             .await
         {
             Ok(input) => input,
@@ -890,7 +969,14 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
-        let access_kind = AccessKind::from(&tool_input);
+        let display_cwd = self.display_cwd.get().map(std::path::Path::new);
+        let access_kind = access_kind_for_permission_request(
+            &call.function.name,
+            &raw_input,
+            &tool_input,
+            std::path::Path::new(&self.session_info.cwd),
+            display_cwd,
+        );
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {
             tracing::info_span!(
@@ -2609,6 +2695,59 @@ fn execute_tool_call_parts(
         ))],
     )
 }
+#[cfg(test)]
+mod permission_access_classification_tests {
+    use super::{
+        access_kind_for_permission_request, registry_tool_name_for_source,
+        source_read_input_for_registry,
+    };
+    use std::path::Path;
+    use xai_grok_tools::types::ToolInput;
+    use xai_grok_workspace::permission::AccessKind;
+
+    #[test]
+    fn source_read_file_path_maps_to_opencode_read_file_path() {
+        let raw = serde_json::json!({ "file_path": "src/secret.txt" });
+        let mapped = source_read_input_for_registry(&raw).expect("valid source Read input");
+
+        assert_eq!(registry_tool_name_for_source("Read"), "read");
+        assert_eq!(mapped["filePath"], "src/secret.txt");
+        assert!(mapped.get("file_path").is_none());
+    }
+
+    #[test]
+    fn source_read_file_path_is_resolved_before_permission() {
+        let raw = serde_json::json!({ "file_path": "src/secret.txt" });
+        let registry_input = source_read_input_for_registry(&raw).unwrap();
+        let access = access_kind_for_permission_request(
+            "Read",
+            &raw,
+            &ToolInput::Dynamic(registry_input),
+            Path::new("/workspace/project"),
+            None,
+        );
+
+        assert!(
+            matches!(access, AccessKind::Read(Some(path)) if path == "/workspace/project/src/secret.txt")
+        );
+    }
+
+    #[test]
+    fn invalid_source_read_input_is_not_mapped_to_opencode_read() {
+        for raw in [
+            serde_json::json!({}),
+            serde_json::json!({ "file_path": 42 }),
+        ] {
+            assert!(source_read_input_for_registry(&raw).is_err());
+        }
+    }
+
+    #[test]
+    fn existing_lowercase_read_registry_id_is_unchanged() {
+        assert_eq!(registry_tool_name_for_source("read"), "read");
+    }
+}
+
 #[cfg(test)]
 mod execute_tool_call_parts_tests {
     use super::execute_tool_call_parts;

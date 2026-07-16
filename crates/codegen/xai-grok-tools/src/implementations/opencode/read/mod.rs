@@ -9,10 +9,12 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
+#[cfg(test)]
 use base64::Engine as _;
+#[cfg(test)]
 use base64::engine::general_purpose;
 
-use crate::types::output::{FileContent, ImageContent, ReadFileOutput};
+use crate::types::output::{FileContent, ReadFileOutput};
 use crate::types::requirements::Expr;
 #[allow(unused_imports)]
 use crate::types::resources::{Cwd, DisplayCwd, FileSystem, SharedResources, resolve_model_path};
@@ -200,6 +202,20 @@ impl xai_tool_runtime::Tool for ReadTool {
             .unwrap_or("")
             .to_lowercase();
 
+        // PDF/page extraction and notebook rendering are explicitly unsupported
+        // for this OpenCode Read implementation. Return through the existing
+        // model-facing Read failure path before reading the target bytes.
+        if extension == "pdf" {
+            return Ok(ReadFileOutput::FileReadError(
+                "unsupported: Claude Code parity for PDF/pages is not implemented".to_string(),
+            ));
+        }
+        if extension == "ipynb" {
+            return Ok(ReadFileOutput::FileReadError(
+                "unsupported: Claude Code parity for notebook is not implemented".to_string(),
+            ));
+        }
+
         // Read the file bytes for all remaining branches.
         let file_bytes = match fs.read_file(&path).await {
             Ok(bytes) => bytes,
@@ -224,18 +240,6 @@ impl xai_tool_runtime::Tool for ReadTool {
                 meta.mime_type,
             )
             .await);
-        }
-
-        // Check for PDF by extension (magic-byte detection doesn't always catch PDFs).
-        if extension == "pdf" {
-            let image_b64 = general_purpose::STANDARD.encode(&file_bytes);
-            return Ok(ReadFileOutput::ImageContent(ImageContent {
-                data: image_b64,
-                mime_type: "application/pdf".to_string(),
-                annotations: None,
-                uri: None,
-                meta: None,
-            }));
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -1007,12 +1011,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pdf_file_detection() {
+    async fn pdf_is_reported_as_unsupported_before_file_read() {
         let tmp = TempDir::new().unwrap();
         let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
         let file_path = canonical_tmp.join("test.pdf");
 
-        // Arbitrary bytes — not a real PDF, but the extension triggers PDF handling.
+        // Arbitrary bytes prove that the extension gate runs before PDF parsing/encoding.
         std::fs::write(&file_path, [0xDE, 0xAD, 0xBE, 0xEF, 0x42, 0x42]).unwrap();
 
         let tool = ReadTool;
@@ -1028,17 +1032,39 @@ mod tests {
             .await
             .unwrap();
         match result {
-            ReadFileOutput::ImageContent(img) => {
-                assert!(
-                    img.mime_type.contains("pdf"),
-                    "Expected mime_type containing 'pdf', got: {}",
-                    img.mime_type,
-                );
-                // Verify the base64 data decodes back to our bytes.
-                let decoded = general_purpose::STANDARD.decode(&img.data).unwrap();
-                assert_eq!(decoded, &[0xDE, 0xAD, 0xBE, 0xEF, 0x42, 0x42]);
-            }
-            other => panic!("Expected ImageContent for PDF, got {:?}", other),
+            ReadFileOutput::FileReadError(message) => assert_eq!(
+                message,
+                "unsupported: Claude Code parity for PDF/pages is not implemented"
+            ),
+            other => panic!("Expected FileReadError for PDF, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn notebook_is_reported_as_unsupported_before_file_read() {
+        let tmp = TempDir::new().unwrap();
+        let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
+        let file_path = canonical_tmp.join("analysis.ipynb");
+
+        std::fs::write(&file_path, b"{ not a valid notebook }").unwrap();
+
+        let tool = ReadTool;
+        let resources = test_resources(&canonical_tmp);
+        let input = ReadInput {
+            file_path: file_path.to_string_lossy().to_string(),
+            offset: None,
+            limit: None,
+        };
+
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileReadError(message) => assert_eq!(
+                message,
+                "unsupported: Claude Code parity for notebook is not implemented"
+            ),
+            other => panic!("Expected FileReadError for notebook, got {:?}", other),
         }
     }
 
