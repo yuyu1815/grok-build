@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 
+#[cfg(test)]
 use serde::de::Error as _;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -26,6 +27,7 @@ const RESULT_LIMIT: usize = 100;
 const MAX_LINE_LENGTH: usize = 2000;
 /// Claude Code's embedded-rg capture limit.  This is deliberately expressed
 /// in UTF-16 code units, not bytes; JavaScript `String#length` uses this unit.
+#[cfg(test)]
 const EMBEDDED_CAPTURE_UTF16_CAP: usize = 20_000_000;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -63,9 +65,12 @@ pub struct GrepInput {
     pub include: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 struct SemanticNumber(f64);
 
+#[cfg(test)]
+#[allow(dead_code)]
 impl SemanticNumber {
     fn ripgrep_arg(self) -> String {
         self.0.to_string()
@@ -76,6 +81,7 @@ impl SemanticNumber {
     }
 }
 
+#[cfg(test)]
 impl<'de> serde::Deserialize<'de> for SemanticNumber {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -114,6 +120,8 @@ impl<'de> serde::Deserialize<'de> for SemanticNumber {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceGrepInput {
@@ -139,6 +147,7 @@ struct SourceGrepInput {
     multiline: Option<bool>,
 }
 
+#[cfg(test)]
 fn timeout_override_secs(value: Option<&str>) -> Option<u64> {
     // JavaScript parseInt(value, 10): consume an optional sign and decimal
     // prefix only.  A positive result is the only effective override.
@@ -161,6 +170,8 @@ fn timeout_override_secs(value: Option<&str>) -> Option<u64> {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 fn source_default_timeout_secs() -> u64 {
     #[cfg(target_os = "linux")]
     if std::fs::read_to_string("/proc/sys/kernel/osrelease")
@@ -172,6 +183,7 @@ fn source_default_timeout_secs() -> u64 {
     20
 }
 
+#[cfg(test)]
 fn truncate_utf16(text: String, cap: usize) -> String {
     if text.encode_utf16().count() <= cap {
         return text;
@@ -185,6 +197,8 @@ fn truncate_utf16(text: String, cap: usize) -> String {
     String::from_utf16_lossy(&units)
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 fn source_slice<T: Clone>(
     items: &[T],
     offset: SemanticNumber,
@@ -212,6 +226,8 @@ fn source_slice<T: Clone>(
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 async fn run_source_grep(
     ctx: xai_tool_runtime::ToolCallContext,
     input: SourceGrepInput,
@@ -579,11 +595,16 @@ impl xai_tool_runtime::Tool for GrepTool {
         let resources = shared_resources(&ctx)?;
 
         if input.pattern.starts_with("__CLAUDE_CODE_GREP__") {
-            let raw = input.pattern.trim_start_matches("__CLAUDE_CODE_GREP__");
-            let source: SourceGrepInput = serde_json::from_str(raw).map_err(|e| {
-                xai_tool_runtime::ToolError::custom("invalid_source_grep_input", e.to_string())
-            })?;
-            return run_source_grep(ctx, source).await;
+            // The session pre-flight validates and canonicalizes the uppercase
+            // source-facing request before it reaches this marker.  Its
+            // mode-specific result/error projection, however, is not proven by
+            // the current oracle.  Do not turn the OpenCode result into a false
+            // Claude Code `Grep` success.  The lowercase OpenCode `grep` path
+            // below remains independent and unchanged.
+            return Err(xai_tool_runtime::ToolError::custom(
+                "unsupported_source_grep",
+                "unsupported: Claude Code parity for Grep is not implemented",
+            ));
         }
 
         let cwd = crate::types::tool_metadata::resolve_cwd(&ctx, &resources).await?;
@@ -907,55 +928,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_grep_projects_each_source_output_mode() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("a.txt"), "needle\nneedle\n").unwrap();
-        let resources = test_resources(tmp.path()).into_shared();
-        let source = SourceGrepInput {
-            pattern: "needle".to_owned(),
-            path: Some(tmp.path().display().to_string()),
-            glob: None,
-            output_mode: Some("content".to_owned()),
-            before: None,
-            after: None,
-            context_short: None,
-            context: None,
-            line_numbers: Some(true),
-            case_insensitive: None,
-            file_type: None,
-            head_limit: None,
-            offset: None,
-            multiline: None,
-        };
-
-        let content = run_source_grep(test_ctx(resources.clone()), source.clone())
-            .await
-            .unwrap();
-        assert!(String::from_utf8_lossy(&content.stdout).contains("needle"));
-
-        let count = run_source_grep(
-            test_ctx(resources.clone()),
-            SourceGrepInput {
-                output_mode: Some("count".to_owned()),
-                ..source.clone()
+    async fn source_facing_marker_is_explicitly_unsupported() {
+        let tool = GrepTool;
+        let result = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(Resources::new().into_shared()),
+            GrepInput {
+                pattern: "__CLAUDE_CODE_GREP__{\"pattern\":\"needle\"}".to_owned(),
+                path: None,
+                include: None,
             },
         )
-        .await
-        .unwrap();
+        .await;
+
         assert!(
-            String::from_utf8_lossy(&count.stdout).contains("2 total occurrences across 1 file.")
+            result.is_err(),
+            "source-facing Grep must not report success"
         );
-
-        let files = run_source_grep(
-            test_ctx(resources),
-            SourceGrepInput {
-                output_mode: Some("files_with_matches".to_owned()),
-                ..source
-            },
-        )
-        .await
-        .unwrap();
-        assert!(String::from_utf8_lossy(&files.stdout).starts_with("Found 1 file\n"));
     }
 
     // ── basic_match ──────────────────────────────────────────────────
