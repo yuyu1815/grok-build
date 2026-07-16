@@ -38,12 +38,22 @@ struct SourceReadRequiredInput {
     file_path: String,
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_semantic_number_opt")]
-    offset: Option<serde_json::Number>,
+    offset: Option<SourceReadNumber>,
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_semantic_number_opt")]
-    limit: Option<serde_json::Number>,
+    limit: Option<SourceReadNumber>,
     #[serde(default)]
     pages: Option<String>,
+}
+
+/// A source-valid semantic number either fits the registered OpenCode `u32`
+/// transport or must stop at the explicit unsupported boundary.  Keep the
+/// latter classification instead of trying to force its original decimal
+/// spelling (which may contain leading zeroes) into `serde_json::Number`.
+#[derive(Debug)]
+enum SourceReadNumber {
+    U32(serde_json::Number),
+    OutOfTargetRange,
 }
 
 /// Match Claude's `semanticNumber`: decimal numeric strings are coerced to a
@@ -52,28 +62,30 @@ struct SourceReadRequiredInput {
 /// the empty string or whitespace.
 fn deserialize_semantic_number_opt<'de, D>(
     deserializer: D,
-) -> Result<Option<serde_json::Number>, D::Error>
+) -> Result<Option<SourceReadNumber>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = serde_json::Value::deserialize(deserializer)?;
-    let (literal, string_input, original_number) = match value {
-        serde_json::Value::Number(number) => (number.to_string(), false, Some(number)),
-        serde_json::Value::String(string) if is_decimal_number_literal(&string) => {
-            (string, true, None)
-        }
+    let (literal, string_input) = match value {
+        serde_json::Value::Number(number) => (number.to_string(), false),
+        serde_json::Value::String(string) if is_decimal_number_literal(&string) => (string, true),
         _ => return Err(serde::de::Error::custom("expected a finite decimal number")),
     };
 
     match source_integer_literal(&literal, !string_input) {
-        SourceIntegerLiteral::U32(value) => Ok(Some(serde_json::Number::from(value))),
+        SourceIntegerLiteral::U32(value) => {
+            Ok(Some(SourceReadNumber::U32(serde_json::Number::from(value))))
+        }
         // The source schema accepts integral values beyond `u32`; their target
-        // transport is intentionally unresolved. Preserve a numeric JSON value
-        // here rather than classifying it as a source validation failure.
-        SourceIntegerLiteral::OutOfTargetRange => original_number
-            .or_else(|| literal.parse::<serde_json::Number>().ok())
-            .map(Some)
-            .ok_or_else(|| serde::de::Error::custom("expected a finite decimal number")),
+        // transport is intentionally unresolved. Preserve that classification
+        // rather than treating it as a source validation failure.
+        SourceIntegerLiteral::OutOfTargetRange => {
+            // The source schema accepts this finite semantic integer. Its
+            // decimal spelling can have leading zeroes, which cannot be
+            // represented as a JSON number without changing the input.
+            Ok(Some(SourceReadNumber::OutOfTargetRange))
+        }
         SourceIntegerLiteral::Invalid => {
             Err(serde::de::Error::custom("expected a non-negative integer"))
         }
@@ -90,6 +102,7 @@ enum SourceIntegerLiteral {
 /// valid Claude inputs that the OpenCode `u32` transport cannot represent.
 /// These must remain distinct: the latter is an explicit unsupported boundary
 /// rather than a generic argument-parse rejection.
+#[derive(Debug)]
 enum SourceReadInputError {
     Invalid(xai_tool_runtime::ToolError),
     Unsupported(xai_tool_runtime::ToolError),
@@ -270,31 +283,29 @@ fn source_read_input_for_registry(
 ) -> Result<serde_json::Value, SourceReadInputError> {
     let source_input: SourceReadRequiredInput = serde_json::from_value(raw_input.clone())
         .map_err(|err| xai_tool_runtime::ToolError::invalid_arguments(err.to_string()))?;
-    for value in [&source_input.offset, &source_input.limit]
-        .into_iter()
-        .flatten()
-    {
-        if matches!(
-            source_integer_literal(&value.to_string(), true),
-            SourceIntegerLiteral::OutOfTargetRange
-        ) {
-            return Err(SourceReadInputError::Unsupported(
-                xai_tool_runtime::ToolError::not_implemented(
-                    "unsupported: source-valid Read numeric value exceeds the target u32 transport",
-                ),
-            ));
-        }
-    }
+    // Claude validates `pages` before permission or execution.  That source
+    // result must also win over this Rust-only unsupported transport boundary.
     if let Some(pages) = source_input.pages.as_deref() {
         validate_source_read_pages(pages)?;
     }
-    if source_input
-        .limit
-        .as_ref()
-        .is_some_and(|limit| limit.as_u64() == Some(0))
+    if [&source_input.offset, &source_input.limit]
+        .into_iter()
+        .flatten()
+        .any(|value| matches!(value, SourceReadNumber::OutOfTargetRange))
     {
-        return Err(xai_tool_runtime::ToolError::invalid_arguments(
-            "limit must be greater than 0".to_string(),
+        return Err(SourceReadInputError::Unsupported(
+            xai_tool_runtime::ToolError::not_implemented(
+                "unsupported: source-valid Read numeric value exceeds the target u32 transport",
+            ),
+        ));
+    }
+    if source_input.limit.as_ref().is_some_and(
+        |limit| matches!(limit, SourceReadNumber::U32(limit) if limit.as_u64() == Some(0)),
+    ) {
+        return Err(SourceReadInputError::Invalid(
+            xai_tool_runtime::ToolError::invalid_arguments(
+                "limit must be greater than 0".to_string(),
+            ),
         ));
     }
     let mut registry_input = raw_input.clone();
@@ -309,11 +320,11 @@ fn source_read_input_for_registry(
     // Dispatch the semanticNumber-converted values, never the raw source
     // strings. `PreparedToolCall.parsed_args` is populated from this object.
     object.remove("offset");
-    if let Some(offset) = source_input.offset {
+    if let Some(SourceReadNumber::U32(offset)) = source_input.offset {
         object.insert("offset".to_string(), serde_json::Value::Number(offset));
     }
     object.remove("limit");
-    if let Some(limit) = source_input.limit {
+    if let Some(SourceReadNumber::U32(limit)) = source_input.limit {
         object.insert("limit".to_string(), serde_json::Value::Number(limit));
     }
     object.remove("pages");
@@ -3160,6 +3171,7 @@ mod permission_access_classification_tests {
         for value in [
             serde_json::json!(4_294_967_296u64),
             serde_json::json!("4294967296"),
+            serde_json::json!("04294967296"),
         ] {
             let error = source_read_input_for_registry(&serde_json::json!({
                 "file_path": "src/file.txt",
@@ -3167,6 +3179,31 @@ mod permission_access_classification_tests {
             }))
             .expect_err("source-valid overflow must stop at the unsupported boundary");
             assert!(matches!(error, SourceReadInputError::Unsupported(_)));
+        }
+    }
+
+    #[test]
+    fn source_read_u32_max_reaches_numeric_dispatch() {
+        for value in [serde_json::json!(u32::MAX), serde_json::json!("4294967295")] {
+            let mapped = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.txt",
+                "offset": value,
+            }))
+            .expect("u32::MAX must remain representable by the target transport");
+            assert_eq!(mapped["offset"], u32::MAX);
+        }
+    }
+
+    #[test]
+    fn source_read_pages_validation_precedes_overflow_unsupported() {
+        for pages in ["invalid", "1-21", &"9".repeat(400)] {
+            let error = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.pdf",
+                "offset": "04294967296",
+                "pages": pages,
+            }))
+            .expect_err("pages validation must precede target overflow handling");
+            assert!(matches!(error, SourceReadInputError::Invalid(_)), "{pages}");
         }
     }
 

@@ -1804,9 +1804,10 @@ mod tool_meta_stamp_tests {
                     .expect("source Read must pass permission");
 
                 assert_eq!(prepared.dispatch_target_name.as_deref(), Some("read"));
+                let expected_path = file.path().to_string_lossy().into_owned();
                 assert_eq!(
-                    prepared.parsed_args["filePath"],
-                    file.path().to_string_lossy()
+                    prepared.parsed_args["filePath"].as_str(),
+                    Some(expected_path.as_str())
                 );
                 assert_eq!(prepared.parsed_args["offset"], 2);
                 assert_eq!(prepared.parsed_args["limit"], 3);
