@@ -25,6 +25,16 @@ use crate::types::tool_io::ToolInput;
 
 const DEFAULT_RESULT_LIMIT: usize = 100;
 
+/// Per-call result limit supplied by a Claude-compatible dispatcher.
+///
+/// The source tool receives this as `globLimits.maxResults`; keeping it as an
+/// optional call-context extension preserves the source default when the
+/// surrounding Rust dispatcher has no configured limit.
+#[derive(Debug, Clone, Copy)]
+pub struct GlobLimits {
+    pub max_results: usize,
+}
+
 // ─── Description ────────────────────────────────────────────────────
 
 const DESCRIPTION: &str = r#"Lists files and directories in a given path.
@@ -139,6 +149,10 @@ fn timeout_duration() -> Duration {
     } else {
         Duration::from_secs(20)
     }
+}
+
+fn is_unc_path(path: &str) -> bool {
+    path.starts_with("\\\\") || path.starts_with("//")
 }
 
 fn absolute_pattern_root(pattern: &str) -> Option<(PathBuf, String)> {
@@ -373,22 +387,29 @@ impl xai_tool_runtime::Tool for GlobTool {
         );
 
         if let Some(path) = input.path.as_deref().filter(|path| !path.is_empty()) {
-            let metadata = tokio::fs::metadata(&permission_path).await.map_err(|err| {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    xai_tool_runtime::ToolError::invalid_arguments(format!(
-                        "Directory does not exist: {path}."
+            // Claude Code deliberately avoids filesystem operations for UNC
+            // paths to prevent credential leakage; permission handling owns
+            // the subsequent decision for those paths.
+            if !is_unc_path(path) {
+                let metadata = tokio::fs::metadata(&permission_path).await.map_err(|err| {
+                    if err.kind() == std::io::ErrorKind::NotFound {
+                        xai_tool_runtime::ToolError::invalid_arguments(format!(
+                            "Directory does not exist: {path}."
+                        ))
+                        .with_details(serde_json::json!({"errorCode": 1}))
+                    } else {
+                        xai_tool_runtime::ToolError::execution(
+                            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                            err.to_string(),
+                        )
+                    }
+                })?;
+                if !metadata.is_dir() {
+                    return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+                        "Path is not a directory: {path}"
                     ))
-                } else {
-                    xai_tool_runtime::ToolError::execution(
-                        xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                        err.to_string(),
-                    )
+                    .with_details(serde_json::json!({"errorCode": 2})));
                 }
-            })?;
-            if !metadata.is_dir() {
-                return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
-                    "Path is not a directory: {path}"
-                )));
             }
         }
 
@@ -416,6 +437,10 @@ impl xai_tool_runtime::Tool for GlobTool {
             .get::<xai_tool_runtime::Cancellation>()
             .map(|value| value.0.clone())
             .unwrap_or_default();
+        let result_limit = ctx
+            .get::<GlobLimits>()
+            .map(|limits| limits.max_results)
+            .unwrap_or(DEFAULT_RESULT_LIMIT);
         let started = Instant::now();
         let mut result = run_ripgrep(&args, &search_dir, &cancellation).await?;
         if !result.status.success()
@@ -459,7 +484,7 @@ impl xai_tool_runtime::Tool for GlobTool {
             if line.is_empty() {
                 continue;
             }
-            if entries.len() >= DEFAULT_RESULT_LIMIT {
+            if entries.len() >= result_limit {
                 truncated = true;
                 continue;
             }
@@ -838,6 +863,37 @@ mod tests {
             "expected truncation message, got: {}",
             output.model_text()
         );
+    }
+
+    #[tokio::test]
+    async fn configured_result_limit_overrides_default() {
+        let tmp = TempDir::new().unwrap();
+        for i in 0..4 {
+            std::fs::write(tmp.path().join(format!("file_{i}.txt")), "data\n").unwrap();
+        }
+
+        let mut ctx = test_ctx(test_resources(tmp.path()).into_shared());
+        ctx.insert(GlobLimits { max_results: 2 });
+        let output = xai_tool_runtime::Tool::run(
+            &GlobTool,
+            ctx,
+            GlobInput {
+                pattern: "*.txt".to_string(),
+                path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(output.num_files, 2);
+        assert!(output.truncated);
+    }
+
+    #[test]
+    fn unc_paths_skip_validation_filesystem_access() {
+        assert!(is_unc_path(r"\\server\share"));
+        assert!(is_unc_path("//server/share"));
+        assert!(!is_unc_path("/tmp/project"));
     }
 
     #[tokio::test]
