@@ -29,9 +29,79 @@ fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool
 }
 /// Convert the source-facing Claude `Read` schema to the registered OpenCode
 /// `read` schema. Only the exact case-sensitive source name is accepted.
+const SOURCE_READ_MAX_PAGES: i64 = 20;
+
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SourceReadRequiredInput {
     file_path: String,
+    #[serde(default)]
+    offset: Option<u32>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    pages: Option<String>,
+}
+
+fn parse_js_int_prefix(value: &str) -> Option<i64> {
+    let value = value.trim_start();
+    let (sign, digits) = match value.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => match value.strip_prefix('+') {
+            Some(rest) => (1, rest),
+            None => (1, value),
+        },
+    };
+    let digits = digits
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    digits_from_prefix(&value[if sign == -1 { 1 } else { 0 }..], digits).map(|number| number * sign)
+}
+
+fn digits_from_prefix(value: &str, count: usize) -> Option<i64> {
+    value[..count].parse().ok()
+}
+
+fn validate_source_read_pages(pages: &str) -> Result<(), xai_tool_runtime::ToolError> {
+    let trimmed = pages.trim();
+    if trimmed.is_empty() {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Invalid pages parameter: \"{pages}\""
+        )));
+    }
+
+    let range = if let Some(prefix) = trimmed.strip_suffix('-') {
+        let first = parse_js_int_prefix(prefix);
+        first.map(|first| (first, i64::MAX))
+    } else if let Some(dash) = trimmed.find('-') {
+        let first = parse_js_int_prefix(&trimmed[..dash]);
+        let last = parse_js_int_prefix(&trimmed[dash + 1..]);
+        first.zip(last)
+    } else {
+        parse_js_int_prefix(trimmed).map(|page| (page, page))
+    };
+
+    let Some((first, last)) = range else {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Invalid pages parameter: \"{pages}\""
+        )));
+    };
+    if first < 1 || last < 1 || last < first {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Invalid pages parameter: \"{pages}\""
+        )));
+    }
+    if last == i64::MAX || last.saturating_sub(first).saturating_add(1) > SOURCE_READ_MAX_PAGES {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Page range \"{pages}\" exceeds maximum of {SOURCE_READ_MAX_PAGES} pages per request"
+        )));
+    }
+    Ok(())
 }
 
 fn source_read_input_for_registry(
@@ -39,6 +109,14 @@ fn source_read_input_for_registry(
 ) -> Result<serde_json::Value, xai_tool_runtime::ToolError> {
     let source_input: SourceReadRequiredInput = serde_json::from_value(raw_input.clone())
         .map_err(|err| xai_tool_runtime::ToolError::invalid_arguments(err.to_string()))?;
+    if let Some(pages) = source_input.pages.as_deref() {
+        validate_source_read_pages(pages)?;
+    }
+    if source_input.limit == Some(0) {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(
+            "limit must be greater than 0".to_string(),
+        ));
+    }
     let mut registry_input = raw_input.clone();
     let object = registry_input
         .as_object_mut()
@@ -48,6 +126,7 @@ fn source_read_input_for_registry(
         "filePath".to_string(),
         serde_json::Value::String(source_input.file_path),
     );
+    object.remove("pages");
     Ok(registry_input)
 }
 
@@ -999,7 +1078,9 @@ impl SessionActor {
         } else {
             None
         };
-        let dispatch_target_name = tool_input.dispatch_target_name();
+        let dispatch_target_name = tool_input
+            .dispatch_target_name()
+            .or_else(|| (call.function.name == "Read").then(|| registry_tool_name.to_string()));
         let resolved_tool_name = dispatch_target_name
             .clone()
             .unwrap_or_else(|| call.function.name.clone());
@@ -1405,7 +1486,7 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .tool_kind(&call.function.name)
+            .tool_kind(registry_tool_name)
             .map(|k| {
                 use xai_grok_tools::types::tool::ToolKind;
                 matches!(
@@ -2699,7 +2780,7 @@ fn execute_tool_call_parts(
 mod permission_access_classification_tests {
     use super::{
         access_kind_for_permission_request, registry_tool_name_for_source,
-        source_read_input_for_registry,
+        source_read_input_for_registry, validate_source_read_pages,
     };
     use std::path::Path;
     use xai_grok_tools::types::ToolInput;
@@ -2745,6 +2826,38 @@ mod permission_access_classification_tests {
     #[test]
     fn existing_lowercase_read_registry_id_is_unchanged() {
         assert_eq!(registry_tool_name_for_source("read"), "read");
+    }
+
+    #[test]
+    fn source_read_pages_use_parse_int_prefix_and_maximum_boundary() {
+        for pages in ["1x", "1x-2y", " 20 "] {
+            assert!(validate_source_read_pages(pages).is_ok(), "{pages}");
+        }
+        for pages in ["", "x", "0", "-1", "2-1", "21", "3-"] {
+            assert!(validate_source_read_pages(pages).is_err(), "{pages}");
+        }
+    }
+
+    #[test]
+    fn source_read_mapping_is_strict_and_removes_pages() {
+        let raw = serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": 0,
+            "limit": 10,
+            "pages": "1x-2y"
+        });
+        let mapped = source_read_input_for_registry(&raw).expect("valid source Read input");
+        assert_eq!(mapped["filePath"], "src/file.txt");
+        assert_eq!(mapped["offset"], 0);
+        assert_eq!(mapped["limit"], 10);
+        assert!(mapped.get("pages").is_none());
+        assert!(
+            source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.txt",
+                "unexpected": true
+            }))
+            .is_err()
+        );
     }
 }
 

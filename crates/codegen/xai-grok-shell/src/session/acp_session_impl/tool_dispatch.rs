@@ -15,8 +15,12 @@ pub(super) async fn dispatch_tool(
     prepared: &PreparedToolCall,
     session_id: &str,
 ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
+    let dispatch_name = prepared
+        .dispatch_target_name
+        .as_deref()
+        .unwrap_or(&prepared.tool_name);
     tracing::debug!(
-        tool = %prepared.tool_name,
+        tool = %dispatch_name,
         call_id = %prepared.tool_call_id.0,
         session = %session_id,
         mode = "local",
@@ -24,7 +28,7 @@ pub(super) async fn dispatch_tool(
     );
     workspace_ops
         .call_tool(
-            &prepared.tool_name,
+            dispatch_name,
             prepared.parsed_args.clone(),
             &prepared.tool_call_id.0,
             Some(session_id),
