@@ -183,6 +183,44 @@ struct RipgrepOutput {
     stdout: String,
     stderr: String,
     status: std::process::ExitStatus,
+    /// `true` when timeout/cancellation already applied the source partial-line
+    /// transform.  The normal non-zero-exit handling must not drop a second line.
+    partial_failure_handled: bool,
+}
+
+fn tool_id() -> xai_tool_protocol::ToolId {
+    xai_tool_protocol::ToolId::new("glob").expect("valid tool id")
+}
+
+fn timeout_error() -> xai_tool_runtime::ToolError {
+    let seconds = if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        60
+    } else {
+        20
+    };
+    xai_tool_runtime::ToolError::timeout(
+        tool_id(),
+        format!(
+            "Ripgrep search timed out after {seconds} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."
+        ),
+    )
+}
+
+/// Source `ripGrep()` parses nonempty stdout with `trim().split('\\n')`,
+/// removes CR/empty lines, then unconditionally drops the final parsed line
+/// for timeout/cancellation failures. It does not inspect newline completeness.
+fn retained_timeout_lines(stdout: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut lines: Vec<String> = text
+        .trim()
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    if !lines.is_empty() {
+        lines.pop();
+    }
+    lines
 }
 
 async fn run_ripgrep(
@@ -198,23 +236,14 @@ async fn run_ripgrep(
         .stderr(Stdio::piped());
     crate::util::detach_command(&mut command);
     command.stdin(Stdio::null());
-    let mut child = command.spawn().map_err(|error| {
-        xai_tool_runtime::ToolError::execution(
-            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-            error.to_string(),
-        )
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?;
     let mut stdout_pipe = child.stdout.take().ok_or_else(|| {
-        xai_tool_runtime::ToolError::execution(
-            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-            "ripgrep stdout was not piped",
-        )
+        xai_tool_runtime::ToolError::execution(tool_id(), "ripgrep stdout was not piped")
     })?;
     let mut stderr_pipe = child.stderr.take().ok_or_else(|| {
-        xai_tool_runtime::ToolError::execution(
-            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-            "ripgrep stderr was not piped",
-        )
+        xai_tool_runtime::ToolError::execution(tool_id(), "ripgrep stderr was not piped")
     })?;
     let stdout_task = tokio::spawn(async move {
         let mut bytes = Vec::new();
@@ -227,22 +256,32 @@ async fn run_ripgrep(
 
     let deadline = Instant::now() + timeout_duration();
     let status = loop {
-        if let Some(status) = child.try_wait().map_err(|error| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                error.to_string(),
-            )
-        })? {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?
+        {
             break status;
         }
         if cancellation.is_cancelled() {
             let _ = child.kill().await;
-            let _ = stdout_task.await;
+            let stdout = stdout_task
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
             let _ = stderr_task.await;
-            return Err(xai_tool_runtime::ToolError::cancelled(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                "Glob search was cancelled",
-            ));
+            let lines = retained_timeout_lines(&stdout);
+            if lines.is_empty() {
+                return Err(timeout_error());
+            }
+            return Ok(RipgrepOutput {
+                stdout: lines.join("\n"),
+                stderr: String::new(),
+                status: child.wait().await.map_err(|error| {
+                    xai_tool_runtime::ToolError::execution(tool_id(), error.to_string())
+                })?,
+                partial_failure_handled: true,
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill().await;
@@ -252,26 +291,17 @@ async fn run_ripgrep(
                 .and_then(Result::ok)
                 .unwrap_or_default();
             let _ = stderr_task.await;
-            let text = String::from_utf8_lossy(&stdout);
-            let mut lines: Vec<&str> = text.lines().collect();
-            if !text.ends_with('\n') {
-                lines.pop();
-            }
+            let lines = retained_timeout_lines(&stdout);
             if lines.is_empty() {
-                return Err(xai_tool_runtime::ToolError::timeout(
-                    xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                    "Glob search timed out",
-                ));
+                return Err(timeout_error());
             }
             return Ok(RipgrepOutput {
                 stdout: lines.join("\n"),
                 stderr: String::new(),
                 status: child.wait().await.map_err(|error| {
-                    xai_tool_runtime::ToolError::execution(
-                        xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                        error.to_string(),
-                    )
+                    xai_tool_runtime::ToolError::execution(tool_id(), error.to_string())
                 })?,
+                partial_failure_handled: true,
             });
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -279,36 +309,17 @@ async fn run_ripgrep(
 
     let stdout = stdout_task
         .await
-        .map_err(|error| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                error.to_string(),
-            )
-        })?
-        .map_err(|error| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                error.to_string(),
-            )
-        })?;
+        .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?
+        .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?;
     let stderr = stderr_task
         .await
-        .map_err(|error| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                error.to_string(),
-            )
-        })?
-        .map_err(|error| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                error.to_string(),
-            )
-        })?;
+        .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?
+        .map_err(|error| xai_tool_runtime::ToolError::execution(tool_id(), error.to_string()))?;
     Ok(RipgrepOutput {
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
         status,
+        partial_failure_handled: false,
     })
 }
 
@@ -454,11 +465,10 @@ impl xai_tool_runtime::Tool for GlobTool {
         if !result.status.success() && result.status.code() != Some(1) {
             let critical = result.stderr.contains("ENOENT")
                 || result.stderr.contains("EACCES")
-                || result.stderr.contains("EPERM")
-                || result.stdout.trim().is_empty();
+                || result.stderr.contains("EPERM");
             if critical {
                 return Err(xai_tool_runtime::ToolError::execution(
-                    xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                    tool_id(),
                     format!(
                         "ripgrep failed with status {}: {}",
                         result.status,
@@ -466,11 +476,18 @@ impl xai_tool_runtime::Tool for GlobTool {
                     ),
                 ));
             }
-            let mut lines: Vec<&str> = result.stdout.lines().collect();
-            if !result.stdout.ends_with('\n') {
-                lines.pop();
+            if !result.partial_failure_handled {
+                // A normal noncritical rg failure may still expose all complete
+                // partial lines. Timeout/cancellation were transformed above.
+                result.stdout = result
+                    .stdout
+                    .trim()
+                    .split('\n')
+                    .map(|line| line.strip_suffix('\r').unwrap_or(line))
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
             }
-            result.stdout = lines.join("\n");
         }
 
         // ── Parse file paths from stdout ────────────────────────
@@ -894,6 +911,23 @@ mod tests {
         assert!(is_unc_path(r"\\server\share"));
         assert!(is_unc_path("//server/share"));
         assert!(!is_unc_path("/tmp/project"));
+    }
+
+    #[test]
+    fn timeout_partial_result_drops_the_last_parsed_line_even_when_complete() {
+        assert_eq!(
+            retained_timeout_lines(b"first.rs\nlast.rs\n"),
+            vec!["first.rs"]
+        );
+        assert_eq!(retained_timeout_lines(b"only.rs\n"), Vec::<String>::new());
+        assert_eq!(retained_timeout_lines(b"\n\r\n"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn timeout_error_uses_the_source_fixed_message() {
+        let message = timeout_error().to_string();
+        assert!(message.contains("Ripgrep search timed out after "));
+        assert!(message.contains("Try searching a more specific path or pattern."));
     }
 
     #[tokio::test]
