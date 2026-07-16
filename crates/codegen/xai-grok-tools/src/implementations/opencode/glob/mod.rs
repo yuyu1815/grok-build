@@ -4,11 +4,13 @@
 //! Returns matching file paths sorted by modification time (oldest first),
 //! capped at 100 results.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use crate::implementations::grok_build::grep::ripgrep::rg_path;
 use crate::types::output::ToolOutput;
@@ -21,10 +23,7 @@ use crate::types::tool_io::ToolInput;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-const RESULT_LIMIT: usize = 100;
-
-/// Hard cap on bytes read from ripgrep's stdout (5 MB).
-const MAX_STDOUT_BYTES: usize = 5_000_000;
+const DEFAULT_RESULT_LIMIT: usize = 100;
 
 // ─── Description ────────────────────────────────────────────────────
 
@@ -72,31 +71,231 @@ impl From<GlobInput> for ToolInput {
 /// Structured output for the `glob` tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GlobOutput {
-    /// Pre-formatted text for the model prompt.
-    pub tool_output_for_prompt: String,
-    /// Number of files included in `entries` (capped at `RESULT_LIMIT`).
-    pub count: usize,
-    /// Total files matched by ripgrep before the cap. May exceed `count`.
-    /// When `truncated_by_bytes` was hit this is a lower bound.
-    pub total_count: usize,
-    /// Whether results were truncated at the limit.
+    pub filenames: Vec<String>,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+    #[serde(rename = "numFiles")]
+    pub num_files: usize,
     pub truncated: bool,
-    /// Paths relative to cwd when possible, included in `count` and sorted by
-    /// modification time. Empty when `count == 0`.
-    pub entries: Vec<String>,
-    /// The model-facing workspace root used to resolve `path` -- equal to
-    /// `display_cwd_or_cwd(cwd, display_cwd)`. Adapters that re-format the
-    /// output use this as the relativization base when
-    /// the model omits `path`, instead of re-resolving cwd themselves.
-    pub cwd_for_display: String,
 }
 
 impl xai_tool_runtime::ToolOutput for GlobOutput {}
 
+#[cfg(test)]
+impl GlobOutput {
+    fn model_text(&self) -> String {
+        if self.filenames.is_empty() {
+            return "No files found".to_string();
+        }
+        let mut lines = self.filenames.clone();
+        if self.truncated {
+            lines.push(
+                "(Results are truncated. Consider using a more specific path or pattern.)"
+                    .to_string(),
+            );
+        }
+        lines.join("\n")
+    }
+}
+
 impl From<GlobOutput> for ToolOutput {
     fn from(output: GlobOutput) -> Self {
-        ToolOutput::Text(output.tool_output_for_prompt.into())
+        let text = if output.filenames.is_empty() {
+            "No files found".to_string()
+        } else {
+            let mut lines = output.filenames;
+            if output.truncated {
+                lines.push(
+                    "(Results are truncated. Consider using a more specific path or pattern.)"
+                        .to_string(),
+                );
+            }
+            lines.join("\n")
+        };
+        ToolOutput::Text(text.into())
     }
+}
+
+fn env_flag(name: &str) -> bool {
+    match std::env::var(name).ok().as_deref().map(str::trim) {
+        None | Some("") => true,
+        Some(value) => matches!(
+            value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+    }
+}
+
+fn timeout_duration() -> Duration {
+    if let Ok(value) = std::env::var("CLAUDE_CODE_GLOB_TIMEOUT_SECONDS") {
+        if let Ok(seconds) = value.parse::<u64>() {
+            if seconds > 0 {
+                return Duration::from_secs(seconds);
+            }
+        }
+    }
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_secs(20)
+    }
+}
+
+fn absolute_pattern_root(pattern: &str) -> Option<(PathBuf, String)> {
+    let path = Path::new(pattern);
+    if !path.is_absolute() {
+        return None;
+    }
+
+    let special = pattern.find(['*', '?', '[', '{']);
+    let prefix = special.map_or(pattern, |index| &pattern[..index]);
+    let separator = prefix.rfind(['/', '\\']);
+    let (base, relative) = match separator {
+        Some(index) if index == 0 => ("/", &pattern[1..]),
+        Some(index) => (&prefix[..index], &pattern[index + 1..]),
+        None => (pattern, ""),
+    };
+    if relative.is_empty() {
+        let path = Path::new(base);
+        return Some((
+            path.parent()?.to_path_buf(),
+            path.file_name()?.to_string_lossy().into_owned(),
+        ));
+    }
+    Some((PathBuf::from(base), relative.to_string()))
+}
+
+struct RipgrepOutput {
+    stdout: String,
+    stderr: String,
+    status: std::process::ExitStatus,
+}
+
+async fn run_ripgrep(
+    args: &[String],
+    target: &Path,
+    cancellation: &CancellationToken,
+) -> Result<RipgrepOutput, xai_tool_runtime::ToolError> {
+    let mut command = Command::new(rg_path());
+    command
+        .args(args)
+        .arg(target)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    crate::util::detach_command(&mut command);
+    command.stdin(Stdio::null());
+    let mut child = command.spawn().map_err(|error| {
+        xai_tool_runtime::ToolError::execution(
+            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+            error.to_string(),
+        )
+    })?;
+    let mut stdout_pipe = child.stdout.take().ok_or_else(|| {
+        xai_tool_runtime::ToolError::execution(
+            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+            "ripgrep stdout was not piped",
+        )
+    })?;
+    let mut stderr_pipe = child.stderr.take().ok_or_else(|| {
+        xai_tool_runtime::ToolError::execution(
+            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+            "ripgrep stderr was not piped",
+        )
+    })?;
+    let stdout_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stderr_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+
+    let deadline = Instant::now() + timeout_duration();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                error.to_string(),
+            )
+        })? {
+            break status;
+        }
+        if cancellation.is_cancelled() {
+            let _ = child.kill().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            return Err(xai_tool_runtime::ToolError::cancelled(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                "Glob search was cancelled",
+            ));
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill().await;
+            let stdout = stdout_task
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            let _ = stderr_task.await;
+            let text = String::from_utf8_lossy(&stdout);
+            let mut lines: Vec<&str> = text.lines().collect();
+            if !text.ends_with('\n') {
+                lines.pop();
+            }
+            if lines.is_empty() {
+                return Err(xai_tool_runtime::ToolError::timeout(
+                    xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                    "Glob search timed out",
+                ));
+            }
+            return Ok(RipgrepOutput {
+                stdout: lines.join("\n"),
+                stderr: String::new(),
+                status: child.wait().await.map_err(|error| {
+                    xai_tool_runtime::ToolError::execution(
+                        xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                        error.to_string(),
+                    )
+                })?,
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    let stdout = stdout_task
+        .await
+        .map_err(|error| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                error.to_string(),
+            )
+        })?
+        .map_err(|error| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                error.to_string(),
+            )
+        })?;
+    let stderr = stderr_task
+        .await
+        .map_err(|error| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                error.to_string(),
+            )
+        })?
+        .map_err(|error| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                error.to_string(),
+            )
+        })?;
+    Ok(RipgrepOutput {
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        status,
+    })
 }
 
 // ─── Tool ───────────────────────────────────────────────────────────
@@ -167,15 +366,14 @@ impl xai_tool_runtime::Tool for GlobTool {
             .map(|d| d.0.clone())
             .unwrap_or_default();
 
-        // ── Resolve search directory ────────────────────────────
-        let search_dir = resolve_model_path(
+        let permission_path = resolve_model_path(
             &cwd,
             display_cwd.as_deref(),
             &input.path.clone().unwrap_or_default(),
         );
 
         if let Some(path) = input.path.as_deref().filter(|path| !path.is_empty()) {
-            let metadata = tokio::fs::metadata(&search_dir).await.map_err(|err| {
+            let metadata = tokio::fs::metadata(&permission_path).await.map_err(|err| {
                 if err.kind() == std::io::ErrorKind::NotFound {
                     xai_tool_runtime::ToolError::invalid_arguments(format!(
                         "Directory does not exist: {path}."
@@ -193,101 +391,75 @@ impl xai_tool_runtime::Tool for GlobTool {
                 )));
             }
         }
-        // ── Build ripgrep command ───────────────────────────────
-        //   rg --files --glob='!.git/*' --hidden --glob=<pattern> <search_dir>
-        let rg_exec = rg_path();
-        let mut cmd = Command::new(rg_exec);
-        cmd.arg("--files")
-            .arg("--glob=!.git/*")
-            .arg("--hidden")
-            .arg("--no-ignore")
-            .arg("--sort=modified")
-            .arg("--glob")
-            .arg(&input.pattern);
-        for deny in &deny_read_globs {
-            cmd.arg("--glob").arg(format!("!{deny}"));
-        }
-        cmd.arg(&search_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        crate::util::detach_command(&mut cmd);
-        cmd.stdin(Stdio::null());
 
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
+        let (search_dir, search_pattern) = absolute_pattern_root(&input.pattern).map_or(
+            (permission_path.clone(), input.pattern.clone()),
+            |(base, pattern)| (base, pattern),
+        );
+        let mut args = vec![
+            "--files".to_string(),
+            "--glob".to_string(),
+            search_pattern,
+            "--sort=modified".to_string(),
+        ];
+        if env_flag("CLAUDE_CODE_GLOB_NO_IGNORE") {
+            args.push("--no-ignore".to_string());
+        }
+        if env_flag("CLAUDE_CODE_GLOB_HIDDEN") {
+            args.push("--hidden".to_string());
+        }
+        for deny in &deny_read_globs {
+            args.push("--glob".to_string());
+            args.push(format!("!{deny}"));
+        }
+        let cancellation = ctx
+            .get::<xai_tool_runtime::Cancellation>()
+            .map(|value| value.0.clone())
+            .unwrap_or_default();
+        let started = Instant::now();
+        let mut result = run_ripgrep(&args, &search_dir, &cancellation).await?;
+        if !result.status.success()
+            && result.status.code() != Some(1)
+            && (result.stderr.contains("os error 11")
+                || result.stderr.contains("Resource temporarily unavailable"))
+        {
+            args.splice(0..0, ["-j".to_string(), "1".to_string()]);
+            result = run_ripgrep(&args, &search_dir, &cancellation).await?;
+        }
+        if !result.status.success() && result.status.code() != Some(1) {
+            let critical = result.stderr.contains("ENOENT")
+                || result.stderr.contains("EACCES")
+                || result.stderr.contains("EPERM")
+                || result.stdout.trim().is_empty();
+            if critical {
                 return Err(xai_tool_runtime::ToolError::execution(
                     xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                    e.to_string(),
+                    format!(
+                        "ripgrep failed with status {}: {}",
+                        result.status,
+                        result.stderr.trim()
+                    ),
                 ));
             }
-        };
-
-        // ── Read stdout with byte cap ───────────────────────────
-        let mut stdout_buf = Vec::with_capacity(MAX_STDOUT_BYTES.min(65_536));
-        let mut truncated_by_bytes = false;
-        if let Some(mut stdout_pipe) = child.stdout.take() {
-            let mut tmp = [0u8; 8192];
-            loop {
-                match stdout_pipe.read(&mut tmp).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if stdout_buf.len() + n <= MAX_STDOUT_BYTES {
-                            stdout_buf.extend_from_slice(&tmp[..n]);
-                        } else {
-                            let remaining = MAX_STDOUT_BYTES.saturating_sub(stdout_buf.len());
-                            if remaining > 0 {
-                                stdout_buf.extend_from_slice(&tmp[..remaining]);
-                            }
-                            truncated_by_bytes = true;
-                            let _ = child.start_kill();
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
+            let mut lines: Vec<&str> = result.stdout.lines().collect();
+            if !result.stdout.ends_with('\n') {
+                lines.pop();
             }
-        }
-
-        // Consume stderr to avoid deadlocks.
-        if let Some(stderr_pipe) = child.stderr.take() {
-            let _ = stderr_pipe
-                .take(1_000_000)
-                .read_to_end(&mut Vec::new())
-                .await;
-        }
-
-        let status = child.wait().await.map_err(|err| {
-            xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                err.to_string(),
-            )
-        })?;
-        if !status.success() && status.code() != Some(1) {
-            return Err(xai_tool_runtime::ToolError::execution(
-                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                format!("ripgrep failed with status {status}"),
-            ));
+            result.stdout = lines.join("\n");
         }
 
         // ── Parse file paths from stdout ────────────────────────
-        let stdout = String::from_utf8_lossy(&stdout_buf);
-        let mut truncated = truncated_by_bytes;
+        let stdout = result.stdout;
+        let mut truncated = false;
 
-        // Collect every match so total_count is accurate. Cap stat()s and
-        // the returned entry list at RESULT_LIMIT so we don't pay the syscall
-        // cost on huge result sets, but keep counting lines past the cap so
-        // the truncation marker can report the real overflow.
+        // Keep the source order and apply the default limit after rg sorting.
         let mut entries: Vec<PathBuf> = Vec::new();
-        let mut total_count: usize = 0;
         for line in stdout.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            total_count += 1;
-
-            if entries.len() >= RESULT_LIMIT {
+            if entries.len() >= DEFAULT_RESULT_LIMIT {
                 truncated = true;
                 continue;
             }
@@ -298,7 +470,6 @@ impl xai_tool_runtime::Tool for GlobTool {
 
         // ── Format output ───────────────────────────────────────
         let count = entries.len();
-        let cwd_for_display = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
         let entry_paths: Vec<String> = entries
             .iter()
             .map(|path| {
@@ -308,27 +479,11 @@ impl xai_tool_runtime::Tool for GlobTool {
             })
             .collect();
 
-        let tool_output_for_prompt = if entry_paths.is_empty() {
-            "No files found".to_string()
-        } else {
-            let mut lines: Vec<String> = entry_paths.clone();
-
-            if truncated {
-                lines.push(
-                    "(Results are truncated. Consider using a more specific path or pattern.)"
-                        .to_string(),
-                );
-            }
-            lines.join("\n")
-        };
-
         Ok(GlobOutput {
-            tool_output_for_prompt,
-            count,
-            total_count,
+            filenames: entry_paths,
+            duration_ms: started.elapsed().as_millis() as u64,
+            num_files: count,
             truncated,
-            entries: entry_paths,
-            cwd_for_display: cwd_for_display.display().to_string(),
         })
     }
 }
@@ -368,10 +523,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 2);
+        assert_eq!(output.num_files, 2);
         assert!(!output.truncated);
-        assert!(output.tool_output_for_prompt.contains(".ts"));
-        assert!(!output.tool_output_for_prompt.contains("readme.md"));
+        assert!(output.model_text().contains(".ts"));
+        assert!(!output.model_text().contains("readme.md"));
     }
 
     #[tokio::test]
@@ -393,9 +548,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 0);
+        assert_eq!(output.num_files, 0);
         assert!(!output.truncated);
-        assert!(output.tool_output_for_prompt.contains("No files found"));
+        assert!(output.model_text().contains("No files found"));
     }
 
     #[tokio::test]
@@ -420,9 +575,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 1);
-        assert!(output.tool_output_for_prompt.contains("main.rs"));
-        assert!(!output.tool_output_for_prompt.contains("root.txt"));
+        assert_eq!(output.num_files, 1);
+        assert!(output.model_text().contains("main.rs"));
+        assert!(!output.model_text().contains("root.txt"));
     }
 
     #[tokio::test]
@@ -449,10 +604,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 2);
+        assert_eq!(output.num_files, 2);
         // ripgrep --sort=modified lists the oldest file first.
-        let new_pos = output.tool_output_for_prompt.find("new.txt").unwrap();
-        let old_pos = output.tool_output_for_prompt.find("old.txt").unwrap();
+        let new_pos = output.model_text().find("new.txt").unwrap();
+        let old_pos = output.model_text().find("old.txt").unwrap();
         assert!(
             old_pos < new_pos,
             "old.txt should appear before new.txt (mtime sort), got old@{} new@{}",
@@ -483,9 +638,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 2);
-        assert!(output.tool_output_for_prompt.contains("top.rs"));
-        assert!(output.tool_output_for_prompt.contains("deep.rs"));
+        assert_eq!(output.num_files, 2);
+        assert!(output.model_text().contains("top.rs"));
+        assert!(output.model_text().contains("deep.rs"));
     }
 
     #[test]
@@ -542,8 +697,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 1);
-        assert!(output.tool_output_for_prompt.contains("found.txt"));
+        assert_eq!(output.num_files, 1);
+        assert!(output.model_text().contains("found.txt"));
     }
 
     #[tokio::test]
@@ -565,9 +720,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 0);
+        assert_eq!(output.num_files, 0);
         assert!(!output.truncated);
-        assert!(output.tool_output_for_prompt.contains("No files found"));
+        assert!(output.model_text().contains("No files found"));
     }
 
     #[tokio::test]
@@ -589,8 +744,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 1);
-        assert!(output.tool_output_for_prompt.contains("root.rs"));
+        assert_eq!(output.num_files, 1);
+        assert!(output.model_text().contains("root.rs"));
     }
 
     #[tokio::test]
@@ -674,14 +829,14 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.count, 100);
+        assert_eq!(output.num_files, 100);
         assert!(output.truncated);
         assert!(
             output
-                .tool_output_for_prompt
+                .model_text()
                 .contains("Results are truncated. Consider using a more specific path or pattern."),
             "expected truncation message, got: {}",
-            output.tool_output_for_prompt
+            output.model_text()
         );
     }
 
@@ -706,14 +861,14 @@ mod tests {
         .unwrap();
 
         assert!(
-            output.count >= 2,
+            output.num_files >= 2,
             "expected at least 2 files, got {}",
-            output.count
+            output.num_files
         );
         assert!(
-            output.tool_output_for_prompt.contains(".hidden.ts"),
+            output.model_text().contains(".hidden.ts"),
             "hidden file should appear in output: {}",
-            output.tool_output_for_prompt
+            output.model_text()
         );
     }
 
@@ -736,8 +891,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(output.entries.iter().any(|entry| entry == "visible.rs"));
-        assert!(!output.entries.iter().any(|entry| entry == "secret.rs"));
+        assert!(output.filenames.iter().any(|entry| entry == "visible.rs"));
+        assert!(!output.filenames.iter().any(|entry| entry == "secret.rs"));
     }
 
     #[tokio::test]
@@ -781,14 +936,14 @@ mod tests {
         .unwrap();
 
         assert!(
-            output.tool_output_for_prompt.contains("visible.txt"),
+            output.model_text().contains("visible.txt"),
             "visible.txt should be in output: {}",
-            output.tool_output_for_prompt
+            output.model_text()
         );
         assert!(
-            output.tool_output_for_prompt.contains("secret.txt"),
+            output.model_text().contains("secret.txt"),
             "secret.txt inside ignored_dir/ should be included with --no-ignore: {}",
-            output.tool_output_for_prompt
+            output.model_text()
         );
     }
 
@@ -811,7 +966,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(output.tool_output_for_prompt, "example.rs");
-        assert_eq!(output.entries, vec!["example.rs"]);
+        assert_eq!(output.model_text(), "example.rs");
+        assert_eq!(output.filenames, vec!["example.rs"]);
     }
 }
