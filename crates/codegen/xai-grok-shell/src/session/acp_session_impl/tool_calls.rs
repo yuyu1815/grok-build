@@ -113,7 +113,13 @@ fn parse_js_int_prefix(value: &str) -> Option<i64> {
     if digits == 0 {
         return None;
     }
-    digits_from_prefix(&value[if sign == -1 { 1 } else { 0 }..], digits).map(|number| number * sign)
+    // `parseInt` consumes either leading sign before scanning decimal digits.
+    // Keep the prefix slice aligned with `digits`, including for `+1`.
+    digits_from_prefix(digits_from_prefix_source(value), digits).map(|number| number * sign)
+}
+
+fn digits_from_prefix_source(value: &str) -> &str {
+    value.strip_prefix(['-', '+']).unwrap_or(value)
 }
 
 fn digits_from_prefix(value: &str, count: usize) -> Option<i64> {
@@ -179,6 +185,16 @@ fn source_read_input_for_registry(
         "filePath".to_string(),
         serde_json::Value::String(source_input.file_path),
     );
+    // Dispatch the semanticNumber-converted values, never the raw source
+    // strings. `PreparedToolCall.parsed_args` is populated from this object.
+    object.remove("offset");
+    if let Some(offset) = source_input.offset {
+        object.insert("offset".to_string(), serde_json::Value::from(offset));
+    }
+    object.remove("limit");
+    if let Some(limit) = source_input.limit {
+        object.insert("limit".to_string(), serde_json::Value::from(limit));
+    }
     object.remove("pages");
     Ok(registry_input)
 }
@@ -2883,7 +2899,7 @@ mod permission_access_classification_tests {
 
     #[test]
     fn source_read_pages_use_parse_int_prefix_and_maximum_boundary() {
-        for pages in ["1x", "1x-2y", " 20 "] {
+        for pages in ["1x", "1x-2y", " 20 ", "+1x", "+1x-+2y"] {
             assert!(validate_source_read_pages(pages).is_ok(), "{pages}");
         }
         for pages in ["", "x", "0", "-1", "2-1", "21", "3-"] {
@@ -2959,6 +2975,18 @@ mod permission_access_classification_tests {
                 "limit": 3
             })
         );
+    }
+
+    #[test]
+    fn source_read_offset_zero_is_preserved_for_target_body_to_classify() {
+        let mapped = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": 0
+        }))
+        .expect("source Read accepts offset=0");
+        assert_eq!(mapped["offset"], 0);
+        // OpenCode's Read body currently rejects this before I/O. Do not turn
+        // that target mismatch into source validation failure here.
     }
 }
 
