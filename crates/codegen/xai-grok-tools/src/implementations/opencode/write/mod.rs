@@ -26,6 +26,7 @@ const DESCRIPTION: &str = r#"Create or overwrite a file.
 
 /// Input for the `write` tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WriteInput {
     /// The absolute path to the file to write.
     pub file_path: String,
@@ -319,6 +320,27 @@ mod tests {
         let serialized = serde_json::to_string(&input).unwrap();
         assert!(serialized.contains("file_path"));
         assert!(!serialized.contains("filePath"));
+    }
+
+    #[test]
+    fn invalid_input_is_rejected_before_write() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("unchanged.txt");
+        std::fs::write(&file_path, "original\n").unwrap();
+        let file_path_string = file_path.to_string_lossy();
+
+        let invalid_inputs = [
+            format!(
+                r#"{{"file_path":"{file_path_string}","content":"replacement\n","extra":true}}"#
+            ),
+            format!(r#"{{"file_path":"{file_path_string}"}}"#),
+            format!(r#"{{"file_path":"{file_path_string}","content":123}}"#),
+        ];
+
+        for json in invalid_inputs {
+            assert!(serde_json::from_str::<WriteInput>(&json).is_err());
+            assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "original\n");
+        }
     }
 
     // ── Empty content write ────────────────────────────────────
