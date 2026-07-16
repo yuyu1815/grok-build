@@ -49,9 +49,18 @@ fn source_facing_registry_target(tool_name: &str) -> Option<&'static str> {
     }
 }
 
+/// The lowercase OpenCode `glob` tool retains its established implementation.
+/// The Claude-facing `Glob` route cannot yet prove the source lifecycle for
+/// plugin-cache exclusion, availability probing, buffer overflow, cancellation,
+/// EAGAIN retry, macOS codesigning, or structured result projection.  Do not
+/// let that unproven route return a file-listing success result.
+fn claude_glob_lifecycle_unsupported_message() -> &'static str {
+    "Glob is unsupported: the Claude-compatible lifecycle adapter for plugin-cache exclusion, ripgrep availability, buffer limits, cancellation, EAGAIN retry, macOS codesigning, and structured results is not implemented."
+}
+
 #[cfg(test)]
 mod source_facing_registry_target_tests {
-    use super::source_facing_registry_target;
+    use super::{claude_glob_lifecycle_unsupported_message, source_facing_registry_target};
 
     #[test]
     fn routes_only_exact_source_facing_ids() {
@@ -62,6 +71,22 @@ mod source_facing_registry_target_tests {
         assert_eq!(source_facing_registry_target("glob"), None);
         assert_eq!(source_facing_registry_target("GLOB"), None);
         assert_eq!(source_facing_registry_target("unknown"), None);
+    }
+
+    #[test]
+    fn claude_glob_unsupported_message_names_the_adapter_boundary() {
+        let message = claude_glob_lifecycle_unsupported_message();
+        for boundary in [
+            "plugin-cache",
+            "availability",
+            "buffer",
+            "cancellation",
+            "EAGAIN",
+            "codesigning",
+            "structured results",
+        ] {
+            assert!(message.contains(boundary), "missing {boundary}: {message}");
+        }
     }
 }
 /// Model-facing result when a wait is aborted for a pending interjection.
@@ -957,7 +982,18 @@ impl SessionActor {
                     .await;
                 return Ok(Err(ToolLoop::Continue));
             }
-            AccessKind::Read(Some(permission_path.display().to_string()))
+            let error = anyhow::anyhow!(claude_glob_lifecycle_unsupported_message());
+            let _ = self
+                .handle_tool_error(
+                    &tool_call_id,
+                    &call.id,
+                    &call.function.name,
+                    source_facing_registry_target(&call.function.name),
+                    &error,
+                    &model_id_str,
+                )
+                .await;
+            return Ok(Err(ToolLoop::Continue));
         } else {
             AccessKind::from(&tool_input)
         };
