@@ -36,6 +36,34 @@ async fn wait_for_pending_interjection(buf: &InterjectionBuffer<acp::ImageConten
     }
 }
 use crate::tools::tool_context::BlockingWaitGuard;
+
+/// Claude-compatible tool names are deliberately case-sensitive and route to
+/// the existing OpenCode registry names. Lowercase OpenCode calls bypass this.
+fn source_facing_registry_target(tool_name: &str) -> Option<&'static str> {
+    match tool_name {
+        "Glob" => Some("glob"),
+        "Grep" => Some("grep"),
+        "Read" => Some("read"),
+        "Write" => Some("write"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod source_facing_registry_target_tests {
+    use super::source_facing_registry_target;
+
+    #[test]
+    fn routes_only_exact_source_facing_ids() {
+        assert_eq!(source_facing_registry_target("Glob"), Some("glob"));
+        assert_eq!(source_facing_registry_target("Grep"), Some("grep"));
+        assert_eq!(source_facing_registry_target("Read"), Some("read"));
+        assert_eq!(source_facing_registry_target("Write"), Some("write"));
+        assert_eq!(source_facing_registry_target("glob"), None);
+        assert_eq!(source_facing_registry_target("GLOB"), None);
+        assert_eq!(source_facing_registry_target("unknown"), None);
+    }
+}
 /// Model-facing result when a wait is aborted for a pending interjection.
 fn interrupted_wait_tool_result(args: &serde_json::Value) -> ToolRunResult {
     interrupted_wait_tool_result_with_msg(args, "Wait interrupted: the user sent a message.")
@@ -821,6 +849,10 @@ impl SessionActor {
         let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
             &call.function.arguments,
         );
+        // Source-facing Claude names route only to their lowercase OpenCode
+        // counterparts. Existing lowercase calls retain their original path.
+        let registry_tool_name = source_facing_registry_target(&call.function.name)
+            .unwrap_or(call.function.name.as_str());
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
         let raw_input = match &parse_result {
@@ -839,7 +871,7 @@ impl SessionActor {
                         let bridge = self.agent.borrow().tool_bridge().clone();
                         for (idx, obj) in objects.iter().enumerate() {
                             if bridge
-                                .try_parse(&call.function.name, obj.clone())
+                                .try_parse(registry_tool_name, obj.clone())
                                 .await
                                 .is_ok()
                             {
@@ -873,7 +905,7 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(&call.function.name, raw_input.clone())
+            .try_parse(registry_tool_name, raw_input.clone())
             .await
         {
             Ok(input) => input,
@@ -890,7 +922,31 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
-        let access_kind = AccessKind::from(&tool_input);
+        let access_kind = if call.function.name == "Glob" {
+            use xai_grok_tools::types::resources::{Cwd, DisplayCwd, resolve_model_path};
+
+            let bridge = self.tool_bridge_handle();
+            let resources = bridge.shared_resources().await;
+            let resources = resources.lock().await;
+            let cwd = resources
+                .get::<Cwd>()
+                .map(|cwd| cwd.0.clone())
+                .unwrap_or_else(|| self.tool_context.cwd.as_path().to_path_buf());
+            let display_cwd = resources
+                .get::<DisplayCwd>()
+                .map(|display| display.0.clone());
+            let path = raw_input
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            AccessKind::Read(Some(
+                resolve_model_path(&cwd, display_cwd.as_deref(), path)
+                    .display()
+                    .to_string(),
+            ))
+        } else {
+            AccessKind::from(&tool_input)
+        };
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {
             tracing::info_span!(

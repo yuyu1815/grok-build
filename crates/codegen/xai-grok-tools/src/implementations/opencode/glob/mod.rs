@@ -1,7 +1,7 @@
 //! `glob` tool — OpenCode architecture (`Tool` trait).
 //!
 //! File pattern matching using ripgrep's `--files` mode with glob filters.
-//! Returns matching file paths sorted by modification time (most recent first),
+//! Returns matching file paths sorted by modification time (oldest first),
 //! capped at 100 results.
 
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use crate::implementations::grok_build::grep::ripgrep::rg_path;
 use crate::types::output::ToolOutput;
 #[allow(unused_imports)]
 use crate::types::resources::{
-    Cwd, DisplayCwd, SharedResources, display_cwd_or_cwd, resolve_model_path,
+    Cwd, DenyReadGlobs, DisplayCwd, SharedResources, display_cwd_or_cwd, resolve_model_path,
 };
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::tool_io::ToolInput;
@@ -39,6 +39,7 @@ Other details:
 
 /// Input for the `glob` tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobInput {
     /// Glob pattern to match files against (e.g. "**/*.ts", "src/**/*.tsx").
     pub pattern: String,
@@ -80,8 +81,8 @@ pub struct GlobOutput {
     pub total_count: usize,
     /// Whether results were truncated at the limit.
     pub truncated: bool,
-    /// Absolute paths of matched files included in `count`, sorted by mtime
-    /// descending. Empty when `count == 0`.
+    /// Paths relative to cwd when possible, included in `count` and sorted by
+    /// modification time. Empty when `count == 0`.
     pub entries: Vec<String>,
     /// The model-facing workspace root used to resolve `path` -- equal to
     /// `display_cwd_or_cwd(cwd, display_cwd)`. Adapters that re-format the
@@ -159,6 +160,12 @@ impl xai_tool_runtime::Tool for GlobTool {
             .await
             .get::<DisplayCwd>()
             .map(|d| d.0.clone());
+        let deny_read_globs = resources
+            .lock()
+            .await
+            .get::<DenyReadGlobs>()
+            .map(|d| d.0.clone())
+            .unwrap_or_default();
 
         // ── Resolve search directory ────────────────────────────
         let search_dir = resolve_model_path(
@@ -167,6 +174,25 @@ impl xai_tool_runtime::Tool for GlobTool {
             &input.path.clone().unwrap_or_default(),
         );
 
+        if let Some(path) = input.path.as_deref().filter(|path| !path.is_empty()) {
+            let metadata = tokio::fs::metadata(&search_dir).await.map_err(|err| {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    xai_tool_runtime::ToolError::invalid_arguments(format!(
+                        "Directory does not exist: {path}."
+                    ))
+                } else {
+                    xai_tool_runtime::ToolError::execution(
+                        xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                        err.to_string(),
+                    )
+                }
+            })?;
+            if !metadata.is_dir() {
+                return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+                    "Path is not a directory: {path}"
+                )));
+            }
+        }
         // ── Build ripgrep command ───────────────────────────────
         //   rg --files --glob='!.git/*' --hidden --glob=<pattern> <search_dir>
         let rg_exec = rg_path();
@@ -174,9 +200,14 @@ impl xai_tool_runtime::Tool for GlobTool {
         cmd.arg("--files")
             .arg("--glob=!.git/*")
             .arg("--hidden")
+            .arg("--no-ignore")
+            .arg("--sort=modified")
             .arg("--glob")
-            .arg(&input.pattern)
-            .arg(&search_dir)
+            .arg(&input.pattern);
+        for deny in &deny_read_globs {
+            cmd.arg("--glob").arg(format!("!{deny}"));
+        }
+        cmd.arg(&search_dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         crate::util::detach_command(&mut cmd);
@@ -185,16 +216,10 @@ impl xai_tool_runtime::Tool for GlobTool {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return Ok(GlobOutput {
-                    tool_output_for_prompt: format!("Error running glob: {e}"),
-                    count: 0,
-                    total_count: 0,
-                    truncated: false,
-                    entries: Vec::new(),
-                    cwd_for_display: display_cwd_or_cwd(&cwd, display_cwd.as_deref())
-                        .display()
-                        .to_string(),
-                });
+                return Err(xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                    e.to_string(),
+                ));
             }
         };
 
@@ -232,22 +257,28 @@ impl xai_tool_runtime::Tool for GlobTool {
                 .await;
         }
 
-        let _ = child.wait().await;
+        let status = child.wait().await.map_err(|err| {
+            xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                err.to_string(),
+            )
+        })?;
+        if !status.success() && status.code() != Some(1) {
+            return Err(xai_tool_runtime::ToolError::execution(
+                xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
+                format!("ripgrep failed with status {status}"),
+            ));
+        }
 
         // ── Parse file paths from stdout ────────────────────────
         let stdout = String::from_utf8_lossy(&stdout_buf);
         let mut truncated = truncated_by_bytes;
 
-        struct FileEntry {
-            path: PathBuf,
-            mtime_ms: i64,
-        }
-
         // Collect every match so total_count is accurate. Cap stat()s and
         // the returned entry list at RESULT_LIMIT so we don't pay the syscall
         // cost on huge result sets, but keep counting lines past the cap so
         // the truncation marker can report the real overflow.
-        let mut entries: Vec<FileEntry> = Vec::new();
+        let mut entries: Vec<PathBuf> = Vec::new();
         let mut total_count: usize = 0;
         for line in stdout.lines() {
             let line = line.trim();
@@ -262,31 +293,19 @@ impl xai_tool_runtime::Tool for GlobTool {
             }
 
             let full_path = search_dir.join(line);
-            let mtime_ms = std::fs::metadata(&full_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .map(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0);
-
-            entries.push(FileEntry {
-                path: full_path,
-                mtime_ms,
-            });
+            entries.push(full_path);
         }
-
-        // ── Sort by mtime descending (most recent first) ────────
-        entries.sort_by(|a, b| b.mtime_ms.cmp(&a.mtime_ms));
 
         // ── Format output ───────────────────────────────────────
         let count = entries.len();
         let cwd_for_display = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
         let entry_paths: Vec<String> = entries
             .iter()
-            .map(|e| e.path.display().to_string())
+            .map(|path| {
+                path.strip_prefix(&cwd)
+                    .map(|relative| relative.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string())
+            })
             .collect();
 
         let tool_output_for_prompt = if entry_paths.is_empty() {
@@ -295,20 +314,12 @@ impl xai_tool_runtime::Tool for GlobTool {
             let mut lines: Vec<String> = entry_paths.clone();
 
             if truncated {
-                lines.push(String::new());
-                lines.push(format!(
-                    "(Results are truncated: showing first {} results out of more. \
-                     Use a more specific path or pattern to narrow results.)",
-                    RESULT_LIMIT
-                ));
+                lines.push(
+                    "(Results are truncated. Consider using a more specific path or pattern.)"
+                        .to_string(),
+                );
             }
-
-            // Wrap in workspace_result so the model sees the search context.
-            format!(
-                "<workspace_result workspace_path=\"{}\">\n{}\n</workspace_result>",
-                cwd_for_display.display(),
-                lines.join("\n"),
-            )
+            lines.join("\n")
         };
 
         Ok(GlobOutput {
@@ -415,7 +426,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn glob_sorts_by_mtime_most_recent_first() {
+    async fn glob_sorts_by_mtime_oldest_first() {
         let tmp = TempDir::new().unwrap();
 
         // Create files with slight time gaps so mtime differs.
@@ -439,14 +450,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(output.count, 2);
-        // "new.txt" should appear before "old.txt" in the output.
+        // ripgrep --sort=modified lists the oldest file first.
         let new_pos = output.tool_output_for_prompt.find("new.txt").unwrap();
         let old_pos = output.tool_output_for_prompt.find("old.txt").unwrap();
         assert!(
-            new_pos < old_pos,
-            "new.txt should appear before old.txt (mtime sort), got new@{} old@{}",
+            old_pos < new_pos,
+            "old.txt should appear before new.txt (mtime sort), got old@{} new@{}",
+            old_pos,
             new_pos,
-            old_pos
         );
     }
 
@@ -504,6 +515,9 @@ mod tests {
         let back: GlobInput = serde_json::from_value(value).unwrap();
         assert_eq!(back.pattern, "**/*.ts");
         assert_eq!(back.path.as_deref(), Some("src"));
+
+        assert!(serde_json::from_str::<GlobInput>(r#"{"pattern":"*.rs","extra":true}"#).is_err());
+        assert!(serde_json::from_str::<GlobInput>(r#"{"path":"src"}"#).is_err());
     }
 
     #[tokio::test]
@@ -580,6 +594,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn supplied_missing_or_non_directory_path_fails_before_glob() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("not-a-directory.txt");
+        std::fs::write(&file, "data\n").unwrap();
+
+        let tool = GlobTool;
+        let missing = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(test_resources(tmp.path()).into_shared()),
+            GlobInput {
+                pattern: "*.rs".to_string(),
+                path: Some(tmp.path().join("missing").display().to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.to_string().contains("Directory does not exist:"));
+
+        let not_directory = xai_tool_runtime::Tool::run(
+            &tool,
+            test_ctx(test_resources(tmp.path()).into_shared()),
+            GlobInput {
+                pattern: "*.rs".to_string(),
+                path: Some(file.display().to_string()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            not_directory
+                .to_string()
+                .contains("Path is not a directory:")
+        );
+    }
+
+    #[tokio::test]
     async fn missing_cwd_resource() {
         let tool = GlobTool;
         let resources = Resources::new(); // No Cwd inserted
@@ -627,7 +677,9 @@ mod tests {
         assert_eq!(output.count, 100);
         assert!(output.truncated);
         assert!(
-            output.tool_output_for_prompt.contains("showing first 100"),
+            output
+                .tool_output_for_prompt
+                .contains("Results are truncated. Consider using a more specific path or pattern."),
             "expected truncation message, got: {}",
             output.tool_output_for_prompt
         );
@@ -666,15 +718,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gitignore_respected() {
-        // ripgrep's positive --glob overrides .gitignore, so we test the
-        // underlying ignore behavior by using a pattern that doesn't match
-        // the ignored file. Without .gitignore, `rg --files --hidden`
-        // *would* list ignored_dir/ contents, but with .gitignore they are
-        // excluded from results that don't glob-override them.
+    async fn deny_read_globs_excludes_confirmed_match() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("visible.rs"), "visible\n").unwrap();
+        std::fs::write(tmp.path().join("secret.rs"), "secret\n").unwrap();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(DenyReadGlobs(vec!["secret.rs".to_string()]));
+
+        let output = xai_tool_runtime::Tool::run(
+            &GlobTool,
+            test_ctx(resources.into_shared()),
+            GlobInput {
+                pattern: "*.rs".to_string(),
+                path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(output.entries.iter().any(|entry| entry == "visible.rs"));
+        assert!(!output.entries.iter().any(|entry| entry == "secret.rs"));
+    }
+
+    #[tokio::test]
+    async fn no_ignore_includes_gitignored_files() {
         let tmp = TempDir::new().unwrap();
 
-        // Initialize a git repo so ripgrep respects .gitignore.
+        // Initialize a git repo so --no-ignore has an ignore file to bypass.
         xai_test_utils::git::ensure_hermetic_git_on_path();
         let status = std::process::Command::new("git")
             .args(["init"])
@@ -699,9 +769,6 @@ mod tests {
         let tool = GlobTool;
         let resources = test_resources(tmp.path());
 
-        // Pattern **/*.txt would match both files if .gitignore were not in
-        // effect. Because ripgrep processes the ignore stack *before* applying
-        // the glob whitelist for directory ignores, ignored_dir/ is pruned.
         let output = xai_tool_runtime::Tool::run(
             &tool,
             test_ctx(resources.into_shared()),
@@ -719,14 +786,14 @@ mod tests {
             output.tool_output_for_prompt
         );
         assert!(
-            !output.tool_output_for_prompt.contains("secret.txt"),
-            "secret.txt inside ignored_dir/ should be excluded by .gitignore: {}",
+            output.tool_output_for_prompt.contains("secret.txt"),
+            "secret.txt inside ignored_dir/ should be included with --no-ignore: {}",
             output.tool_output_for_prompt
         );
     }
 
     #[tokio::test]
-    async fn output_format_workspace_result() {
+    async fn output_is_plain_cwd_relative_paths() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("example.rs"), "fn main() {}\n").unwrap();
 
@@ -744,24 +811,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(
-            output
-                .tool_output_for_prompt
-                .starts_with("<workspace_result"),
-            "output should start with <workspace_result tag, got: {}",
-            output.tool_output_for_prompt
-        );
-        assert!(
-            output
-                .tool_output_for_prompt
-                .ends_with("</workspace_result>"),
-            "output should end with </workspace_result>, got: {}",
-            output.tool_output_for_prompt
-        );
-        assert!(
-            output.tool_output_for_prompt.contains("workspace_path="),
-            "output should contain workspace_path attribute, got: {}",
-            output.tool_output_for_prompt
-        );
+        assert_eq!(output.tool_output_for_prompt, "example.rs");
+        assert_eq!(output.entries, vec!["example.rs"]);
     }
 }
