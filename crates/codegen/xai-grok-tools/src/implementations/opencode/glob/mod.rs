@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 #[cfg(all(target_os = "macos", bundle_rg))]
 use std::sync::OnceLock;
 
+use serde::{Deserialize, de::Error as _};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -55,8 +56,28 @@ pub struct GlobInput {
     pub pattern: String,
 
     /// Directory to search in. Defaults to the current working directory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub path: Option<String>,
+}
+
+/// Source `z.string().optional()` accepts an omitted `path`, but rejects an
+/// explicit JSON `null`. Serde normally maps both to `None` for
+/// `Option<String>`, so preserve that source distinction at schema parsing.
+fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(D::Error::custom("path must be a string, not null"));
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(D::Error::custom)
 }
 
 impl TryFrom<ToolInput> for GlobInput {
@@ -801,6 +822,14 @@ mod tests {
         let input_min: GlobInput = serde_json::from_str(json_min).unwrap();
         assert_eq!(input_min.pattern, "*.rs");
         assert!(input_min.path.is_none());
+
+        let error = serde_json::from_str::<GlobInput>(r#"{"pattern":"*.rs","path":null}"#)
+            .expect_err("an explicit null path must not be treated as omitted");
+        assert!(
+            error
+                .to_string()
+                .contains("path must be a string, not null")
+        );
 
         // Round-trip through serde_json::Value
         let value = serde_json::to_value(&input).unwrap();
