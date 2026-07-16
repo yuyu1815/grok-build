@@ -1842,6 +1842,50 @@ mod tool_meta_stamp_tests {
             })
             .await;
     }
+
+    /// A source-valid integer outside the target transport must stop before
+    /// permission and dispatch. Leaving the permission response unresolved
+    /// makes an accidental permission request turn this test into a timeout.
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_read_overflow_stops_at_explicit_unsupported_boundary() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut fixture = make_replay_send_update_fixture().await;
+                let (perm_tx, _perm_rx) = mpsc::unbounded_channel();
+                fixture.actor.permissions = PermissionHandle::Actor {
+                    cmd_tx: perm_tx,
+                    yolo_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    auto_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    side_query_wired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    yolo_pin: None,
+                    deny_read_globs: Arc::new(vec![]),
+                    in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                };
+                let call = crate::sampling::types::ToolCallResponse {
+                    id: "source-read-overflow".to_string(),
+                    kind: "function".to_string(),
+                    function: crate::sampling::types::ToolCallFunction::new(
+                        "Read",
+                        serde_json::json!({
+                            "file_path": "src/file.txt",
+                            "offset": "4294967296",
+                        })
+                        .to_string(),
+                    ),
+                };
+
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    fixture.actor.prepare_tool_call(call, &mut Vec::new()),
+                )
+                .await
+                .expect("overflow must not wait for permission")
+                .expect("unsupported handling must not fail ACP");
+                assert!(matches!(result, Err(ToolLoop::ToolParsingError)));
+            })
+            .await;
+    }
 }
 /// Drop guard that records aggregate turn metrics on the current tracing span
 struct TurnMetrics {

@@ -86,6 +86,21 @@ enum SourceIntegerLiteral {
     Invalid,
 }
 
+/// Source-facing `Read` inputs can fail source validation, or they can be
+/// valid Claude inputs that the OpenCode `u32` transport cannot represent.
+/// These must remain distinct: the latter is an explicit unsupported boundary
+/// rather than a generic argument-parse rejection.
+enum SourceReadInputError {
+    Invalid(xai_tool_runtime::ToolError),
+    Unsupported(xai_tool_runtime::ToolError),
+}
+
+impl From<xai_tool_runtime::ToolError> for SourceReadInputError {
+    fn from(error: xai_tool_runtime::ToolError) -> Self {
+        Self::Invalid(error)
+    }
+}
+
 /// Parse a source semantic-number literal without passing through `f64`.
 ///
 /// Strings intentionally use the narrower source decimal grammar, while JSON
@@ -252,9 +267,24 @@ fn validate_source_read_pages(pages: &str) -> Result<(), xai_tool_runtime::ToolE
 
 fn source_read_input_for_registry(
     raw_input: &serde_json::Value,
-) -> Result<serde_json::Value, xai_tool_runtime::ToolError> {
+) -> Result<serde_json::Value, SourceReadInputError> {
     let source_input: SourceReadRequiredInput = serde_json::from_value(raw_input.clone())
         .map_err(|err| xai_tool_runtime::ToolError::invalid_arguments(err.to_string()))?;
+    for value in [&source_input.offset, &source_input.limit]
+        .into_iter()
+        .flatten()
+    {
+        if matches!(
+            source_integer_literal(&value.to_string(), true),
+            SourceIntegerLiteral::OutOfTargetRange
+        ) {
+            return Err(SourceReadInputError::Unsupported(
+                xai_tool_runtime::ToolError::not_implemented(
+                    "unsupported: source-valid Read numeric value exceeds the target u32 transport",
+                ),
+            ));
+        }
+    }
     if let Some(pages) = source_input.pages.as_deref() {
         validate_source_read_pages(pages)?;
     }
@@ -1171,13 +1201,24 @@ impl SessionActor {
         let registry_raw_input = if call.function.name == "Read" {
             match source_read_input_for_registry(&raw_input) {
                 Ok(input) => input,
-                Err(err) => {
+                Err(SourceReadInputError::Invalid(err)) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,
                         &call.id,
                         &call.function.name,
                         err,
                         &call.function.arguments,
+                        &model_id_str,
+                    )
+                    .await?;
+                    return Ok(Err(ToolLoop::ToolParsingError));
+                }
+                Err(SourceReadInputError::Unsupported(err)) => {
+                    self.handle_source_read_unsupported_error(
+                        &tool_call_id,
+                        &call.id,
+                        &call.function.name,
+                        err,
                         &model_id_str,
                     )
                     .await?;
@@ -2204,6 +2245,39 @@ impl SessionActor {
         self.chat_state_handle.push_tool_result(tool_chat);
         Ok(())
     }
+    /// Report a source-valid `Read` request that cannot cross the target's
+    /// fixed-width numeric transport without misrepresenting it as invalid.
+    async fn handle_source_read_unsupported_error(
+        &self,
+        tool_call_id: &acp::ToolCallId,
+        call_id: &str,
+        function_name: &str,
+        err: xai_tool_runtime::ToolError,
+        model_id: &str,
+    ) -> Result<(), acp::Error> {
+        tracing::error!(
+            session_id = % self.session_info.id.0, tool_name = function_name, model_id =
+            model_id, error_kind = "unsupported", error_message = % err,
+            "tool_error: unsupported"
+        );
+        self.signals_handle().record_tool_failure(function_name);
+        let message = err.to_string();
+        self.send_update(
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                tool_call_id.clone(),
+                acp::ToolCallUpdateFields::new()
+                    .status(Some(acp::ToolCallStatus::Failed))
+                    .content(Some(vec![acp::ToolCallContent::from(
+                        acp::ContentBlock::Text(acp::TextContent::new(message.clone())),
+                    )])),
+            )),
+            None,
+        )
+        .await;
+        self.chat_state_handle
+            .push_tool_result(ConversationItem::tool_result(call_id.to_string(), message));
+        Ok(())
+    }
     /// Sweep `pending_inputs` and `pending_notifications` for entries
     /// matching `consumed_ids`. Called after every successful tool result
     /// so that queued auto-wake synthetic prompts for a task/subagent the
@@ -2939,7 +3013,7 @@ fn execute_tool_call_parts(
 #[cfg(test)]
 mod permission_access_classification_tests {
     use super::{
-        access_kind_for_permission_request, registry_tool_name_for_source,
+        SourceReadInputError, access_kind_for_permission_request, registry_tool_name_for_source,
         source_read_input_for_registry, validate_source_read_pages,
     };
     use std::path::Path;
@@ -3079,6 +3153,21 @@ mod permission_access_classification_tests {
         assert_eq!(mapped["offset"], 0);
         // OpenCode's Read body currently rejects this before I/O. Do not turn
         // that target mismatch into source validation failure here.
+    }
+
+    #[test]
+    fn source_read_u32_overflow_is_explicit_unsupported_not_invalid_input() {
+        for value in [
+            serde_json::json!(4_294_967_296u64),
+            serde_json::json!("4294967296"),
+        ] {
+            let error = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.txt",
+                "offset": value,
+            }))
+            .expect_err("source-valid overflow must stop at the unsupported boundary");
+            assert!(matches!(error, SourceReadInputError::Unsupported(_)));
+        }
     }
 
     #[test]
