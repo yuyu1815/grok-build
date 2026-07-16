@@ -53,22 +53,51 @@ async fn tool_result_text(actor: &SessionActor, call_id: &str) -> String {
         .expect("source-facing failure must produce a model-facing tool_result")
 }
 
-#[test]
-fn source_grep_accepts_the_full_source_field_surface() {
-    let mut raw = serde_json::json!({
-        "pattern": "x", "glob": "*.rs", "output_mode": "content",
-        "-B": 1, "-A": 2, "-C": 3, "context": 4, "-n": true,
-        "-i": true, "type": "rust", "head_limit": 10, "offset": 2,
-        "multiline": true
-    });
-    let result = prepare_source_grep_input(&mut raw, std::path::Path::new("/tmp"), None);
-    assert!(matches!(result, Ok(SourceGrepPreparation::Dispatch { .. })));
-    assert!(
-        raw["pattern"]
-            .as_str()
-            .unwrap()
-            .starts_with("__CLAUDE_CODE_GREP__")
-    );
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_marker_is_isolated_to_the_uppercase_route() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+
+            let uppercase = prepare(
+                &actor,
+                tool_call(
+                    "uppercase",
+                    "Grep",
+                    r#"{"pattern":"x","glob":"*.rs","output_mode":"content","-B":1,"-A":2,"-C":3,"context":4,"-n":true,"-i":true,"type":"rust","head_limit":10,"offset":2,"multiline":true}"#,
+                ),
+            )
+            .await
+            .expect("source Grep should prepare through the uppercase route");
+            assert!(uppercase.source_facing_grep);
+            assert_eq!(uppercase.registry_tool_name, "grep");
+            assert!(
+                uppercase.parsed_args["pattern"]
+                    .as_str()
+                    .expect("source route must retain its private marker")
+                    .starts_with("__CLAUDE_CODE_GREP__")
+            );
+
+            let marker = r#"__CLAUDE_CODE_GREP__{"pattern":"x"}"#;
+            let lowercase = prepare(
+                &actor,
+                tool_call(
+                    "lowercase_marker",
+                    "grep",
+                    &format!(
+                        r#"{{"pattern":{}}}"#,
+                        serde_json::to_string(marker).unwrap()
+                    ),
+                ),
+            )
+            .await
+            .expect("lowercase grep must keep accepting the legacy marker as a search pattern");
+            assert!(!lowercase.source_facing_grep);
+            assert_eq!(lowercase.registry_tool_name, "grep");
+            assert_eq!(lowercase.parsed_args["pattern"], marker);
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
