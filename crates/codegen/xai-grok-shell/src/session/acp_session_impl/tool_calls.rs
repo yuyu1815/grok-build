@@ -26,6 +26,38 @@ const CLAUDE_GREP_UNSUPPORTED_FIELDS: &[&str] = &[
     "multiline",
 ];
 
+const CLAUDE_WRITE_SCHEMA_UNRESOLVED: &str = "unsupported/unresolved: exact Claude Write schema diagnostic and ACP payload are not established";
+
+/// Validate the strict source-facing Write object without changing the shared
+/// lowercase OpenCode `write` parser. The source object is deliberately checked
+/// before the resolver, permission request, and dispatch.
+fn validate_source_write_input(
+    raw_input: &serde_json::Value,
+) -> Result<(), xai_tool_runtime::ToolError> {
+    let Some(object) = raw_input.as_object() else {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(
+            CLAUDE_WRITE_SCHEMA_UNRESOLVED,
+        ));
+    };
+
+    let valid_keys = object.len() == 2
+        && object.contains_key("file_path")
+        && object.contains_key("content")
+        && object
+            .get("file_path")
+            .is_some_and(serde_json::Value::is_string)
+        && object
+            .get("content")
+            .is_some_and(serde_json::Value::is_string);
+    if valid_keys {
+        Ok(())
+    } else {
+        Err(xai_tool_runtime::ToolError::invalid_arguments(
+            CLAUDE_WRITE_SCHEMA_UNRESOLVED,
+        ))
+    }
+}
+
 /// A source `Grep` request with a source-schema field that has no approved
 /// lowercase OpenCode mapping must not fall through serde's unknown-field
 /// handling into an `rg` invocation.
@@ -972,6 +1004,20 @@ impl SessionActor {
                 }
             }
         };
+        if call.function.name == "Write"
+            && let Err(err) = validate_source_write_input(&raw_input)
+        {
+            self.handle_tool_parse_error(
+                &tool_call_id,
+                &call.id,
+                &call.function.name,
+                err,
+                &call.function.arguments,
+                &model_id_str,
+            )
+            .await?;
+            return Ok(Err(ToolLoop::ToolParsingError));
+        }
         if source_grep_has_unsupported_field(&call.function.name, &raw_input) {
             self.handle_tool_not_executed(
                 &call.id,

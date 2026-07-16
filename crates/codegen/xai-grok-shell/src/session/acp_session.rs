@@ -1849,7 +1849,7 @@ mod claude_write_permission_tests {
                         write_call(
                             "call-lowercase-write",
                             "write",
-                            r#"{"file_path":"/display-worktree/unchanged.txt","content":"new"}"#,
+                            r#"{"file_path":"/display-worktree/unchanged.txt","content":"new","extra":true}"#,
                         ),
                         &mut Vec::new(),
                     )
@@ -1865,6 +1865,54 @@ mod claude_write_permission_tests {
                     ],
                     "only source-facing Write may use the resolver before permission"
                 );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_write_strict_invalid_inputs_fail_before_permission() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                for (id, arguments) in [
+                    (
+                        "extra",
+                        r#"{"file_path":"/tmp/no-side-effect.txt","content":"new","extra":true}"#,
+                    ),
+                    ("missing-path", r#"{"content":"new"}"#),
+                    (
+                        "missing-content",
+                        r#"{"file_path":"/tmp/no-side-effect.txt"}"#,
+                    ),
+                    ("wrong-path-type", r#"{"file_path":42,"content":"new"}"#),
+                    (
+                        "wrong-content-type",
+                        r#"{"file_path":"/tmp/no-side-effect.txt","content":42}"#,
+                    ),
+                ] {
+                    let fixture = write_actor().await;
+                    let (permission_tx, mut permission_rx) = mpsc::unbounded_channel();
+                    fixture.actor.permissions = PermissionHandle::Actor {
+                        cmd_tx: permission_tx,
+                        yolo_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        auto_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        side_query_wired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                        yolo_pin: None,
+                        deny_read_globs: Arc::new(vec![]),
+                        in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                    };
+                    let outcome = fixture
+                        .actor
+                        .prepare_tool_call(write_call(id, "Write", arguments), &mut Vec::new())
+                        .await
+                        .expect("schema failure should remain on ACP/model-facing route");
+                    assert!(matches!(outcome, Err(ToolLoop::ToolParsingError)));
+                    assert!(
+                        permission_rx.try_recv().is_err(),
+                        "invalid input requested permission"
+                    );
+                    assert!(!last_tool_result(&fixture.actor, id).await.is_empty());
+                }
             })
             .await;
     }
