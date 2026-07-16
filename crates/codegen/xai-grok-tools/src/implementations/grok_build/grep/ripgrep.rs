@@ -79,3 +79,10 @@ pub fn rg_path() -> PathBuf {
         })
         .clone()
 }
+
+/// Whether [`rg_path`] selected the bundled executable rather than a system
+/// command. This is deliberately compile-time: only the bundled binary has
+/// the macOS codesign/quarantine lifecycle from the source contract.
+pub const fn uses_bundled_rg() -> bool {
+    cfg!(bundle_rg)
+}

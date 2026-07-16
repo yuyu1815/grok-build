@@ -8,15 +8,18 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+#[cfg(all(target_os = "macos", bundle_rg))]
+use std::sync::OnceLock;
+
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::implementations::grok_build::grep::ripgrep::rg_path;
+use crate::implementations::grok_build::grep::ripgrep::{rg_path, uses_bundled_rg};
 use crate::types::output::ToolOutput;
 #[allow(unused_imports)]
 use crate::types::resources::{
-    Cwd, DenyReadGlobs, DisplayCwd, SharedResources, display_cwd_or_cwd, resolve_model_path,
+    Cwd, DenyReadGlobs, DisplayCwd, Params, SharedResources, display_cwd_or_cwd, resolve_model_path,
 };
 use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::tool_io::ToolInput;
@@ -25,24 +28,22 @@ use crate::types::tool_io::ToolInput;
 
 const DEFAULT_RESULT_LIMIT: usize = 100;
 
-/// Per-call result limit supplied by a Claude-compatible dispatcher.
-///
-/// The source tool receives this as `globLimits.maxResults`; keeping it as an
-/// optional call-context extension preserves the source default when the
-/// surrounding Rust dispatcher has no configured limit.
-#[derive(Debug, Clone, Copy)]
-pub struct GlobLimits {
-    pub max_results: usize,
+/// Per-tool configuration supplied through the production registry.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobParams {
+    /// Source `globLimits.maxResults`; omitted uses the source default (100).
+    pub max_results: Option<usize>,
 }
+crate::register_resource!("opencode", "Glob", GlobParams);
 
 // ─── Description ────────────────────────────────────────────────────
 
-const DESCRIPTION: &str = r#"Lists files and directories in a given path.
-
-Other details:
-    - The result does not display dot-files and dot-directories.
-    - Respects .gitignore patterns (files/directories ignored by git are not shown).
-    - Large directories are summarized with file counts and extension breakdowns instead of listing all files."#;
+const DESCRIPTION: &str = r#"- Fast file pattern matching tool that works with any codebase size
+- Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Returns matching file paths sorted by modification time
+- Use this tool when you need to find files by name or path pattern
+- For content search, use Grep instead"#;
 
 // ─── Input ──────────────────────────────────────────────────────────
 
@@ -137,12 +138,14 @@ fn env_flag(name: &str) -> bool {
 }
 
 fn timeout_duration() -> Duration {
-    if let Ok(value) = std::env::var("CLAUDE_CODE_GLOB_TIMEOUT_SECONDS") {
-        if let Ok(seconds) = value.parse::<u64>() {
-            if seconds > 0 {
-                return Duration::from_secs(seconds);
-            }
-        }
+    // JavaScript `parseInt(value || '', 10) || 0`: consume a leading integer,
+    // then fall back for zero, negative, NaN, empty, and unset values.
+    if let Some(seconds) = std::env::var("CLAUDE_CODE_GLOB_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| parse_js_int(&value))
+        .filter(|seconds| *seconds > 0)
+    {
+        return Duration::from_secs(seconds as u64);
     }
     if std::env::var_os("WSL_DISTRO_NAME").is_some() {
         Duration::from_secs(60)
@@ -151,8 +154,111 @@ fn timeout_duration() -> Duration {
     }
 }
 
+fn parse_js_int(value: &str) -> Option<i64> {
+    let value = value.trim_start();
+    let (negative, digits) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
+    let prefix: String = digits
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    if prefix.is_empty() {
+        return None;
+    }
+    prefix
+        .parse::<i64>()
+        .ok()
+        .map(|number| if negative { -number } else { number })
+}
+
+/// Source `codesignRipgrepIfNecessary()` may mutate the bundled macOS binary
+/// before every search attempt, but performs the check at most once per process.
+async fn codesign_ripgrep_if_necessary() {
+    #[cfg(all(target_os = "macos", bundle_rg))]
+    {
+        static CHECKED: OnceLock<()> = OnceLock::new();
+        if CHECKED.set(()).is_err() || !uses_bundled_rg() {
+            return;
+        }
+        let binary = rg_path();
+        let check = Command::new("codesign")
+            .args(["-vv", "-d"])
+            .arg(&binary)
+            .output()
+            .await;
+        let Ok(check) = check else {
+            tracing::debug!(path = %binary.display(), "ripgrep codesign check failed");
+            return;
+        };
+        if !String::from_utf8_lossy(&check.stdout).contains("linker-signed") {
+            return;
+        }
+        if let Err(error) = Command::new("codesign")
+            .args([
+                "--sign",
+                "-",
+                "--force",
+                "--preserve-metadata=entitlements,requirements,flags,runtime",
+            ])
+            .arg(&binary)
+            .status()
+            .await
+        {
+            tracing::debug!(%error, path = %binary.display(), "ripgrep codesign repair failed");
+        }
+        if let Err(error) = Command::new("xattr")
+            .args(["-d", "com.apple.quarantine"])
+            .arg(&binary)
+            .status()
+            .await
+        {
+            tracing::debug!(%error, path = %binary.display(), "ripgrep quarantine removal failed");
+        }
+    }
+    #[cfg(not(all(target_os = "macos", bundle_rg)))]
+    {
+        let _ = uses_bundled_rg;
+    }
+}
+
 fn is_unc_path(path: &str) -> bool {
     path.starts_with("\\\\") || path.starts_with("//")
+}
+
+/// Source Glob validation runs after schema parsing and before permission
+/// resolution. Kept public so the Claude-facing dispatcher can preserve that
+/// ordering; `run` repeats it for lowercase/direct registry callers.
+pub async fn validate_path_metadata(
+    permission_path: &Path,
+    supplied_path: Option<&str>,
+) -> Result<(), xai_tool_runtime::ToolError> {
+    let Some(path) = supplied_path.filter(|path| !path.is_empty()) else {
+        return Ok(());
+    };
+    // Claude Code deliberately avoids filesystem operations for UNC paths to
+    // prevent credential leakage; permission handling owns the next decision.
+    if is_unc_path(path) {
+        return Ok(());
+    }
+    let metadata = tokio::fs::metadata(permission_path).await.map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            xai_tool_runtime::ToolError::invalid_arguments(format!(
+                "Directory does not exist: {path}."
+            ))
+            .with_details(serde_json::json!({"errorCode": 1}))
+        } else {
+            xai_tool_runtime::ToolError::execution(tool_id(), err.to_string())
+        }
+    })?;
+    if !metadata.is_dir() {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Path is not a directory: {path}"
+        ))
+        .with_details(serde_json::json!({"errorCode": 2})));
+    }
+    Ok(())
 }
 
 fn absolute_pattern_root(pattern: &str) -> Option<(PathBuf, String)> {
@@ -210,17 +316,25 @@ fn timeout_error() -> xai_tool_runtime::ToolError {
 /// removes CR/empty lines, then unconditionally drops the final parsed line
 /// for timeout/cancellation failures. It does not inspect newline completeness.
 fn retained_timeout_lines(stdout: &[u8]) -> Vec<String> {
-    let text = String::from_utf8_lossy(stdout);
-    let mut lines: Vec<String> = text
-        .trim()
-        .split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
-        .filter(|line| !line.is_empty())
-        .collect();
+    let mut lines = source_lines(&String::from_utf8_lossy(stdout));
     if !lines.is_empty() {
         lines.pop();
     }
     lines
+}
+
+/// Match `stdout.trim().split('\\n')`, preserving whitespace that belongs to
+/// a filename while dropping only empty records and a trailing carriage return.
+fn source_lines(stdout: &str) -> Vec<String> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    trimmed
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
 }
 
 async fn run_ripgrep(
@@ -390,6 +504,12 @@ impl xai_tool_runtime::Tool for GlobTool {
             .get::<DenyReadGlobs>()
             .map(|d| d.0.clone())
             .unwrap_or_default();
+        let result_limit = resources
+            .lock()
+            .await
+            .get::<Params<GlobParams>>()
+            .and_then(|params| params.max_results)
+            .unwrap_or(DEFAULT_RESULT_LIMIT);
 
         let permission_path = resolve_model_path(
             &cwd,
@@ -397,32 +517,7 @@ impl xai_tool_runtime::Tool for GlobTool {
             &input.path.clone().unwrap_or_default(),
         );
 
-        if let Some(path) = input.path.as_deref().filter(|path| !path.is_empty()) {
-            // Claude Code deliberately avoids filesystem operations for UNC
-            // paths to prevent credential leakage; permission handling owns
-            // the subsequent decision for those paths.
-            if !is_unc_path(path) {
-                let metadata = tokio::fs::metadata(&permission_path).await.map_err(|err| {
-                    if err.kind() == std::io::ErrorKind::NotFound {
-                        xai_tool_runtime::ToolError::invalid_arguments(format!(
-                            "Directory does not exist: {path}."
-                        ))
-                        .with_details(serde_json::json!({"errorCode": 1}))
-                    } else {
-                        xai_tool_runtime::ToolError::execution(
-                            xai_tool_protocol::ToolId::new("glob").expect("valid tool id"),
-                            err.to_string(),
-                        )
-                    }
-                })?;
-                if !metadata.is_dir() {
-                    return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
-                        "Path is not a directory: {path}"
-                    ))
-                    .with_details(serde_json::json!({"errorCode": 2})));
-                }
-            }
-        }
+        validate_path_metadata(&permission_path, input.path.as_deref()).await?;
 
         let (search_dir, search_pattern) = absolute_pattern_root(&input.pattern).map_or(
             (permission_path.clone(), input.pattern.clone()),
@@ -448,25 +543,36 @@ impl xai_tool_runtime::Tool for GlobTool {
             .get::<xai_tool_runtime::Cancellation>()
             .map(|value| value.0.clone())
             .unwrap_or_default();
-        let result_limit = ctx
-            .get::<GlobLimits>()
-            .map(|limits| limits.max_results)
-            .unwrap_or(DEFAULT_RESULT_LIMIT);
         let started = Instant::now();
+        codesign_ripgrep_if_necessary().await;
         let mut result = run_ripgrep(&args, &search_dir, &cancellation).await?;
+        let is_critical = |result: &RipgrepOutput| {
+            result.stderr.contains("ENOENT")
+                || result.stderr.contains("EACCES")
+                || result.stderr.contains("EPERM")
+        };
+        // Source checks critical process errors before the EAGAIN retry branch.
+        if !result.status.success() && result.status.code() != Some(1) && is_critical(&result) {
+            return Err(xai_tool_runtime::ToolError::execution(
+                tool_id(),
+                format!(
+                    "ripgrep failed with status {}: {}",
+                    result.status,
+                    result.stderr.trim()
+                ),
+            ));
+        }
         if !result.status.success()
             && result.status.code() != Some(1)
             && (result.stderr.contains("os error 11")
                 || result.stderr.contains("Resource temporarily unavailable"))
         {
+            tracing::info!(target: "tools.glob", "tengu_ripgrep_eagain_retry");
             args.splice(0..0, ["-j".to_string(), "1".to_string()]);
             result = run_ripgrep(&args, &search_dir, &cancellation).await?;
         }
         if !result.status.success() && result.status.code() != Some(1) {
-            let critical = result.stderr.contains("ENOENT")
-                || result.stderr.contains("EACCES")
-                || result.stderr.contains("EPERM");
-            if critical {
+            if is_critical(&result) {
                 return Err(xai_tool_runtime::ToolError::execution(
                     tool_id(),
                     format!(
@@ -479,14 +585,7 @@ impl xai_tool_runtime::Tool for GlobTool {
             if !result.partial_failure_handled {
                 // A normal noncritical rg failure may still expose all complete
                 // partial lines. Timeout/cancellation were transformed above.
-                result.stdout = result
-                    .stdout
-                    .trim()
-                    .split('\n')
-                    .map(|line| line.strip_suffix('\r').unwrap_or(line))
-                    .filter(|line| !line.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                result.stdout = source_lines(&result.stdout).join("\n");
             }
         }
 
@@ -496,11 +595,7 @@ impl xai_tool_runtime::Tool for GlobTool {
 
         // Keep the source order and apply the default limit after rg sorting.
         let mut entries: Vec<PathBuf> = Vec::new();
-        for line in stdout.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
+        for line in source_lines(&stdout) {
             if entries.len() >= result_limit {
                 truncated = true;
                 continue;
@@ -889,11 +984,13 @@ mod tests {
             std::fs::write(tmp.path().join(format!("file_{i}.txt")), "data\n").unwrap();
         }
 
-        let mut ctx = test_ctx(test_resources(tmp.path()).into_shared());
-        ctx.insert(GlobLimits { max_results: 2 });
+        let mut resources = test_resources(tmp.path());
+        resources.insert(Params(GlobParams {
+            max_results: Some(2),
+        }));
         let output = xai_tool_runtime::Tool::run(
             &GlobTool,
-            ctx,
+            test_ctx(resources.into_shared()),
             GlobInput {
                 pattern: "*.txt".to_string(),
                 path: None,
@@ -924,10 +1021,35 @@ mod tests {
     }
 
     #[test]
+    fn source_line_parsing_trims_the_stream_not_each_filename() {
+        assert_eq!(
+            source_lines("first.rs\n  name.rs  \r\nlast.rs\n"),
+            vec!["first.rs", "  name.rs  ", "last.rs"]
+        );
+        assert_eq!(source_lines(" \n "), Vec::<String>::new());
+    }
+
+    #[test]
     fn timeout_error_uses_the_source_fixed_message() {
         let message = timeout_error().to_string();
         assert!(message.contains("Ripgrep search timed out after "));
         assert!(message.contains("Try searching a more specific path or pattern."));
+    }
+
+    #[test]
+    fn timeout_uses_javascript_parse_int_semantics() {
+        assert_eq!(parse_js_int("12x"), Some(12));
+        assert_eq!(parse_js_int("  +12x"), Some(12));
+        assert_eq!(parse_js_int("-1"), Some(-1));
+        assert_eq!(parse_js_int("x12"), None);
+        assert_eq!(parse_js_int(""), None);
+    }
+
+    #[test]
+    fn glob_description_matches_the_file_matching_tool_contract() {
+        assert!(DESCRIPTION.contains("Fast file pattern matching"));
+        assert!(DESCRIPTION.contains("For content search, use Grep instead"));
+        assert!(!DESCRIPTION.contains("Large directories are summarized"));
     }
 
     #[tokio::test]

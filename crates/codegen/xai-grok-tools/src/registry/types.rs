@@ -702,7 +702,7 @@ impl ToolRegistryBuilder {
         b.register::<opencode::OpenCodeEditTool>();
         b.register::<opencode::OpenCodeWriteTool>();
         b.register::<opencode::OpenCodeGrepTool>();
-        b.register::<opencode::OpenCodeGlobTool>();
+        b.register_with_params::<opencode::OpenCodeGlobTool, opencode::glob::GlobParams>();
         b.register::<opencode::OpenCodeTodoWriteTool>();
         b.register::<opencode::OpenCodeSkillTool>();
         b.register::<crate::implementations::memory::search_tool::MemorySearchImpl>();

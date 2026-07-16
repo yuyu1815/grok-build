@@ -923,7 +923,10 @@ impl SessionActor {
             }
         };
         let access_kind = if call.function.name == "Glob" {
-            use xai_grok_tools::types::resources::{Cwd, DisplayCwd, resolve_model_path};
+            use xai_grok_tools::{
+                implementations::opencode::glob::validate_path_metadata,
+                types::resources::{Cwd, DisplayCwd, resolve_model_path},
+            };
 
             let bridge = self.tool_bridge_handle();
             let resources = bridge.shared_resources().await;
@@ -939,11 +942,22 @@ impl SessionActor {
                 .get("path")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            AccessKind::Read(Some(
-                resolve_model_path(&cwd, display_cwd.as_deref(), path)
-                    .display()
-                    .to_string(),
-            ))
+            let permission_path = resolve_model_path(&cwd, display_cwd.as_deref(), path);
+            if let Err(error) = validate_path_metadata(&permission_path, Some(path)).await {
+                let error: anyhow::Error = error.into();
+                let _ = self
+                    .handle_tool_error(
+                        &tool_call_id,
+                        &call.id,
+                        &call.function.name,
+                        source_facing_registry_target(&call.function.name),
+                        &error,
+                        &model_id_str,
+                    )
+                    .await;
+                return Ok(Err(ToolLoop::Continue));
+            }
+            AccessKind::Read(Some(permission_path.display().to_string()))
         } else {
             AccessKind::from(&tool_input)
         };
