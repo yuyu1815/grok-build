@@ -37,11 +37,11 @@ const SOURCE_READ_MAX_PAGES: i64 = 20;
 struct SourceReadRequiredInput {
     file_path: String,
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_semantic_u32_opt")]
-    offset: Option<u32>,
+    #[serde(deserialize_with = "deserialize_semantic_number_opt")]
+    offset: Option<serde_json::Number>,
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_semantic_u32_opt")]
-    limit: Option<u32>,
+    #[serde(deserialize_with = "deserialize_semantic_number_opt")]
+    limit: Option<serde_json::Number>,
     #[serde(default)]
     pages: Option<String>,
 }
@@ -50,14 +50,13 @@ struct SourceReadRequiredInput {
 /// number before the inner integer constraint is applied. Other strings are
 /// left invalid, rather than accepting JavaScript `Number` coercions such as
 /// the empty string or whitespace.
-fn deserialize_semantic_u32_opt<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+fn deserialize_semantic_number_opt<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Number>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    let Some(value) = value else {
-        return Ok(None);
-    };
+    let value = serde_json::Value::deserialize(deserializer)?;
     let number = match value {
         serde_json::Value::Number(number) => number.as_f64(),
         serde_json::Value::String(string) if is_decimal_number_literal(&string) => {
@@ -68,10 +67,15 @@ where
     let Some(number) = number.filter(|number| number.is_finite()) else {
         return Err(serde::de::Error::custom("expected a finite decimal number"));
     };
-    if number < 0.0 || number.fract() != 0.0 || number > u32::MAX as f64 {
+    if number < 0.0 || number.fract() != 0.0 {
         return Err(serde::de::Error::custom("expected a non-negative integer"));
     }
-    Ok(Some(number as u32))
+    // Preserve source-valid values even where the registered target's `u32`
+    // transport cannot carry them; that unresolved target outcome is not a
+    // source-schema rejection.
+    let number = serde_json::Number::from_f64(number)
+        .ok_or_else(|| serde::de::Error::custom("expected a finite decimal number"))?;
+    Ok(Some(number))
 }
 
 fn is_decimal_number_literal(value: &str) -> bool {
@@ -96,13 +100,13 @@ fn is_decimal_number_literal(value: &str) -> bool {
     bytes[index + 1..].iter().all(|byte| byte.is_ascii_digit())
 }
 
-fn parse_js_int_prefix(value: &str) -> Option<i64> {
+fn parse_js_int_prefix(value: &str) -> Option<f64> {
     let value = value.trim_start();
     let (sign, digits) = match value.strip_prefix('-') {
-        Some(rest) => (-1, rest),
+        Some(rest) => (-1.0, rest),
         None => match value.strip_prefix('+') {
-            Some(rest) => (1, rest),
-            None => (1, value),
+            Some(rest) => (1.0, rest),
+            None => (1.0, value),
         },
     };
     let digits = digits
@@ -122,7 +126,7 @@ fn digits_from_prefix_source(value: &str) -> &str {
     value.strip_prefix(['-', '+']).unwrap_or(value)
 }
 
-fn digits_from_prefix(value: &str, count: usize) -> Option<i64> {
+fn digits_from_prefix(value: &str, count: usize) -> Option<f64> {
     value[..count].parse().ok()
 }
 
@@ -136,13 +140,13 @@ fn validate_source_read_pages(pages: &str) -> Result<(), xai_tool_runtime::ToolE
 
     let range = if let Some(prefix) = trimmed.strip_suffix('-') {
         let first = parse_js_int_prefix(prefix);
-        first.map(|first| (first, i64::MAX))
+        first.map(|first| (first, None))
     } else if let Some(dash) = trimmed.find('-') {
         let first = parse_js_int_prefix(&trimmed[..dash]);
         let last = parse_js_int_prefix(&trimmed[dash + 1..]);
-        first.zip(last)
+        first.zip(last).map(|(first, last)| (first, Some(last)))
     } else {
-        parse_js_int_prefix(trimmed).map(|page| (page, page))
+        parse_js_int_prefix(trimmed).map(|page| (page, Some(page)))
     };
 
     let Some((first, last)) = range else {
@@ -150,12 +154,13 @@ fn validate_source_read_pages(pages: &str) -> Result<(), xai_tool_runtime::ToolE
             "Invalid pages parameter: \"{pages}\""
         )));
     };
-    if first < 1 || last < 1 || last < first {
+    if first < 1.0 || last.is_some_and(|last| last < 1.0 || last < first) {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
             "Invalid pages parameter: \"{pages}\""
         )));
     }
-    if last == i64::MAX || last.saturating_sub(first).saturating_add(1) > SOURCE_READ_MAX_PAGES {
+    if last.is_none() || last.is_some_and(|last| last - first + 1.0 > SOURCE_READ_MAX_PAGES as f64)
+    {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
             "Page range \"{pages}\" exceeds maximum of {SOURCE_READ_MAX_PAGES} pages per request"
         )));
@@ -171,7 +176,11 @@ fn source_read_input_for_registry(
     if let Some(pages) = source_input.pages.as_deref() {
         validate_source_read_pages(pages)?;
     }
-    if source_input.limit == Some(0) {
+    if source_input
+        .limit
+        .as_ref()
+        .is_some_and(|limit| limit.as_f64() == Some(0.0))
+    {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(
             "limit must be greater than 0".to_string(),
         ));
@@ -189,11 +198,11 @@ fn source_read_input_for_registry(
     // strings. `PreparedToolCall.parsed_args` is populated from this object.
     object.remove("offset");
     if let Some(offset) = source_input.offset {
-        object.insert("offset".to_string(), serde_json::Value::from(offset));
+        object.insert("offset".to_string(), serde_json::Value::Number(offset));
     }
     object.remove("limit");
     if let Some(limit) = source_input.limit {
-        object.insert("limit".to_string(), serde_json::Value::from(limit));
+        object.insert("limit".to_string(), serde_json::Value::Number(limit));
     }
     object.remove("pages");
     Ok(registry_input)
@@ -2899,10 +2908,10 @@ mod permission_access_classification_tests {
 
     #[test]
     fn source_read_pages_use_parse_int_prefix_and_maximum_boundary() {
-        for pages in ["1x", "1x-2y", " 20 ", "+1x", "+1x-+2y"] {
+        for pages in ["1x", "1x-2y", " 20 ", "21", "+1x", "+1x-+2y"] {
             assert!(validate_source_read_pages(pages).is_ok(), "{pages}");
         }
-        for pages in ["", "x", "0", "-1", "2-1", "21", "3-"] {
+        for pages in ["", "x", "0", "-1", "2-1", "1-21", "3-"] {
             assert!(validate_source_read_pages(pages).is_err(), "{pages}");
         }
     }
@@ -2947,6 +2956,7 @@ mod permission_access_classification_tests {
             serde_json::json!("1e2"),
             serde_json::json!("1.5"),
             serde_json::json!(-1),
+            serde_json::json!(null),
         ] {
             assert!(
                 source_read_input_for_registry(&serde_json::json!({
@@ -2987,6 +2997,36 @@ mod permission_access_classification_tests {
         assert_eq!(mapped["offset"], 0);
         // OpenCode's Read body currently rejects this before I/O. Do not turn
         // that target mismatch into source validation failure here.
+    }
+
+    #[test]
+    fn source_read_rejects_top_level_null_before_registry_mapping() {
+        assert!(source_read_input_for_registry(&serde_json::Value::Null).is_err());
+    }
+
+    #[test]
+    fn source_read_keeps_source_valid_values_beyond_u32_for_target_transport() {
+        let mapped = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": 4_294_967_296_u64,
+            "limit": "4294967296"
+        }))
+        .expect("source semanticNumber has no u32 bound");
+        assert_eq!(mapped["offset"], 4_294_967_296_u64);
+        assert_eq!(mapped["limit"], 4_294_967_296_u64);
+    }
+
+    #[test]
+    fn source_read_accepts_arbitrary_digit_single_pages_without_new_width_rule() {
+        let pages = "9".repeat(400);
+        assert!(validate_source_read_pages(&pages).is_ok());
+        assert!(
+            source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.pdf",
+                "pages": pages,
+            }))
+            .is_ok()
+        );
     }
 }
 

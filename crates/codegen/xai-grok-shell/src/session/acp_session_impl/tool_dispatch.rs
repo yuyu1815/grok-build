@@ -15,10 +15,7 @@ pub(super) async fn dispatch_tool(
     prepared: &PreparedToolCall,
     session_id: &str,
 ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
-    let dispatch_name = prepared
-        .dispatch_target_name
-        .as_deref()
-        .unwrap_or(&prepared.tool_name);
+    let (dispatch_name, dispatch_args) = dispatch_target_and_args(prepared);
     tracing::debug!(
         tool = %dispatch_name,
         call_id = %prepared.tool_call_id.0,
@@ -29,11 +26,58 @@ pub(super) async fn dispatch_tool(
     workspace_ops
         .call_tool(
             dispatch_name,
-            prepared.parsed_args.clone(),
+            dispatch_args.clone(),
             &prepared.tool_call_id.0,
             Some(session_id),
         )
         .await
+}
+
+/// The exact tool name and transformed arguments passed to
+/// [`WorkspaceOps::call_tool`]. Kept as a single seam so source-facing
+/// adapters cannot resolve a registry name or convert fields and then lose
+/// either value before the real workspace dispatch.
+fn dispatch_target_and_args(prepared: &PreparedToolCall) -> (&str, &serde_json::Value) {
+    (
+        prepared
+            .dispatch_target_name
+            .as_deref()
+            .unwrap_or(&prepared.tool_name),
+        &prepared.parsed_args,
+    )
+}
+
+#[cfg(test)]
+mod dispatch_seam_tests {
+    use super::dispatch_target_and_args;
+    use crate::session::acp_session::PreparedToolCall;
+    use std::sync::Arc;
+
+    #[test]
+    fn source_read_transformed_payload_reaches_workspace_dispatch_seam() {
+        let prepared = PreparedToolCall {
+            call_id: "call-1".to_string(),
+            tool_call_id: acp::ToolCallId::new(Arc::from("call-1")),
+            tool_name: "Read".to_string(),
+            raw_arguments: r#"{"file_path":"src/file.txt","offset":"2","limit":"3.0"}"#.to_string(),
+            parsed_args: serde_json::json!({
+                "filePath": "src/file.txt",
+                "offset": 2,
+                "limit": 3,
+            }),
+            model_id: "test".to_string(),
+            concatenated_json_count: 0,
+            dispatch_target_name: Some("read".to_string()),
+            is_read_only: true,
+        };
+
+        let (name, args) = dispatch_target_and_args(&prepared);
+        assert_eq!(name, "read");
+        assert_eq!(args["filePath"], "src/file.txt");
+        assert_eq!(args["offset"], 2);
+        assert_eq!(args["limit"], 3);
+        assert!(args.get("file_path").is_none());
+    }
 }
 
 /// First string-valued argument among `keys`, in priority order.
