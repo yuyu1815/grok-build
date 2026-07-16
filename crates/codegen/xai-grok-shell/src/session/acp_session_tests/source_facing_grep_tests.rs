@@ -1,7 +1,4 @@
-//! Source-facing `Grep` routing and unsupported-field failures through the
-//! session pre-flight boundary. These tests intentionally stop before rg
-//! dispatch; they exercise only parser selection, cwd canonicalization, and
-//! model-facing failure delivery.
+//! Source-facing `Grep` routing through the session pre-flight boundary.
 
 use super::support::*;
 use super::*;
@@ -57,18 +54,16 @@ async fn tool_result_text(actor: &SessionActor, call_id: &str) -> String {
 }
 
 #[test]
-fn every_unsupported_source_grep_field_is_rejected_in_contract_order() {
-    for field in SOURCE_GREP_UNSUPPORTED_FIELDS {
-        let mut raw = serde_json::json!({"pattern": "x"});
-        raw.as_object_mut()
-            .expect("test input is an object")
-            .insert(field.to_string(), serde_json::Value::Bool(true));
-        let result = prepare_source_grep_input(&mut raw, std::path::Path::new("/tmp"), None);
-        assert!(
-            matches!(result, Ok(SourceGrepPreparation::Unsupported)),
-            "{field} must be rejected before lowercase registry parsing"
-        );
-    }
+fn source_grep_accepts_the_full_source_field_surface() {
+    let mut raw = serde_json::json!({
+        "pattern": "x", "glob": "*.rs", "output_mode": "content",
+        "-B": 1, "-A": 2, "-C": 3, "context": 4, "-n": true,
+        "-i": true, "type": "rust", "head_limit": 10, "offset": 2,
+        "multiline": true
+    });
+    let result = prepare_source_grep_input(&mut raw, std::path::Path::new("/tmp"), None);
+    assert!(matches!(result, Ok(SourceGrepPreparation::Dispatch { .. })));
+    assert!(raw["pattern"].as_str().unwrap().starts_with("__CLAUDE_CODE_GREP__"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -117,7 +112,7 @@ async fn source_grep_routes_to_lowercase_registry_and_canonicalizes_cwd() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_unsupported_fields_fail_before_registry_dispatch() {
+async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -128,17 +123,17 @@ async fn source_grep_unsupported_fields_fail_before_registry_dispatch() {
                     tool_call(
                         "unsupported",
                         "Grep",
-                        r#"{"pattern":"x","multiline":true,"glob":"*.rs"}"#,
+                        r#"{"pattern":"x","unknown":true}"#,
                     ),
                     &mut deferred,
                 )
                 .await
-                .expect("unsupported Grep should return through the existing session path");
+            .expect("unknown Grep should return through the existing session path");
 
             assert!(matches!(result, Err(ToolLoop::Continue)));
             assert_eq!(
                 tool_result_text(&actor, "unsupported").await,
-                UNSUPPORTED_MESSAGE
+                "unknown source-facing Grep field `unknown`"
             );
         })
         .await;

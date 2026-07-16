@@ -8,26 +8,13 @@
 use super::*;
 use futures::StreamExt;
 
-const SOURCE_GREP_UNSUPPORTED_MESSAGE: &str =
-    "unsupported: Claude Code parity for Grep is not implemented";
-const SOURCE_GREP_UNSUPPORTED_FIELDS: [&str; 12] = [
-    "glob",
-    "output_mode",
-    "-B",
-    "-A",
-    "-C",
-    "context",
-    "-n",
-    "-i",
-    "type",
-    "head_limit",
-    "offset",
-    "multiline",
+const SOURCE_GREP_FIELDS: [&str; 14] = [
+    "pattern", "path", "glob", "output_mode", "-B", "-A", "-C", "context", "-n", "-i",
+    "type", "head_limit", "offset", "multiline",
 ];
 
 enum SourceGrepPreparation {
     Dispatch { permission_path: String },
-    Unsupported,
 }
 
 fn source_grep_input_error(detail: impl Into<String>) -> xai_tool_runtime::ToolError {
@@ -35,8 +22,8 @@ fn source_grep_input_error(detail: impl Into<String>) -> xai_tool_runtime::ToolE
 }
 
 /// Validate and canonicalize the source-facing `Grep` envelope before it is
-/// parsed by the lowercase OpenCode registry. The source fields without an
-/// OpenCode mapping intentionally fail before dispatch.
+/// parsed by the registry. The marker is consumed only by the uppercase
+/// source-facing implementation; lowercase OpenCode `grep` is unchanged.
 fn prepare_source_grep_input(
     raw_input: &mut serde_json::Value,
     cwd: &std::path::Path,
@@ -60,20 +47,12 @@ fn prepare_source_grep_input(
     if let Some(field) = object.keys().find(|field| {
         *field != "pattern"
             && *field != "path"
-            && !SOURCE_GREP_UNSUPPORTED_FIELDS.contains(&field.as_str())
+            && !SOURCE_GREP_FIELDS.contains(&field.as_str())
     }) {
         return Err(source_grep_input_error(format!(
             "unknown source-facing Grep field `{field}`"
         )));
     }
-    if SOURCE_GREP_UNSUPPORTED_FIELDS
-        .iter()
-        .find(|field| object.contains_key(**field))
-        .is_some()
-    {
-        return Ok(SourceGrepPreparation::Unsupported);
-    }
-
     let path = object.get("path").and_then(serde_json::Value::as_str);
     let resolved = match path {
         Some(path) if !path.is_empty() => {
@@ -82,9 +61,20 @@ fn prepare_source_grep_input(
         Some(_) | None => cwd.to_path_buf(),
     };
     let permission_path = resolved.to_string_lossy().into_owned();
+    if !resolved.exists() {
+        return Err(source_grep_input_error(format!(
+            "Path does not exist: {permission_path}"
+        )));
+    }
     object.insert(
         "path".to_string(),
         serde_json::Value::String(permission_path.clone()),
+    );
+    let encoded = serde_json::to_string(&*object)
+        .map_err(|e| source_grep_input_error(format!("failed to encode Grep input: {e}")))?;
+    object.insert(
+        "pattern".to_string(),
+        serde_json::Value::String(format!("__CLAUDE_CODE_GREP__{encoded}")),
     );
     Ok(SourceGrepPreparation::Dispatch { permission_path })
 }
@@ -965,15 +955,6 @@ impl SessionActor {
                     .map(|path| std::path::Path::new(path)),
             ) {
                 Ok(SourceGrepPreparation::Dispatch { permission_path }) => Some(permission_path),
-                Ok(SourceGrepPreparation::Unsupported) => {
-                    self.handle_tool_not_executed(
-                        &call.id,
-                        &tool_call_id,
-                        SOURCE_GREP_UNSUPPORTED_MESSAGE.to_string(),
-                    )
-                    .await?;
-                    return Ok(Err(ToolLoop::Continue));
-                }
                 Err(err) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,

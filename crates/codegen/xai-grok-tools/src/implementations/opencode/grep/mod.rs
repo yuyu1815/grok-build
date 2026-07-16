@@ -57,6 +57,122 @@ pub struct GrepInput {
     /// File glob filter (e.g. "*.ts").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include: Option<String>,
+
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SourceGrepInput {
+    pattern: String,
+    path: Option<String>,
+    glob: Option<String>,
+    output_mode: Option<String>,
+    #[serde(rename = "-B")]
+    before: Option<usize>,
+    #[serde(rename = "-A")]
+    after: Option<usize>,
+    #[serde(rename = "-C")]
+    context_short: Option<usize>,
+    context: Option<usize>,
+    #[serde(rename = "-n")]
+    line_numbers: Option<bool>,
+    #[serde(rename = "-i")]
+    case_insensitive: Option<bool>,
+    #[serde(rename = "type")]
+    file_type: Option<String>,
+    head_limit: Option<usize>,
+    offset: Option<usize>,
+    multiline: Option<bool>,
+}
+
+async fn run_source_grep(
+    ctx: xai_tool_runtime::ToolCallContext,
+    input: SourceGrepInput,
+) -> Result<GrepSearchOutput, xai_tool_runtime::ToolError> {
+    let resources = crate::types::tool_metadata::shared_resources(&ctx)?;
+    let cwd = crate::types::tool_metadata::resolve_cwd(&ctx, &resources).await?;
+    let path = input
+        .path
+        .clone()
+        .unwrap_or_else(|| cwd.to_string_lossy().into_owned());
+    let target = std::path::Path::new(&path);
+    if !target.exists() {
+        return Err(xai_tool_runtime::ToolError::custom(
+            "path_not_found",
+            format!("Path does not exist: {path}"),
+        ));
+    }
+
+    let mode = input.output_mode.as_deref().unwrap_or("files_with_matches");
+    let mut args = vec!["--hidden".to_string()];
+    for excluded in ["!.git", "!.svn", "!.hg", "!.bzr", "!.jj", "!.sl"] {
+        args.push("--glob".into());
+        args.push(excluded.into());
+    }
+    args.extend(["--max-columns".into(), "500".into()]);
+    if input.multiline.unwrap_or(false) { args.extend(["-U".into(), "--multiline-dotall".into()]); }
+    if input.case_insensitive.unwrap_or(false) { args.push("-i".into()); }
+    match mode {
+        "content" => {
+            if input.line_numbers.unwrap_or(true) { args.push("-n".into()); }
+            let c = input.context.or(input.context_short);
+            if let Some(n) = c { args.extend(["-C".into(), n.to_string()]); }
+            else {
+                if let Some(n) = input.before { args.extend(["-B".into(), n.to_string()]); }
+                if let Some(n) = input.after { args.extend(["-A".into(), n.to_string()]); }
+            }
+        }
+        "count" => args.extend(["-c".into()]),
+        "files_with_matches" => args.push("-l".into()),
+        other => return Err(xai_tool_runtime::ToolError::custom("invalid_source_grep_input", format!("invalid output_mode: {other}"))),
+    }
+    if input.pattern.starts_with('-') { args.extend(["-e".into(), input.pattern.clone()]); }
+    else { args.push(input.pattern.clone()); }
+    if let Some(t) = input.file_type.as_deref() { args.extend(["--type".into(), t.into()]); }
+    if let Some(glob) = input.glob.as_deref() {
+        for token in glob.split_whitespace().flat_map(|s| if s.contains('{') && s.contains('}') { vec![s] } else { s.split(',').collect() }) {
+            if !token.is_empty() { args.extend(["--glob".into(), token.into()]); }
+        }
+    }
+    args.push(path.clone());
+    let timeout_secs = if cfg!(target_os = "windows") { 60 } else { 20 };
+    let mut attempt = 0;
+    let (stdout, stderr, code) = loop {
+        let mut command = Command::new(rg_path());
+        command.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+        crate::util::detach_command(&mut command);
+        let mut child = command.spawn().map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_spawn", e.to_string()))?;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+            let mut out = Vec::new(); let mut err = Vec::new();
+            if let Some(mut p) = child.stdout.take() { let _ = p.read_to_end(&mut out).await; }
+            if let Some(mut p) = child.stderr.take() { let _ = p.read_to_end(&mut err).await; }
+            let status = child.wait().await.map_err(|e| e.to_string())?;
+            Ok::<_, String>((out, err, status.code().unwrap_or(-1)))
+        }).await;
+        let (out, err, code) = match result {
+            Ok(Ok(v)) => v,
+            Ok(Err(e)) => return Err(xai_tool_runtime::ToolError::custom("ripgrep_wait", e)),
+            Err(_) => { let _ = child.kill().await; return Err(xai_tool_runtime::ToolError::custom("ripgrep_timeout", format!("Ripgrep search timed out after {timeout_secs} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."))); }
+        };
+        if attempt == 0 && String::from_utf8_lossy(&err).contains("EAGAIN") {
+            args.splice(0..0, ["-j".into(), "1".into()]);
+            attempt += 1;
+            continue;
+        }
+        break (out, err, code);
+    };
+    if code > 1 { return Err(xai_tool_runtime::ToolError::custom("ripgrep_failed", String::from_utf8_lossy(&stderr).to_string())); }
+    let text = String::from_utf8_lossy(&stdout);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let offset = input.offset.unwrap_or(0);
+    let limit = input.head_limit.unwrap_or(250);
+    if offset >= lines.len() { lines.clear(); } else { lines = lines.into_iter().skip(offset).collect(); }
+    if limit != 0 { lines.truncate(limit); }
+    let content = lines.join("\n");
+    let rendered = match mode {
+        "content" | "count" => if content.is_empty() { "No matches found".into() } else { content },
+        _ => if lines.is_empty() { "No files found".into() } else { format!("Found {} file(s)\n{}", lines.len(), lines.join("\n")) },
+    };
+    Ok(GrepSearchOutput { stdout: rendered.into_bytes(), stderr, exit_code: code, match_count: lines.len(), file_matches: Vec::new() })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -144,6 +260,14 @@ impl xai_tool_runtime::Tool for GrepTool {
     ) -> Result<GrepSearchOutput, xai_tool_runtime::ToolError> {
         use crate::types::tool_metadata::shared_resources;
         let resources = shared_resources(&ctx)?;
+
+        if input.pattern.starts_with("__CLAUDE_CODE_GREP__") {
+            let raw = input.pattern.trim_start_matches("__CLAUDE_CODE_GREP__");
+            let source: SourceGrepInput = serde_json::from_str(raw).map_err(|e| {
+                xai_tool_runtime::ToolError::custom("invalid_source_grep_input", e.to_string())
+            })?;
+            return run_source_grep(ctx, source).await;
+        }
 
         let cwd = crate::types::tool_metadata::resolve_cwd(&ctx, &resources).await?;
 
