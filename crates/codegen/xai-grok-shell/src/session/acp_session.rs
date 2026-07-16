@@ -526,6 +526,8 @@ pub(crate) struct PreparedToolCall {
     tool_call_id: acp::ToolCallId,
     /// The tool name as requested by the model.
     tool_name: String,
+    /// The registry tool name after source-facing routing.
+    registry_tool_name: String,
     /// The raw arguments string (for post_tool_use hook payload).
     raw_arguments: String,
     /// Parsed JSON arguments ready for bridge.call().
@@ -1347,6 +1349,9 @@ mod client_hooks_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/replace_system_prompt_tests.rs"]
 mod replace_system_prompt_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/source_facing_grep_tests.rs"]
+mod source_facing_grep_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/support.rs"]
 mod support;
