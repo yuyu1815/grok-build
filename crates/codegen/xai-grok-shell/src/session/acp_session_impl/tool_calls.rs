@@ -7,6 +7,108 @@
 //! the parent module's private helpers.
 use super::*;
 use futures::StreamExt;
+
+const CLAUDE_GREP_UNSUPPORTED_MESSAGE: &str =
+    "unsupported: Claude Code parity for Grep is not implemented";
+
+const CLAUDE_GREP_UNSUPPORTED_FIELDS: &[&str] = &[
+    "glob",
+    "output_mode",
+    "-B",
+    "-A",
+    "-C",
+    "context",
+    "-n",
+    "-i",
+    "type",
+    "head_limit",
+    "offset",
+    "multiline",
+];
+
+/// A source `Grep` request with a source-schema field that has no approved
+/// lowercase OpenCode mapping must not fall through serde's unknown-field
+/// handling into an `rg` invocation.
+fn source_grep_has_unsupported_field(function_name: &str, raw_input: &serde_json::Value) -> bool {
+    if function_name != "Grep" {
+        return false;
+    }
+
+    let Some(object) = raw_input.as_object() else {
+        return false;
+    };
+
+    // Preserve the existing parser's model-facing failure for malformed required
+    // fields; the explicit unsupported predicate applies only to an otherwise
+    // source-shaped object.
+    if !object
+        .get("pattern")
+        .is_some_and(serde_json::Value::is_string)
+        || object.get("path").is_some_and(|path| !path.is_string())
+    {
+        return false;
+    }
+
+    CLAUDE_GREP_UNSUPPORTED_FIELDS
+        .iter()
+        .any(|field| object.contains_key(*field))
+}
+
+/// Select the permission target for the approved Claude-facing Write mapping.
+///
+/// `Write` is intentionally case-sensitive.  The resolved value is used only
+/// for the permission request: the original raw input remains the dispatch
+/// payload and therefore keeps the tool's existing result behavior.
+fn access_kind_for_model_tool_call(
+    function_name: &str,
+    input: &ToolInput,
+    cwd: &std::path::Path,
+    display_cwd: Option<&std::path::Path>,
+) -> AccessKind {
+    if function_name == "Write"
+        && let ToolInput::Write(write) = input
+    {
+        let resolved = xai_grok_tools::types::resources::resolve_model_path(
+            cwd,
+            display_cwd,
+            &write.file_path,
+        );
+        return AccessKind::Edit(resolved.to_string_lossy().into_owned());
+    }
+    AccessKind::from(input)
+}
+
+/// Resolve approved source-facing ids to their existing lowercase OpenCode
+/// registry entries.
+///
+/// Lowercase requests are intentionally not rewritten: they remain the existing
+/// OpenCode request path. Source-facing ids route only when the established
+/// kind-specific lowercase target is present.
+fn parse_and_dispatch_tool_name(
+    bridge: &xai_grok_tools::bridge::ToolBridge,
+    function_name: &str,
+) -> String {
+    match function_name {
+        "Write"
+            if matches!(
+                bridge.tool_kind("write"),
+                Some(xai_grok_tools::types::tool::ToolKind::Write)
+            ) =>
+        {
+            "write".to_string()
+        }
+        "Grep"
+            if matches!(
+                bridge.tool_kind("grep"),
+                Some(xai_grok_tools::types::tool::ToolKind::Search)
+            ) =>
+        {
+            "grep".to_string()
+        }
+        _ => function_name.to_string(),
+    }
+}
+
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
 fn is_mcp_create_pull_request(tool_name: &str) -> bool {
@@ -821,6 +923,8 @@ impl SessionActor {
         let args_str = crate::session::helpers::tool_input_parsing::normalize_empty_arguments(
             &call.function.arguments,
         );
+        let bridge = self.agent.borrow().tool_bridge().clone();
+        let parse_tool_name = parse_and_dispatch_tool_name(&bridge, &call.function.name);
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
         let raw_input = match &parse_result {
@@ -836,10 +940,9 @@ impl SessionActor {
                         let best_match = objects[0].clone();
                         let mut selected_index = 0;
                         let mut matched_tool = false;
-                        let bridge = self.agent.borrow().tool_bridge().clone();
                         for (idx, obj) in objects.iter().enumerate() {
                             if bridge
-                                .try_parse(&call.function.name, obj.clone())
+                                .try_parse(&parse_tool_name, obj.clone())
                                 .await
                                 .is_ok()
                             {
@@ -869,11 +972,20 @@ impl SessionActor {
                 }
             }
         };
+        if source_grep_has_unsupported_field(&call.function.name, &raw_input) {
+            self.handle_tool_not_executed(
+                &call.id,
+                &tool_call_id,
+                CLAUDE_GREP_UNSUPPORTED_MESSAGE.to_string(),
+            )
+            .await?;
+            return Ok(Err(ToolLoop::Continue));
+        }
         let tool_input = match self
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(&call.function.name, raw_input.clone())
+            .try_parse(&parse_tool_name, raw_input.clone())
             .await
         {
             Ok(input) => input,
@@ -890,7 +1002,12 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
-        let access_kind = AccessKind::from(&tool_input);
+        let access_kind = access_kind_for_model_tool_call(
+            &call.function.name,
+            &tool_input,
+            std::path::Path::new(&self.session_info.cwd),
+            self.display_cwd.get().map(|cwd| std::path::Path::new(cwd)),
+        );
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {
             tracing::info_span!(
@@ -1319,7 +1436,7 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .tool_kind(&call.function.name)
+            .tool_kind(&parse_tool_name)
             .map(|k| {
                 use xai_grok_tools::types::tool::ToolKind;
                 matches!(
@@ -1342,7 +1459,7 @@ impl SessionActor {
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),
             tool_call_id,
-            tool_name: call.function.name.clone(),
+            tool_name: parse_tool_name,
             raw_arguments: call.function.arguments.clone(),
             parsed_args: raw_input.clone(),
             model_id: model_id_str,

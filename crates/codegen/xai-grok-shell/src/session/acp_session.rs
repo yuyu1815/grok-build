@@ -1739,6 +1739,220 @@ mod tool_meta_stamp_tests {
             .await;
     }
 }
+
+#[cfg(test)]
+mod claude_write_permission_tests {
+    use super::replay_buffer_send_update_tests::make_replay_send_update_fixture;
+    use super::support::test_agent_with_tools;
+    use super::*;
+    use tokio::sync::mpsc;
+    use xai_grok_tools::implementations::opencode::{OpenCodeGrepTool, OpenCodeWriteTool};
+    use xai_grok_tools::registry::types::ToolConfig;
+    use xai_grok_workspace::permission::{AccessKind, PermissionCommand};
+
+    fn write_call(id: &str, name: &str, arguments: &str) -> ToolCallResponse {
+        ToolCallResponse {
+            id: id.to_string(),
+            kind: "function".to_string(),
+            function: ToolCallFunction::new(name, arguments),
+        }
+    }
+
+    async fn write_actor() -> replay_buffer_send_update_tests::ReplaySendUpdateFixture {
+        let mut fixture = make_replay_send_update_fixture().await;
+        fixture.actor.agent = std::cell::RefCell::new(
+            test_agent_with_tools(vec![ToolConfig::for_tool::<OpenCodeWriteTool>()]).await,
+        );
+        fixture
+    }
+
+    async fn grep_actor() -> replay_buffer_send_update_tests::ReplaySendUpdateFixture {
+        let mut fixture = make_replay_send_update_fixture().await;
+        fixture.actor.agent = std::cell::RefCell::new(
+            test_agent_with_tools(vec![ToolConfig::for_tool::<OpenCodeGrepTool>()]).await,
+        );
+        fixture
+    }
+
+    async fn last_tool_result(actor: &SessionActor, call_id: &str) -> String {
+        let conversation = actor.chat_state_handle.get_conversation().await;
+        conversation
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                ConversationItem::ToolResult(result) if result.tool_call_id == call_id => {
+                    Some(result.content.to_string())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing tool_result for {call_id}: {conversation:?}"))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_write_routes_but_lowercase_write_keeps_existing_permission_path() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let fixture = write_actor().await;
+                fixture
+                    .actor
+                    .display_cwd
+                    .set("/display-worktree".to_string())
+                    .expect("test display cwd is set once");
+                let (permission_tx, mut permission_rx) = mpsc::unbounded_channel();
+                fixture.actor.permissions = PermissionHandle::Actor {
+                    cmd_tx: permission_tx,
+                    yolo_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    auto_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    side_query_wired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    yolo_pin: None,
+                    deny_read_globs: Arc::new(vec![]),
+                    in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                };
+                let access = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+                let captured_access = access.clone();
+                tokio::task::spawn_local(async move {
+                    while let Some(command) = permission_rx.recv().await {
+                        if let PermissionCommand::Request {
+                            access, respond_to, ..
+                        } = command
+                        {
+                            captured_access.lock().await.push(access);
+                            let _ = respond_to.send(Decision::Allow);
+                        }
+                    }
+                });
+
+                let prepared = fixture
+                    .actor
+                    .prepare_tool_call(
+                        write_call(
+                            "call-source-write",
+                            "Write",
+                            r#"{"file_path":"/display-worktree/nested/file.txt","content":"new"}"#,
+                        ),
+                        &mut Vec::new(),
+                    )
+                    .await
+                    .expect("prepare should not return ACP error")
+                    .expect("valid Write should pass permission");
+
+                assert_eq!(prepared.tool_name, "write");
+                assert_eq!(
+                    prepared.parsed_args["file_path"], "/display-worktree/nested/file.txt",
+                    "permission resolution must not mutate dispatch input"
+                );
+
+                let lowercase = fixture
+                    .actor
+                    .prepare_tool_call(
+                        write_call(
+                            "call-lowercase-write",
+                            "write",
+                            r#"{"file_path":"/display-worktree/unchanged.txt","content":"new"}"#,
+                        ),
+                        &mut Vec::new(),
+                    )
+                    .await
+                    .expect("prepare should not return ACP error")
+                    .expect("existing lowercase write should remain valid");
+                assert_eq!(lowercase.tool_name, "write");
+                assert_eq!(
+                    *access.lock().await,
+                    vec![
+                        AccessKind::Edit("/tmp/nested/file.txt".to_string()),
+                        AccessKind::Edit("/display-worktree/unchanged.txt".to_string()),
+                    ],
+                    "only source-facing Write may use the resolver before permission"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn malformed_or_wrong_case_write_is_model_facing_failure_before_permission() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                for (id, name, arguments) in [
+                    ("call-missing-path", "Write", r#"{"content":"new"}"#),
+                    (
+                        "call-non-string-path",
+                        "Write",
+                        r#"{"file_path":42,"content":"new"}"#,
+                    ),
+                    (
+                        "call-wrong-case",
+                        "WRITE",
+                        r#"{"file_path":"/tmp/no-side-effect.txt","content":"new"}"#,
+                    ),
+                ] {
+                    let fixture = write_actor().await;
+                    let outcome = fixture
+                        .actor
+                        .prepare_tool_call(write_call(id, name, arguments), &mut Vec::new())
+                        .await
+                        .expect("parse failure should not be an ACP error");
+                    assert!(
+                        matches!(outcome, Err(ToolLoop::ToolParsingError)),
+                        "{id} must fail before dispatch: {outcome:?}"
+                    );
+                    let message = last_tool_result(&fixture.actor, id).await;
+                    assert!(
+                        !message.is_empty(),
+                        "{id} must use the existing model-facing tool_result failure"
+                    );
+                }
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_grep_unsupported_fields_fail_before_registry_parse() {
+        const MESSAGE: &str = "unsupported: Claude Code parity for Grep is not implemented";
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                for (field, arguments) in [
+                    ("glob", r#"{"pattern":"needle","glob":"*.rs"}"#),
+                    (
+                        "output_mode",
+                        r#"{"pattern":"needle","output_mode":"content"}"#,
+                    ),
+                    ("-B", r#"{"pattern":"needle","-B":1}"#),
+                    ("-A", r#"{"pattern":"needle","-A":1}"#),
+                    ("-C", r#"{"pattern":"needle","-C":1}"#),
+                    ("context", r#"{"pattern":"needle","context":1}"#),
+                    ("-n", r#"{"pattern":"needle","-n":true}"#),
+                    ("-i", r#"{"pattern":"needle","-i":true}"#),
+                    ("type", r#"{"pattern":"needle","type":"rust"}"#),
+                    ("head_limit", r#"{"pattern":"needle","head_limit":1}"#),
+                    ("offset", r#"{"pattern":"needle","offset":1}"#),
+                    ("multiline", r#"{"pattern":"needle","multiline":true}"#),
+                ] {
+                    let fixture = grep_actor().await;
+                    let outcome = fixture
+                        .actor
+                        .prepare_tool_call(
+                            write_call(&format!("call-grep-{field}"), "Grep", arguments),
+                            &mut Vec::new(),
+                        )
+                        .await
+                        .expect("unsupported source field should not be an ACP error");
+                    assert!(
+                        matches!(outcome, Err(ToolLoop::Continue)),
+                        "{field} must stop before lowercase grep dispatch: {outcome:?}"
+                    );
+                    assert_eq!(
+                        last_tool_result(&fixture.actor, &format!("call-grep-{field}")).await,
+                        MESSAGE,
+                        "{field} must use the approved model-facing failure"
+                    );
+                }
+            })
+            .await;
+    }
+}
 /// Drop guard that records aggregate turn metrics on the current tracing span
 struct TurnMetrics {
     turn_tool_count: u64,
