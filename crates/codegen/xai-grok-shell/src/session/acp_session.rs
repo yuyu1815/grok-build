@@ -20,7 +20,9 @@ use crate::extensions::notification::{
     RetryState, SessionNotification as XaiSessionNotification, is_reauthable_failure,
 };
 use crate::sampling::error::map_sampling_err_to_acp;
-use crate::sampling::types::{ChatRequestMessage, ToolCallFunction, ToolCallResponse, ToolDefinition};
+use crate::sampling::types::{
+    ChatRequestMessage, ToolCallFunction, ToolCallResponse, ToolDefinition,
+};
 use crate::sampling::{
     ContentPart, ConversationItem, ConversationRequest, ConversationResponse, SamplingError,
     SyntheticReason, ToolSpec, conversation_truncate_for_prompt,
@@ -1803,8 +1805,18 @@ mod claude_write_permission_tests {
                 acp::SessionUpdate::ToolCall(call) => {
                     pending_calls += 1;
                     assert!(matches!(call.status, acp::ToolCallStatus::Pending));
+                    assert_eq!(
+                        call.tool_call_id.0.as_ref(),
+                        call_id,
+                        "{call_id} pending ACP call must retain the incoming call ID"
+                    );
                 }
                 acp::SessionUpdate::ToolCallUpdate(update) => {
+                    assert_eq!(
+                        update.tool_call_id.0.as_ref(),
+                        call_id,
+                        "{call_id} failed ACP update must retain the incoming call ID"
+                    );
                     assert!(
                         !matches!(update.fields.status, Some(acp::ToolCallStatus::Completed)),
                         "{call_id} must not emit a success-shaped ACP result"
@@ -1825,8 +1837,14 @@ mod claude_write_permission_tests {
             }
         }
 
-        assert_eq!(pending_calls, 1, "{call_id} must register one pending ACP call");
-        assert_eq!(failed_updates, 1, "{call_id} must emit one failed ACP result");
+        assert_eq!(
+            pending_calls, 1,
+            "{call_id} must register one pending ACP call"
+        );
+        assert_eq!(
+            failed_updates, 1,
+            "{call_id} must emit one failed ACP result"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1918,6 +1936,10 @@ mod claude_write_permission_tests {
         local
             .run_until(async {
                 for (id, arguments) in [
+                    ("top-level-null", "null"),
+                    ("top-level-array", "[]"),
+                    ("top-level-string", r#""not-an-object""#),
+                    ("top-level-number", "42"),
                     (
                         "extra",
                         r#"{"file_path":"/tmp/no-side-effect.txt","content":"new","extra":true}"#,
