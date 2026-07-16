@@ -114,75 +114,35 @@ impl From<xai_tool_runtime::ToolError> for SourceReadInputError {
     }
 }
 
-/// Parse a source semantic-number literal without passing through `f64`.
+/// Parse a source semantic-number literal with JavaScript `Number()` semantics.
 ///
 /// Strings intentionally use the narrower source decimal grammar, while JSON
-/// numbers additionally retain JSON exponent syntax. Values representable by
-/// the registered `u32` target are emitted as integer JSON, so `"3.0"`
-/// reaches the target as `3`, not as a quoted string or float JSON token.
+/// numbers additionally retain JSON exponent syntax.  After that grammar gate,
+/// JavaScript rounds the value to an IEEE-754 number *before* applying the
+/// integer constraint.  In particular, `4294967295.0000001` rounds to
+/// `4294967295` and is therefore representable by the registered `u32`
+/// target. Values representable by that transport are emitted as integer JSON,
+/// so `"3.0"` reaches the target as `3`, not as a quoted string or float JSON
+/// token.
 fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLiteral {
-    let (negative, unsigned) = match value.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, value),
-    };
-    let (mantissa, exponent) = if allow_exponent {
-        match unsigned.find(['e', 'E']) {
-            Some(index) => {
-                let (mantissa, exponent) = unsigned.split_at(index);
-                let exponent = exponent[1..].parse::<i32>();
-                let Ok(exponent) = exponent else {
-                    return SourceIntegerLiteral::Invalid;
-                };
-                (mantissa, exponent)
-            }
-            None => (unsigned, 0),
-        }
-    } else {
-        (unsigned, 0)
-    };
-    let (whole, fraction) = match mantissa.split_once('.') {
-        Some((whole, fraction)) => (whole, fraction),
-        None => (mantissa, ""),
-    };
-    if whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || (!fraction.is_empty() && !fraction.bytes().all(|byte| byte.is_ascii_digit()))
-        || (mantissa.contains('.') && fraction.is_empty())
-    {
+    if !allow_exponent && !is_decimal_number_literal(value) {
         return SourceIntegerLiteral::Invalid;
     }
 
-    let digits = format!("{whole}{fraction}");
-    let significant = digits.trim_start_matches('0');
-    if significant.is_empty() {
-        return SourceIntegerLiteral::U32(0);
+    let Ok(value) = value.parse::<f64>() else {
+        return SourceIntegerLiteral::Invalid;
+    };
+    // A decimal source literal can become Infinity through `Number()`. It is
+    // source-valid at this adapter boundary but cannot cross the fixed-width
+    // Rust transport, so preserve the explicit unsupported classification.
+    if !value.is_finite() || value > f64::from(u32::MAX) {
+        return SourceIntegerLiteral::OutOfTargetRange;
     }
-    if negative {
+    if value < 0.0 || value.fract() != 0.0 {
         return SourceIntegerLiteral::Invalid;
     }
 
-    let shift = i64::from(exponent) - fraction.len() as i64;
-    let integer = if shift >= 0 {
-        let length = significant.len().saturating_add(shift as usize);
-        if length > 10 {
-            return SourceIntegerLiteral::OutOfTargetRange;
-        }
-        format!("{significant}{}", "0".repeat(shift as usize))
-    } else {
-        let places = (-shift) as usize;
-        if places > significant.len()
-            || !significant[significant.len().saturating_sub(places)..]
-                .bytes()
-                .all(|byte| byte == b'0')
-        {
-            return SourceIntegerLiteral::Invalid;
-        }
-        significant[..significant.len() - places].to_string()
-    };
-    match integer.parse::<u32>() {
-        Ok(value) => SourceIntegerLiteral::U32(value),
-        Err(_) => SourceIntegerLiteral::OutOfTargetRange,
-    }
+    SourceIntegerLiteral::U32(value as u32)
 }
 
 fn is_decimal_number_literal(value: &str) -> bool {
@@ -3184,7 +3144,13 @@ mod permission_access_classification_tests {
 
     #[test]
     fn source_read_u32_max_reaches_numeric_dispatch() {
-        for value in [serde_json::json!(u32::MAX), serde_json::json!("4294967295")] {
+        for value in [
+            serde_json::json!(u32::MAX),
+            serde_json::json!("4294967295"),
+            // JavaScript Number() rounds this finite decimal down to u32::MAX
+            // before semanticNumber applies its integer constraint.
+            serde_json::json!("4294967295.0000001"),
+        ] {
             let mapped = source_read_input_for_registry(&serde_json::json!({
                 "file_path": "src/file.txt",
                 "offset": value,
@@ -3192,6 +3158,16 @@ mod permission_access_classification_tests {
             .expect("u32::MAX must remain representable by the target transport");
             assert_eq!(mapped["offset"], u32::MAX);
         }
+    }
+
+    #[test]
+    fn source_read_huge_finite_decimal_is_explicit_unsupported() {
+        let error = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": "9".repeat(400),
+        }))
+        .expect_err("a Number()-infinite source decimal must stop at unsupported");
+        assert!(matches!(error, SourceReadInputError::Unsupported(_)));
     }
 
     #[test]

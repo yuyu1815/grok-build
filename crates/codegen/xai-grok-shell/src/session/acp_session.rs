@@ -1791,7 +1791,9 @@ mod tool_meta_stamp_tests {
                         serde_json::json!({
                             "file_path": file.path(),
                             "offset": "2",
-                            "limit": "3.0",
+                            // Number() rounds this finite decimal to u32::MAX
+                            // before semanticNumber's integer constraint.
+                            "limit": "4294967295.0000001",
                         })
                         .to_string(),
                     ),
@@ -1810,7 +1812,7 @@ mod tool_meta_stamp_tests {
                     Some(expected_path.as_str())
                 );
                 assert_eq!(prepared.parsed_args["offset"], 2);
-                assert_eq!(prepared.parsed_args["limit"], 3);
+                assert_eq!(prepared.parsed_args["limit"], u32::MAX);
                 assert!(prepared.parsed_args.get("file_path").is_none());
                 assert!(matches!(
                     seen_access.lock().await.as_ref(),
