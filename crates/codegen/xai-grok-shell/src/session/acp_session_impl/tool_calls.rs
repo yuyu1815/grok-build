@@ -664,6 +664,7 @@ impl SessionActor {
                             prepared.dispatch_target_name.as_deref(),
                             &err,
                             &prepared.model_id,
+                            prepared.source_facing_grep,
                         )
                         .await;
                     deferred_followups.extend(err_followups);
@@ -916,6 +917,7 @@ impl SessionActor {
                             None,
                             &err,
                             &model_id_str,
+                            false,
                         )
                         .await;
                     deferred_followups.extend(followups);
@@ -1476,6 +1478,7 @@ impl SessionActor {
             tool_call_id,
             tool_name: call.function.name.clone(),
             registry_tool_name,
+            source_facing_grep: is_source_grep,
             raw_arguments: call.function.arguments.clone(),
             parsed_args: raw_input.clone(),
             model_id: model_id_str,
@@ -2377,6 +2380,7 @@ impl SessionActor {
         effective_tool_name: Option<&str>,
         err: &anyhow::Error,
         model_id: &str,
+        is_source_facing_grep: bool,
     ) -> Vec<ConversationItem> {
         tracing::error!(
             session_id = % self.session_info.id.0, tool_name = requested_tool_name,
@@ -2390,11 +2394,15 @@ impl SessionActor {
             Some(rw) => rw.rewrite(&err.to_string()),
             None => err.to_string(),
         };
-        let message = match effective_tool_name {
-            Some(effective) if effective != requested_tool_name => {
-                format!("Tool `{effective}` failed via `{requested_tool_name}`: {err_str}")
+        let message = if is_source_facing_grep {
+            SOURCE_GREP_UNSUPPORTED_MESSAGE.to_owned()
+        } else {
+            match effective_tool_name {
+                Some(effective) if effective != requested_tool_name => {
+                    format!("Tool `{effective}` failed via `{requested_tool_name}`: {err_str}")
+                }
+                _ => format!("Tool `{requested_tool_name}` failed: {err_str}"),
             }
-            _ => format!("Tool `{requested_tool_name}` failed: {err_str}"),
         };
         self.send_update(
             acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(

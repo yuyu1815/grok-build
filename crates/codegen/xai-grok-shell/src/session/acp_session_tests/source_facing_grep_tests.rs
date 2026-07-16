@@ -117,6 +117,30 @@ async fn source_grep_routes_to_lowercase_registry_and_canonicalizes_cwd() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn source_grep_returns_the_fixed_unsupported_text_on_the_model_surface() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            let result = actor
+                .execute_tool_calls(vec![tool_call(
+                    "source_unsupported",
+                    "Grep",
+                    r#"{"pattern":"x"}"#,
+                )])
+                .await
+                .expect("source Grep dispatch should return through the session loop");
+
+            assert!(matches!(result, ToolLoop::Continue));
+            assert_eq!(
+                tool_result_text(&actor, "source_unsupported").await,
+                UNSUPPORTED_MESSAGE
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
     let local = tokio::task::LocalSet::new();
     local

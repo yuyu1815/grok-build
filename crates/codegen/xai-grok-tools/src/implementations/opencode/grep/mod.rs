@@ -25,15 +25,6 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 
 const RESULT_LIMIT: usize = 100;
 const MAX_LINE_LENGTH: usize = 2000;
-/// The only model-facing result permitted for the uppercase, source-facing
-/// `Grep` route until its production parity requirements are implemented.
-///
-/// This route is evaluated before any OpenCode success can be projected.  The
-/// source requirements have a fixed unsupported order (configured rg,
-/// Darwin preparation, telemetry, modes/buffers, then projection), but every
-/// currently unmet row intentionally reports this same explicit failure.
-const SOURCE_GREP_UNSUPPORTED_MESSAGE: &str =
-    "unsupported: Claude Code parity for Grep is not implemented";
 /// Claude Code's embedded-rg capture limit.  This is deliberately expressed
 /// in UTF-16 code units, not bytes; JavaScript `String#length` uses this unit.
 #[cfg(test)]
@@ -603,19 +594,6 @@ impl xai_tool_runtime::Tool for GrepTool {
         use crate::types::tool_metadata::shared_resources;
         let resources = shared_resources(&ctx)?;
 
-        if input.pattern.starts_with("__CLAUDE_CODE_GREP__") {
-            // The session pre-flight validates and canonicalizes the uppercase
-            // source-facing request before it reaches this marker.  Its
-            // mode-specific result/error projection, however, is not proven by
-            // the current oracle.  Do not turn the OpenCode result into a false
-            // Claude Code `Grep` success.  The lowercase OpenCode `grep` path
-            // below remains independent and unchanged.
-            return Err(xai_tool_runtime::ToolError::custom(
-                "unsupported_source_grep",
-                SOURCE_GREP_UNSUPPORTED_MESSAGE,
-            ));
-        }
-
         let cwd = crate::types::tool_metadata::resolve_cwd(&ctx, &resources).await?;
 
         // Resolve search path.
@@ -936,25 +914,29 @@ mod tests {
         assert_eq!(truncate_utf16("a😀b".to_owned(), 4), "a😀b");
     }
 
+    // ── basic_match ──────────────────────────────────────────────────
+
     #[tokio::test]
-    async fn source_facing_marker_is_explicitly_unsupported() {
-        let tool = GrepTool;
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(Resources::new().into_shared()),
+    async fn lowercase_grep_searches_a_pattern_with_the_source_marker_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let marker = "__CLAUDE_CODE_GREP__needle";
+        std::fs::write(tmp.path().join("marker.txt"), format!("{marker}\n")).unwrap();
+
+        let output = xai_tool_runtime::Tool::run(
+            &GrepTool,
+            test_ctx(test_resources(tmp.path()).into_shared()),
             GrepInput {
-                pattern: "__CLAUDE_CODE_GREP__{\"pattern\":\"needle\"}".to_owned(),
+                pattern: marker.to_owned(),
                 path: None,
                 include: None,
             },
         )
-        .await;
+        .await
+        .expect("lowercase grep marker pattern should remain searchable");
 
-        let error = result.expect_err("source-facing Grep must not report success");
-        assert_eq!(error.to_string(), SOURCE_GREP_UNSUPPORTED_MESSAGE);
+        assert_eq!(output.match_count, 1);
+        assert!(String::from_utf8_lossy(&output.stdout).contains(marker));
     }
-
-    // ── basic_match ──────────────────────────────────────────────────
 
     #[tokio::test]
     async fn basic_match() {
