@@ -528,12 +528,6 @@ pub(crate) struct PreparedToolCall {
     tool_name: String,
     /// The registry tool name after source-facing routing.
     registry_tool_name: String,
-    /// True only for the uppercase Claude Code source-facing `Grep` route.
-    ///
-    /// This provenance survives routing to the lowercase registry id so a
-    /// lowercase OpenCode `grep` pattern matching the old transport marker
-    /// remains an ordinary search.
-    source_facing_grep: bool,
     /// The raw arguments string (for post_tool_use hook payload).
     raw_arguments: String,
     /// Parsed JSON arguments ready for bridge.call().

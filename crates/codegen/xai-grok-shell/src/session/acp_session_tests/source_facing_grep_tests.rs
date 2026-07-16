@@ -60,26 +60,24 @@ async fn source_grep_marker_is_isolated_to_the_uppercase_route() {
         .run_until(async {
             let actor = grep_actor().await;
 
-            let uppercase = prepare(
-                &actor,
-                tool_call(
+            let marker = r#"__CLAUDE_CODE_GREP__{"pattern":"x"}"#;
+            let uppercase = actor
+                .execute_tool_calls(vec![tool_call(
                     "uppercase",
                     "Grep",
-                    r#"{"pattern":"x","glob":"*.rs","output_mode":"content","-B":1,"-A":2,"-C":3,"context":4,"-n":true,"-i":true,"type":"rust","head_limit":10,"offset":2,"multiline":true}"#,
-                ),
-            )
-            .await
-            .expect("source Grep should prepare through the uppercase route");
-            assert!(uppercase.source_facing_grep);
-            assert_eq!(uppercase.registry_tool_name, "grep");
-            assert!(
-                uppercase.parsed_args["pattern"]
-                    .as_str()
-                    .expect("source route must retain its private marker")
-                    .starts_with("__CLAUDE_CODE_GREP__")
+                    &format!(
+                        r#"{{"pattern":{}}}"#,
+                        serde_json::to_string(marker).unwrap()
+                    ),
+                )])
+                .await
+                .expect("source Grep should stop through the session loop");
+            assert!(matches!(uppercase, ToolLoop::Continue));
+            assert_eq!(
+                tool_result_text(&actor, "uppercase").await,
+                UNSUPPORTED_MESSAGE
             );
 
-            let marker = r#"__CLAUDE_CODE_GREP__{"pattern":"x"}"#;
             let lowercase = prepare(
                 &actor,
                 tool_call(
@@ -93,7 +91,6 @@ async fn source_grep_marker_is_isolated_to_the_uppercase_route() {
             )
             .await
             .expect("lowercase grep must keep accepting the legacy marker as a search pattern");
-            assert!(!lowercase.source_facing_grep);
             assert_eq!(lowercase.registry_tool_name, "grep");
             assert_eq!(lowercase.parsed_args["pattern"], marker);
         })
@@ -101,39 +98,11 @@ async fn source_grep_marker_is_isolated_to_the_uppercase_route() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_routes_to_lowercase_registry_and_canonicalizes_cwd() {
+async fn lowercase_grep_remains_on_its_existing_route() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let actor = grep_actor().await;
-
-            let omitted = prepare(
-                &actor,
-                tool_call("source_omitted", "Grep", r#"{"pattern":"x"}"#),
-            )
-            .await
-            .expect("source Grep without path should prepare");
-            assert_eq!(omitted.tool_name, "Grep");
-            assert_eq!(omitted.registry_tool_name, "grep");
-            assert_eq!(omitted.parsed_args["path"], "/tmp");
-
-            let empty = prepare(
-                &actor,
-                tool_call("source_empty", "Grep", r#"{"pattern":"x","path":""}"#),
-            )
-            .await
-            .expect("source Grep with empty path should prepare");
-            assert_eq!(empty.registry_tool_name, "grep");
-            assert_eq!(empty.parsed_args["path"], "/tmp");
-
-            let supplied = prepare(
-                &actor,
-                tool_call("source_path", "Grep", r#"{"pattern":"x","path":"src"}"#),
-            )
-            .await
-            .expect("source Grep path should be resolved before registry parsing");
-            assert_eq!(supplied.registry_tool_name, "grep");
-            assert_eq!(supplied.parsed_args["path"], "/tmp/src");
 
             let lowercase = prepare(&actor, tool_call("lowercase", "grep", r#"{"pattern":"x"}"#))
                 .await
@@ -194,7 +163,7 @@ async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_missing_path_fails_before_permission_or_dispatch() {
+async fn source_grep_stops_before_path_resolution_permission_or_dispatch() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -202,20 +171,16 @@ async fn source_grep_missing_path_fails_before_permission_or_dispatch() {
             let mut deferred = Vec::new();
             let result = actor
                 .prepare_tool_call(
-                    tool_call(
-                        "missing_path",
-                        "Grep",
-                        r#"{"pattern":"x","path":"missing"}"#,
-                    ),
+                    tool_call("source_stop", "Grep", r#"{"pattern":"x","path":"missing"}"#),
                     &mut deferred,
                 )
                 .await
-                .expect("missing Grep path should use the existing failure path");
+                .expect("valid source Grep should stop through the existing session path");
 
             assert!(matches!(result, Err(ToolLoop::Continue)));
             assert_eq!(
-                tool_result_text(&actor, "missing_path").await,
-                "Path does not exist: missing"
+                tool_result_text(&actor, "source_stop").await,
+                UNSUPPORTED_MESSAGE
             );
         })
         .await;

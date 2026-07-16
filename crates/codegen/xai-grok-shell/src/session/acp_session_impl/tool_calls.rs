@@ -25,24 +25,21 @@ const SOURCE_GREP_FIELDS: [&str; 14] = [
     "multiline",
 ];
 
-enum SourceGrepPreparation {
-    Dispatch { permission_path: String },
-}
-
 fn source_grep_input_error(detail: impl Into<String>) -> xai_tool_runtime::ToolError {
     xai_tool_runtime::ToolError::custom("invalid_source_grep_input", detail.into())
 }
 
-/// Validate and canonicalize the source-facing `Grep` envelope before it is
-/// parsed by the registry. The marker is consumed only by the uppercase
-/// source-facing implementation; lowercase OpenCode `grep` is unchanged.
+/// Strictly validate the source-facing `Grep` envelope.
+///
+/// A valid uppercase request stops immediately after this boundary with the
+/// explicit unsupported result. It must not enter path resolution, permission,
+/// registry parsing, or lowercase `grep` dispatch. Lowercase OpenCode `grep`
+/// never calls this function.
 fn prepare_source_grep_input(
-    raw_input: &mut serde_json::Value,
-    cwd: &std::path::Path,
-    display_cwd: Option<&std::path::Path>,
-) -> Result<SourceGrepPreparation, xai_tool_runtime::ToolError> {
+    raw_input: &serde_json::Value,
+) -> Result<(), xai_tool_runtime::ToolError> {
     let object = raw_input
-        .as_object_mut()
+        .as_object()
         .ok_or_else(|| source_grep_input_error("source-facing Grep arguments must be an object"))?;
     if !matches!(object.get("pattern"), Some(serde_json::Value::String(_))) {
         return Err(source_grep_input_error(
@@ -56,24 +53,6 @@ fn prepare_source_grep_input(
             "source-facing Grep `path` must be a string when provided",
         ));
     }
-    // Source `validateInput` runs before Grep permission checks. Preserve that
-    // ordering for supplied, non-empty paths so an invalid path cannot cause a
-    // permission prompt or a ripgrep process.
-    if let Some(path) = object.get("path").and_then(serde_json::Value::as_str)
-        && !path.is_empty()
-    {
-        let candidate = std::path::Path::new(path);
-        let resolved = if candidate.is_absolute() {
-            candidate.to_path_buf()
-        } else {
-            cwd.join(candidate)
-        };
-        if !resolved.exists() {
-            return Err(source_grep_input_error(format!(
-                "Path does not exist: {path}"
-            )));
-        }
-    }
     if let Some(field) = object.keys().find(|field| {
         *field != "pattern" && *field != "path" && !SOURCE_GREP_FIELDS.contains(&field.as_str())
     }) {
@@ -81,30 +60,7 @@ fn prepare_source_grep_input(
             "unknown source-facing Grep field `{field}`"
         )));
     }
-    let path = object.get("path").and_then(serde_json::Value::as_str);
-    let resolved = match path {
-        Some(path) if !path.is_empty() => {
-            xai_grok_tools::types::resources::resolve_model_path(cwd, display_cwd, path)
-        }
-        Some(_) | None => cwd.to_path_buf(),
-    };
-    let permission_path = resolved.to_string_lossy().into_owned();
-    if !resolved.exists() {
-        return Err(source_grep_input_error(format!(
-            "Path does not exist: {permission_path}"
-        )));
-    }
-    object.insert(
-        "path".to_string(),
-        serde_json::Value::String(permission_path.clone()),
-    );
-    let encoded = serde_json::to_string(&*object)
-        .map_err(|e| source_grep_input_error(format!("failed to encode Grep input: {e}")))?;
-    object.insert(
-        "pattern".to_string(),
-        serde_json::Value::String(format!("__CLAUDE_CODE_GREP__{encoded}")),
-    );
-    Ok(SourceGrepPreparation::Dispatch { permission_path })
+    Ok(())
 }
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
@@ -664,7 +620,7 @@ impl SessionActor {
                             prepared.dispatch_target_name.as_deref(),
                             &err,
                             &prepared.model_id,
-                            prepared.source_facing_grep,
+                            false,
                         )
                         .await;
                     deferred_followups.extend(err_followups);
@@ -976,15 +932,22 @@ impl SessionActor {
                 }
             }
         };
-        let source_grep_permission_path = if is_source_grep {
-            match prepare_source_grep_input(
-                &mut raw_input,
-                std::path::Path::new(&self.session_info.cwd),
-                self.display_cwd
-                    .get()
-                    .map(|path| std::path::Path::new(path)),
-            ) {
-                Ok(SourceGrepPreparation::Dispatch { permission_path }) => Some(permission_path),
+        if is_source_grep {
+            match prepare_source_grep_input(&raw_input) {
+                Ok(()) => {
+                    let err = anyhow::anyhow!(SOURCE_GREP_UNSUPPORTED_MESSAGE);
+                    self.handle_tool_error(
+                        &tool_call_id,
+                        &call.id,
+                        &call.function.name,
+                        None,
+                        &err,
+                        &model_id_str,
+                        true,
+                    )
+                    .await;
+                    return Ok(Err(ToolLoop::Continue));
+                }
                 Err(err) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,
@@ -998,9 +961,7 @@ impl SessionActor {
                     return Ok(Err(ToolLoop::ToolParsingError));
                 }
             }
-        } else {
-            None
-        };
+        }
         let tool_input = match self
             .agent
             .borrow()
@@ -1022,9 +983,7 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
-        let access_kind = source_grep_permission_path
-            .map(|path| AccessKind::Read(Some(path)))
-            .unwrap_or_else(|| AccessKind::from(&tool_input));
+        let access_kind = AccessKind::from(&tool_input);
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {
             tracing::info_span!(
@@ -1478,7 +1437,6 @@ impl SessionActor {
             tool_call_id,
             tool_name: call.function.name.clone(),
             registry_tool_name,
-            source_facing_grep: is_source_grep,
             raw_arguments: call.function.arguments.clone(),
             parsed_args: raw_input.clone(),
             model_id: model_id_str,

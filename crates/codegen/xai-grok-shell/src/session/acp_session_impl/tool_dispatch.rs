@@ -22,12 +22,6 @@ pub(super) async fn dispatch_tool(
         mode = "local",
         "dispatch_tool"
     );
-    if prepared.source_facing_grep {
-        return Err(xai_tool_runtime::ToolError::custom(
-            "unsupported_source_grep",
-            SOURCE_GREP_UNSUPPORTED_MESSAGE,
-        ));
-    }
     workspace_ops
         .call_tool(
             &prepared.registry_tool_name,
