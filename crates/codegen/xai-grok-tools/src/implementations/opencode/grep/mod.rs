@@ -57,10 +57,10 @@ pub struct GrepInput {
     /// File glob filter (e.g. "*.ts").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include: Option<String>,
-
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SourceGrepInput {
     pattern: String,
     path: Option<String>,
@@ -94,14 +94,6 @@ async fn run_source_grep(
         .path
         .clone()
         .unwrap_or_else(|| cwd.to_string_lossy().into_owned());
-    let target = std::path::Path::new(&path);
-    if !target.exists() {
-        return Err(xai_tool_runtime::ToolError::custom(
-            "path_not_found",
-            format!("Path does not exist: {path}"),
-        ));
-    }
-
     let mode = input.output_mode.as_deref().unwrap_or("files_with_matches");
     let mut args = vec!["--hidden".to_string()];
     for excluded in ["!.git", "!.svn", "!.hg", "!.bzr", "!.jj", "!.sl"] {
@@ -109,70 +101,253 @@ async fn run_source_grep(
         args.push(excluded.into());
     }
     args.extend(["--max-columns".into(), "500".into()]);
-    if input.multiline.unwrap_or(false) { args.extend(["-U".into(), "--multiline-dotall".into()]); }
-    if input.case_insensitive.unwrap_or(false) { args.push("-i".into()); }
+    if input.multiline.unwrap_or(false) {
+        args.extend(["-U".into(), "--multiline-dotall".into()]);
+    }
+    if input.case_insensitive.unwrap_or(false) {
+        args.push("-i".into());
+    }
     match mode {
         "content" => {
-            if input.line_numbers.unwrap_or(true) { args.push("-n".into()); }
+            if input.line_numbers.unwrap_or(true) {
+                args.push("-n".into());
+            }
             let c = input.context.or(input.context_short);
-            if let Some(n) = c { args.extend(["-C".into(), n.to_string()]); }
-            else {
-                if let Some(n) = input.before { args.extend(["-B".into(), n.to_string()]); }
-                if let Some(n) = input.after { args.extend(["-A".into(), n.to_string()]); }
+            if let Some(n) = c {
+                args.extend(["-C".into(), n.to_string()]);
+            } else {
+                if let Some(n) = input.before {
+                    args.extend(["-B".into(), n.to_string()]);
+                }
+                if let Some(n) = input.after {
+                    args.extend(["-A".into(), n.to_string()]);
+                }
             }
         }
         "count" => args.extend(["-c".into()]),
         "files_with_matches" => args.push("-l".into()),
-        other => return Err(xai_tool_runtime::ToolError::custom("invalid_source_grep_input", format!("invalid output_mode: {other}"))),
+        other => {
+            return Err(xai_tool_runtime::ToolError::custom(
+                "invalid_source_grep_input",
+                format!("invalid output_mode: {other}"),
+            ));
+        }
     }
-    if input.pattern.starts_with('-') { args.extend(["-e".into(), input.pattern.clone()]); }
-    else { args.push(input.pattern.clone()); }
-    if let Some(t) = input.file_type.as_deref() { args.extend(["--type".into(), t.into()]); }
+    if input.pattern.starts_with('-') {
+        args.extend(["-e".into(), input.pattern.clone()]);
+    } else {
+        args.push(input.pattern.clone());
+    }
+    if let Some(t) = input.file_type.as_deref() {
+        args.extend(["--type".into(), t.into()]);
+    }
     if let Some(glob) = input.glob.as_deref() {
-        for token in glob.split_whitespace().flat_map(|s| if s.contains('{') && s.contains('}') { vec![s] } else { s.split(',').collect() }) {
-            if !token.is_empty() { args.extend(["--glob".into(), token.into()]); }
+        for token in glob.split_whitespace().flat_map(|s| {
+            if s.contains('{') && s.contains('}') {
+                vec![s]
+            } else {
+                s.split(',').collect()
+            }
+        }) {
+            if !token.is_empty() {
+                args.extend(["--glob".into(), token.into()]);
+            }
         }
     }
     args.push(path.clone());
     let timeout_secs = if cfg!(target_os = "windows") { 60 } else { 20 };
+    let cancellation = ctx.get::<xai_tool_runtime::Cancellation>();
     let mut attempt = 0;
     let (stdout, stderr, code) = loop {
         let mut command = Command::new(rg_path());
-        command.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+        command
+            .args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
         crate::util::detach_command(&mut command);
-        let mut child = command.spawn().map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_spawn", e.to_string()))?;
-        let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-            let mut out = Vec::new(); let mut err = Vec::new();
-            if let Some(mut p) = child.stdout.take() { let _ = p.read_to_end(&mut out).await; }
-            if let Some(mut p) = child.stderr.take() { let _ = p.read_to_end(&mut err).await; }
-            let status = child.wait().await.map_err(|e| e.to_string())?;
-            Ok::<_, String>((out, err, status.code().unwrap_or(-1)))
-        }).await;
-        let (out, err, code) = match result {
-            Ok(Ok(v)) => v,
-            Ok(Err(e)) => return Err(xai_tool_runtime::ToolError::custom("ripgrep_wait", e)),
-            Err(_) => { let _ = child.kill().await; return Err(xai_tool_runtime::ToolError::custom("ripgrep_timeout", format!("Ripgrep search timed out after {timeout_secs} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."))); }
+        let mut child = command
+            .spawn()
+            .map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_spawn", e.to_string()))?;
+        let stdout_reader = child.stdout.take().map(|mut pipe| {
+            tokio::spawn(async move {
+                let mut buffer = Vec::new();
+                pipe.read_to_end(&mut buffer).await.map(|_| buffer)
+            })
+        });
+        let stderr_reader = child.stderr.take().map(|mut pipe| {
+            tokio::spawn(async move {
+                let mut buffer = Vec::new();
+                pipe.read_to_end(&mut buffer).await.map(|_| buffer)
+            })
+        });
+        let mut timed_out = false;
+        let mut cancelled = false;
+        let status = if let Some(cancellation) = cancellation.as_ref() {
+            tokio::select! {
+                result = child.wait() => result,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => {
+                    timed_out = true;
+                    let _ = child.kill().await;
+                    child.wait().await
+                }
+                _ = cancellation.0.cancelled() => {
+                    cancelled = true;
+                    let _ = child.kill().await;
+                    child.wait().await
+                }
+            }
+        } else {
+            tokio::select! {
+                result = child.wait() => result,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => {
+                    timed_out = true;
+                    let _ = child.kill().await;
+                    child.wait().await
+                }
+            }
+        }
+        .map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_wait", e.to_string()))?;
+        let out = match stdout_reader {
+            Some(reader) => reader
+                .await
+                .map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_stdout", e.to_string()))?
+                .map_err(|e| {
+                    xai_tool_runtime::ToolError::custom("ripgrep_stdout", e.to_string())
+                })?,
+            None => Vec::new(),
         };
-        if attempt == 0 && String::from_utf8_lossy(&err).contains("EAGAIN") {
+        let err = match stderr_reader {
+            Some(reader) => reader
+                .await
+                .map_err(|e| xai_tool_runtime::ToolError::custom("ripgrep_stderr", e.to_string()))?
+                .map_err(|e| {
+                    xai_tool_runtime::ToolError::custom("ripgrep_stderr", e.to_string())
+                })?,
+            None => Vec::new(),
+        };
+        if cancelled {
+            return Err(xai_tool_runtime::ToolError::cancelled(
+                xai_tool_protocol::ToolId::new("grep").expect("valid tool id"),
+                "Ripgrep search cancelled",
+            ));
+        }
+        if timed_out {
+            let mut partial: Vec<_> = String::from_utf8_lossy(&out)
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            partial.pop();
+            if partial.is_empty() {
+                return Err(xai_tool_runtime::ToolError::timeout(
+                    xai_tool_protocol::ToolId::new("grep").expect("valid tool id"),
+                    format!(
+                        "Ripgrep search timed out after {timeout_secs} seconds. The search may have matched files but did not complete in time. Try searching a more specific path or pattern."
+                    ),
+                ));
+            }
+            break (
+                partial.join("\n").into_bytes(),
+                err,
+                status.code().unwrap_or(-1),
+            );
+        }
+        let code = status.code().unwrap_or(-1);
+        let stderr_text = String::from_utf8_lossy(&err);
+        if attempt == 0
+            && (stderr_text.contains("os error 11")
+                || stderr_text.contains("Resource temporarily unavailable"))
+        {
             args.splice(0..0, ["-j".into(), "1".into()]);
             attempt += 1;
             continue;
         }
         break (out, err, code);
     };
-    if code > 1 { return Err(xai_tool_runtime::ToolError::custom("ripgrep_failed", String::from_utf8_lossy(&stderr).to_string())); }
+    if code > 1 && stdout.is_empty() {
+        return Err(xai_tool_runtime::ToolError::custom(
+            "ripgrep_failed",
+            String::from_utf8_lossy(&stderr).to_string(),
+        ));
+    }
     let text = String::from_utf8_lossy(&stdout);
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let offset = input.offset.unwrap_or(0);
     let limit = input.head_limit.unwrap_or(250);
-    if offset >= lines.len() { lines.clear(); } else { lines = lines.into_iter().skip(offset).collect(); }
-    if limit != 0 { lines.truncate(limit); }
+    if offset >= lines.len() {
+        lines.clear();
+    } else {
+        lines = lines.into_iter().skip(offset).collect();
+    }
+    if limit != 0 {
+        lines.truncate(limit);
+    }
     let content = lines.join("\n");
     let rendered = match mode {
-        "content" | "count" => if content.is_empty() { "No matches found".into() } else { content },
-        _ => if lines.is_empty() { "No files found".into() } else { format!("Found {} file(s)\n{}", lines.len(), lines.join("\n")) },
+        "content" => {
+            let mut result = if content.is_empty() {
+                "No matches found".to_owned()
+            } else {
+                content
+            };
+            let applied_limit = limit != 0
+                && offset + lines.len() < String::from_utf8_lossy(&stdout).lines().count();
+            if applied_limit || offset > 0 {
+                let mut parts = Vec::new();
+                if applied_limit {
+                    parts.push(format!("limit: {limit}"));
+                }
+                if offset > 0 {
+                    parts.push(format!("offset: {offset}"));
+                }
+                result.push_str(&format!(
+                    "\n\n[Showing results with pagination = {}]",
+                    parts.join(", ")
+                ));
+            }
+            result
+        }
+        "count" => {
+            let matches: usize = lines
+                .iter()
+                .filter_map(|line| line.rsplit_once(':')?.1.parse::<usize>().ok())
+                .sum();
+            let raw = if content.is_empty() {
+                "No matches found".to_owned()
+            } else {
+                content
+            };
+            format!(
+                "{raw}\n\nFound {matches} total {} across {} {}.",
+                if matches == 1 {
+                    "occurrence"
+                } else {
+                    "occurrences"
+                },
+                lines.len(),
+                if lines.len() == 1 { "file" } else { "files" }
+            )
+        }
+        _ => {
+            if lines.is_empty() {
+                "No files found".into()
+            } else {
+                format!(
+                    "Found {} {}\n{}",
+                    lines.len(),
+                    if lines.len() == 1 { "file" } else { "files" },
+                    lines.join("\n")
+                )
+            }
+        }
     };
-    Ok(GrepSearchOutput { stdout: rendered.into_bytes(), stderr, exit_code: code, match_count: lines.len(), file_matches: Vec::new() })
+    Ok(GrepSearchOutput {
+        stdout: rendered.into_bytes(),
+        stderr,
+        exit_code: code,
+        match_count: lines.len(),
+        file_matches: Vec::new(),
+    })
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -544,6 +719,58 @@ mod tests {
         assert_eq!(parsed.pattern, "hello");
         assert!(parsed.path.is_none());
         assert!(parsed.include.is_none());
+    }
+
+    #[tokio::test]
+    async fn source_grep_projects_each_source_output_mode() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "needle\nneedle\n").unwrap();
+        let resources = test_resources(tmp.path()).into_shared();
+        let source = SourceGrepInput {
+            pattern: "needle".to_owned(),
+            path: Some(tmp.path().display().to_string()),
+            glob: None,
+            output_mode: Some("content".to_owned()),
+            before: None,
+            after: None,
+            context_short: None,
+            context: None,
+            line_numbers: Some(true),
+            case_insensitive: None,
+            file_type: None,
+            head_limit: None,
+            offset: None,
+            multiline: None,
+        };
+
+        let content = run_source_grep(test_ctx(resources.clone()), source.clone())
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&content.stdout).contains("needle"));
+
+        let count = run_source_grep(
+            test_ctx(resources.clone()),
+            SourceGrepInput {
+                output_mode: Some("count".to_owned()),
+                ..source.clone()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            String::from_utf8_lossy(&count.stdout).contains("2 total occurrences across 1 file.")
+        );
+
+        let files = run_source_grep(
+            test_ctx(resources),
+            SourceGrepInput {
+                output_mode: Some("files_with_matches".to_owned()),
+                ..source
+            },
+        )
+        .await
+        .unwrap();
+        assert!(String::from_utf8_lossy(&files.stdout).starts_with("Found 1 file\n"));
     }
 
     // ── basic_match ──────────────────────────────────────────────────

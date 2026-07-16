@@ -63,7 +63,12 @@ fn source_grep_accepts_the_full_source_field_surface() {
     });
     let result = prepare_source_grep_input(&mut raw, std::path::Path::new("/tmp"), None);
     assert!(matches!(result, Ok(SourceGrepPreparation::Dispatch { .. })));
-    assert!(raw["pattern"].as_str().unwrap().starts_with("__CLAUDE_CODE_GREP__"));
+    assert!(
+        raw["pattern"]
+            .as_str()
+            .unwrap()
+            .starts_with("__CLAUDE_CODE_GREP__")
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -120,20 +125,44 @@ async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
             let mut deferred = Vec::new();
             let result = actor
                 .prepare_tool_call(
-                    tool_call(
-                        "unsupported",
-                        "Grep",
-                        r#"{"pattern":"x","unknown":true}"#,
-                    ),
+                    tool_call("unsupported", "Grep", r#"{"pattern":"x","unknown":true}"#),
                     &mut deferred,
                 )
                 .await
-            .expect("unknown Grep should return through the existing session path");
+                .expect("unknown Grep should return through the existing session path");
 
             assert!(matches!(result, Err(ToolLoop::Continue)));
             assert_eq!(
                 tool_result_text(&actor, "unsupported").await,
                 "unknown source-facing Grep field `unknown`"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_missing_path_fails_before_permission_or_dispatch() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            let mut deferred = Vec::new();
+            let result = actor
+                .prepare_tool_call(
+                    tool_call(
+                        "missing_path",
+                        "Grep",
+                        r#"{"pattern":"x","path":"missing"}"#,
+                    ),
+                    &mut deferred,
+                )
+                .await
+                .expect("missing Grep path should use the existing failure path");
+
+            assert!(matches!(result, Err(ToolLoop::Continue)));
+            assert_eq!(
+                tool_result_text(&actor, "missing_path").await,
+                "Path does not exist: missing"
             );
         })
         .await;

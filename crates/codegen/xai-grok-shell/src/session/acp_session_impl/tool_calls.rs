@@ -9,8 +9,20 @@ use super::*;
 use futures::StreamExt;
 
 const SOURCE_GREP_FIELDS: [&str; 14] = [
-    "pattern", "path", "glob", "output_mode", "-B", "-A", "-C", "context", "-n", "-i",
-    "type", "head_limit", "offset", "multiline",
+    "pattern",
+    "path",
+    "glob",
+    "output_mode",
+    "-B",
+    "-A",
+    "-C",
+    "context",
+    "-n",
+    "-i",
+    "type",
+    "head_limit",
+    "offset",
+    "multiline",
 ];
 
 enum SourceGrepPreparation {
@@ -44,10 +56,26 @@ fn prepare_source_grep_input(
             "source-facing Grep `path` must be a string when provided",
         ));
     }
+    // Source `validateInput` runs before Grep permission checks. Preserve that
+    // ordering for supplied, non-empty paths so an invalid path cannot cause a
+    // permission prompt or a ripgrep process.
+    if let Some(path) = object.get("path").and_then(serde_json::Value::as_str)
+        && !path.is_empty()
+    {
+        let candidate = std::path::Path::new(path);
+        let resolved = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            cwd.join(candidate)
+        };
+        if !resolved.exists() {
+            return Err(source_grep_input_error(format!(
+                "Path does not exist: {path}"
+            )));
+        }
+    }
     if let Some(field) = object.keys().find(|field| {
-        *field != "pattern"
-            && *field != "path"
-            && !SOURCE_GREP_FIELDS.contains(&field.as_str())
+        *field != "pattern" && *field != "path" && !SOURCE_GREP_FIELDS.contains(&field.as_str())
     }) {
         return Err(source_grep_input_error(format!(
             "unknown source-facing Grep field `{field}`"
