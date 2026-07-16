@@ -20,7 +20,7 @@ use crate::extensions::notification::{
     RetryState, SessionNotification as XaiSessionNotification, is_reauthable_failure,
 };
 use crate::sampling::error::map_sampling_err_to_acp;
-use crate::sampling::types::{ChatRequestMessage, ToolCallResponse, ToolDefinition};
+use crate::sampling::types::{ChatRequestMessage, ToolCallFunction, ToolCallResponse, ToolDefinition};
 use crate::sampling::{
     ContentPart, ConversationItem, ConversationRequest, ConversationResponse, SamplingError,
     SyntheticReason, ToolSpec, conversation_truncate_for_prompt,
@@ -1788,12 +1788,53 @@ mod claude_write_permission_tests {
             .unwrap_or_else(|| panic!("missing tool_result for {call_id}: {conversation:?}"))
     }
 
+    fn assert_parse_failure_notifications(
+        event_rx: &mut mpsc::UnboundedReceiver<SessionEvent>,
+        call_id: &str,
+    ) {
+        let mut pending_calls = 0;
+        let mut failed_updates = 0;
+
+        while let Ok(event) = event_rx.try_recv() {
+            let SessionEvent::Notification(SessionNotification::Acp(notification)) = event else {
+                continue;
+            };
+            match &notification.update {
+                acp::SessionUpdate::ToolCall(call) => {
+                    pending_calls += 1;
+                    assert!(matches!(call.status, acp::ToolCallStatus::Pending));
+                }
+                acp::SessionUpdate::ToolCallUpdate(update) => {
+                    assert!(
+                        !matches!(update.fields.status, Some(acp::ToolCallStatus::Completed)),
+                        "{call_id} must not emit a success-shaped ACP result"
+                    );
+                    if matches!(update.fields.status, Some(acp::ToolCallStatus::Failed)) {
+                        failed_updates += 1;
+                        assert!(
+                            update
+                                .fields
+                                .content
+                                .as_ref()
+                                .is_some_and(|content| !content.is_empty()),
+                            "{call_id} failed ACP update must carry content"
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(pending_calls, 1, "{call_id} must register one pending ACP call");
+        assert_eq!(failed_updates, 1, "{call_id} must emit one failed ACP result");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn source_write_routes_but_lowercase_write_keeps_existing_permission_path() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let fixture = write_actor().await;
+                let mut fixture = write_actor().await;
                 fixture
                     .actor
                     .display_cwd
@@ -1857,13 +1898,15 @@ mod claude_write_permission_tests {
                     .expect("prepare should not return ACP error")
                     .expect("existing lowercase write should remain valid");
                 assert_eq!(lowercase.tool_name, "write");
-                assert_eq!(
-                    *access.lock().await,
-                    vec![
-                        AccessKind::Edit("/tmp/nested/file.txt".to_string()),
-                        AccessKind::Edit("/display-worktree/unchanged.txt".to_string()),
-                    ],
-                    "only source-facing Write may use the resolver before permission"
+                let accesses = access.lock().await;
+                assert!(
+                    matches!(
+                        accesses.as_slice(),
+                        [AccessKind::Edit(source), AccessKind::Edit(lowercase)]
+                            if source == "/tmp/nested/file.txt"
+                                && lowercase == "/display-worktree/unchanged.txt"
+                    ),
+                    "only source-facing Write may use the resolver before permission: {accesses:?}"
                 );
             })
             .await;
@@ -1890,7 +1933,7 @@ mod claude_write_permission_tests {
                         r#"{"file_path":"/tmp/no-side-effect.txt","content":42}"#,
                     ),
                 ] {
-                    let fixture = write_actor().await;
+                    let mut fixture = write_actor().await;
                     let (permission_tx, mut permission_rx) = mpsc::unbounded_channel();
                     fixture.actor.permissions = PermissionHandle::Actor {
                         cmd_tx: permission_tx,
@@ -1901,9 +1944,13 @@ mod claude_write_permission_tests {
                         deny_read_globs: Arc::new(vec![]),
                         in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                     };
+                    let mut deferred_followups = Vec::new();
                     let outcome = fixture
                         .actor
-                        .prepare_tool_call(write_call(id, "Write", arguments), &mut Vec::new())
+                        .prepare_tool_call(
+                            write_call(id, "Write", arguments),
+                            &mut deferred_followups,
+                        )
                         .await
                         .expect("schema failure should remain on ACP/model-facing route");
                     assert!(matches!(outcome, Err(ToolLoop::ToolParsingError)));
@@ -1911,6 +1958,11 @@ mod claude_write_permission_tests {
                         permission_rx.try_recv().is_err(),
                         "invalid input requested permission"
                     );
+                    assert!(
+                        deferred_followups.is_empty(),
+                        "invalid input must not reach prompt/follow-up generation"
+                    );
+                    assert_parse_failure_notifications(&mut fixture.event_rx, id);
                     assert!(!last_tool_result(&fixture.actor, id).await.is_empty());
                 }
             })
