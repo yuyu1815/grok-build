@@ -949,8 +949,8 @@ impl SessionActor {
         };
         let access_kind = if call.function.name == "Glob" {
             use xai_grok_tools::{
-                implementations::opencode::glob::validate_path_metadata,
-                types::resources::{Cwd, DisplayCwd, resolve_model_path},
+                implementations::opencode::glob::{expand_glob_path, validate_path_metadata},
+                types::resources::{Cwd, DisplayCwd},
             };
 
             let bridge = self.tool_bridge_handle();
@@ -967,7 +967,7 @@ impl SessionActor {
                 .get("path")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let permission_path = resolve_model_path(&cwd, display_cwd.as_deref(), path);
+            let permission_path = expand_glob_path(&cwd, display_cwd.as_deref(), path);
             if let Err(error) = validate_path_metadata(&permission_path, Some(path)).await {
                 let error: anyhow::Error = error.into();
                 let _ = self

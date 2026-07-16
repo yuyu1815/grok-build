@@ -61,7 +61,15 @@ pub struct GlobInput {
         deserialize_with = "deserialize_optional_non_null_string",
         skip_serializing_if = "Option::is_none"
     )]
+    #[schemars(schema_with = "optional_string_schema")]
     pub path: Option<String>,
+}
+
+/// `Option<String>` normally advertises `null` in its generated schema, but
+/// the source's `z.string().optional()` accepts omission only. Keep the field
+/// optional through its Rust type while exposing a string-only value schema.
+fn optional_string_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "string" })
 }
 
 /// Source `z.string().optional()` accepts an omitted `path`, but rejects an
@@ -259,6 +267,23 @@ fn is_windows_unc_path(path: &Path) -> bool {
         let _ = path;
         false
     }
+}
+
+/// Apply the POSIX-relevant part of source `expandPath` before Glob's UNC
+/// guard. Node's POSIX normalization makes `//server/share` a normal
+/// `/server/share` path; only Windows retains UNC semantics.
+pub fn expand_glob_path(cwd: &Path, display_cwd: Option<&Path>, input: &str) -> PathBuf {
+    let path = resolve_model_path(cwd, display_cwd, input);
+
+    #[cfg(not(windows))]
+    {
+        let path = path.as_os_str().to_string_lossy();
+        if let Some(without_first_slash) = path.strip_prefix("//") {
+            return PathBuf::from(format!("/{without_first_slash}"));
+        }
+    }
+
+    path
 }
 
 /// Source Glob validation runs after schema parsing and before permission
@@ -546,7 +571,7 @@ impl xai_tool_runtime::Tool for GlobTool {
             .and_then(|params| params.max_results)
             .unwrap_or(DEFAULT_RESULT_LIMIT);
 
-        let permission_path = resolve_model_path(
+        let permission_path = expand_glob_path(
             &cwd,
             display_cwd.as_deref(),
             &input.path.clone().unwrap_or_default(),
@@ -855,6 +880,30 @@ mod tests {
         assert!(serde_json::from_str::<GlobInput>(r#"{"path":"src"}"#).is_err());
     }
 
+    #[test]
+    fn registry_schema_exposes_path_as_optional_string_not_nullable() {
+        let schema = crate::registry::types::generate_schema::<GlobInput>();
+        let properties = schema["properties"]
+            .as_object()
+            .expect("Glob schema must expose properties");
+        let path = properties
+            .get("path")
+            .expect("Glob schema must expose path");
+
+        assert_eq!(path["type"], "string");
+        assert!(
+            !path.to_string().contains("null"),
+            "model-facing Glob schema must not permit path: null: {path}"
+        );
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("path")),
+            "path remains optional"
+        );
+    }
+
     #[tokio::test]
     async fn absolute_path_parameter() {
         let tmp = TempDir::new().unwrap();
@@ -1058,8 +1107,13 @@ mod tests {
     #[cfg(not(windows))]
     #[tokio::test]
     async fn posix_double_slash_path_runs_filesystem_validation() {
-        let path = Path::new("//glob-validation-missing-path");
-        let error = validate_path_metadata(path, Some("//glob-validation-missing-path"))
+        let path = expand_glob_path(
+            Path::new("/workspace"),
+            None,
+            "//glob-validation-missing-path",
+        );
+        assert_eq!(path, PathBuf::from("/glob-validation-missing-path"));
+        let error = validate_path_metadata(&path, Some("//glob-validation-missing-path"))
             .await
             .expect_err("POSIX double-slash paths must not skip validation");
 
