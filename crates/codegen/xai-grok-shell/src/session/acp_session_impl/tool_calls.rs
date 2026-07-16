@@ -138,11 +138,11 @@ fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLit
     if !value.is_finite() {
         return SourceIntegerLiteral::Invalid;
     }
-    if value > f64::from(u32::MAX) {
-        return SourceIntegerLiteral::OutOfTargetRange;
-    }
     if value < 0.0 || value.fract() != 0.0 {
         return SourceIntegerLiteral::Invalid;
+    }
+    if value > f64::from(u32::MAX) {
+        return SourceIntegerLiteral::OutOfTargetRange;
     }
 
     SourceIntegerLiteral::U32(value as u32)
@@ -2995,6 +2995,7 @@ mod permission_access_classification_tests {
     use std::path::Path;
     use xai_grok_tools::types::ToolInput;
     use xai_grok_workspace::permission::AccessKind;
+    use xai_tool_runtime::ToolErrorKind;
 
     #[test]
     fn source_read_file_path_maps_to_opencode_read_file_path() {
@@ -3148,6 +3149,25 @@ mod permission_access_classification_tests {
     }
 
     #[test]
+    fn source_read_non_integer_above_u32_is_source_schema_validation_failure() {
+        for value in [
+            serde_json::json!(4_294_967_296.5),
+            serde_json::json!("4294967296.5"),
+        ] {
+            let error = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.txt",
+                "offset": value,
+            }))
+            .expect_err("a finite non-integer must fail the source integer schema");
+            assert!(matches!(
+                error,
+                SourceReadInputError::Invalid(error)
+                    if error.kind == ToolErrorKind::InvalidArguments
+            ));
+        }
+    }
+
+    #[test]
     fn source_read_u32_max_reaches_numeric_dispatch() {
         for value in [
             serde_json::json!(u32::MAX),
@@ -3196,7 +3216,11 @@ mod permission_access_classification_tests {
         ] {
             let error = source_read_input_for_registry(&input)
                 .expect_err("source schema validation must precede pages validation");
-            assert!(matches!(error, SourceReadInputError::Invalid(_)));
+            assert!(matches!(
+                error,
+                SourceReadInputError::Invalid(error)
+                    if error.kind == ToolErrorKind::InvalidArguments
+            ));
         }
     }
 
@@ -3209,7 +3233,14 @@ mod permission_access_classification_tests {
                 "pages": pages,
             }))
             .expect_err("pages validation must precede target overflow handling");
-            assert!(matches!(error, SourceReadInputError::Invalid(_)), "{pages}");
+            assert!(
+                matches!(
+                    error,
+                    SourceReadInputError::Invalid(error)
+                        if error.kind == ToolErrorKind::InvalidArguments
+                ),
+                "{pages}"
+            );
         }
     }
 
