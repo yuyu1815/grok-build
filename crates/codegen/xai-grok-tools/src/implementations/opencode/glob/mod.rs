@@ -244,8 +244,21 @@ async fn codesign_ripgrep_if_necessary() {
     }
 }
 
-fn is_unc_path(path: &str) -> bool {
-    path.starts_with("\\\\") || path.starts_with("//")
+/// `GlobTool.validateInput` checks the result of `expandPath`, not the raw
+/// JSON value.  A POSIX `//server/share` therefore remains a normal POSIX
+/// path for validation; only Windows UNC paths skip filesystem metadata.
+fn is_windows_unc_path(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let path = path.to_string_lossy();
+        path.starts_with("\\\\") || path.starts_with("//")
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 /// Source Glob validation runs after schema parsing and before permission
@@ -258,9 +271,10 @@ pub async fn validate_path_metadata(
     let Some(path) = supplied_path.filter(|path| !path.is_empty()) else {
         return Ok(());
     };
-    // Claude Code deliberately avoids filesystem operations for UNC paths to
-    // prevent credential leakage; permission handling owns the next decision.
-    if is_unc_path(path) {
+    // Claude Code deliberately avoids filesystem operations for expanded
+    // Windows UNC paths to prevent credential leakage; permission handling
+    // owns the next decision. POSIX `//...` still reaches `metadata`.
+    if is_windows_unc_path(permission_path) {
         return Ok(());
     }
     let metadata = tokio::fs::metadata(permission_path).await.map_err(|err| {
@@ -1033,10 +1047,23 @@ mod tests {
     }
 
     #[test]
-    fn unc_paths_skip_validation_filesystem_access() {
-        assert!(is_unc_path(r"\\server\share"));
-        assert!(is_unc_path("//server/share"));
-        assert!(!is_unc_path("/tmp/project"));
+    #[cfg(windows)]
+    #[test]
+    fn expanded_windows_unc_paths_skip_validation_filesystem_access() {
+        assert!(is_windows_unc_path(Path::new(r"\\server\share")));
+        assert!(is_windows_unc_path(Path::new("//server/share")));
+        assert!(!is_windows_unc_path(Path::new(r"C:\\project")));
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn posix_double_slash_path_runs_filesystem_validation() {
+        let path = Path::new("//glob-validation-missing-path");
+        let error = validate_path_metadata(path, Some("//glob-validation-missing-path"))
+            .await
+            .expect_err("POSIX double-slash paths must not skip validation");
+
+        assert!(error.to_string().contains("Directory does not exist:"));
     }
 
     #[test]
