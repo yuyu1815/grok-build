@@ -7,6 +7,7 @@
 //! the parent module's private helpers.
 use super::*;
 use futures::StreamExt;
+use serde::Deserialize as _;
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
 fn is_mcp_create_pull_request(tool_name: &str) -> bool {
@@ -36,11 +37,63 @@ const SOURCE_READ_MAX_PAGES: i64 = 20;
 struct SourceReadRequiredInput {
     file_path: String,
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_semantic_u32_opt")]
     offset: Option<u32>,
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_semantic_u32_opt")]
     limit: Option<u32>,
     #[serde(default)]
     pages: Option<String>,
+}
+
+/// Match Claude's `semanticNumber`: decimal numeric strings are coerced to a
+/// number before the inner integer constraint is applied. Other strings are
+/// left invalid, rather than accepting JavaScript `Number` coercions such as
+/// the empty string or whitespace.
+fn deserialize_semantic_u32_opt<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let number = match value {
+        serde_json::Value::Number(number) => number.as_f64(),
+        serde_json::Value::String(string) if is_decimal_number_literal(&string) => {
+            string.parse::<f64>().ok()
+        }
+        _ => None,
+    };
+    let Some(number) = number.filter(|number| number.is_finite()) else {
+        return Err(serde::de::Error::custom("expected a finite decimal number"));
+    };
+    if number < 0.0 || number.fract() != 0.0 || number > u32::MAX as f64 {
+        return Err(serde::de::Error::custom("expected a non-negative integer"));
+    }
+    Ok(Some(number as u32))
+}
+
+fn is_decimal_number_literal(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let integer_start = usize::from(bytes.first() == Some(&b'-'));
+    if integer_start == bytes.len() {
+        return false;
+    }
+    let mut index = integer_start;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    if index == integer_start {
+        return false;
+    }
+    if index == bytes.len() {
+        return true;
+    }
+    if bytes[index] != b'.' || index + 1 == bytes.len() {
+        return false;
+    }
+    bytes[index + 1..].iter().all(|byte| byte.is_ascii_digit())
 }
 
 fn parse_js_int_prefix(value: &str) -> Option<i64> {
@@ -1031,7 +1084,7 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(registry_tool_name, registry_raw_input)
+            .try_parse(registry_tool_name, registry_raw_input.clone())
             .await
         {
             Ok(input) => input,
@@ -1511,7 +1564,7 @@ impl SessionActor {
             tool_call_id,
             tool_name: call.function.name.clone(),
             raw_arguments: call.function.arguments.clone(),
-            parsed_args: raw_input.clone(),
+            parsed_args: registry_raw_input,
             model_id: model_id_str,
             concatenated_json_count,
             dispatch_target_name,
@@ -2857,6 +2910,54 @@ mod permission_access_classification_tests {
                 "unexpected": true
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn source_read_semantic_numbers_accept_decimal_strings_but_reject_non_integers() {
+        let mapped = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": "01.0",
+            "limit": "20"
+        }))
+        .expect("semanticNumber-compatible strings should parse");
+        assert_eq!(mapped["offset"], 1);
+        assert_eq!(mapped["limit"], 20);
+
+        for value in [
+            serde_json::json!(""),
+            serde_json::json!(" 1"),
+            serde_json::json!("+1"),
+            serde_json::json!("1e2"),
+            serde_json::json!("1.5"),
+            serde_json::json!(-1),
+        ] {
+            assert!(
+                source_read_input_for_registry(&serde_json::json!({
+                    "file_path": "src/file.txt",
+                    "offset": value
+                }))
+                .is_err(),
+                "unexpectedly accepted offset {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_read_dispatch_args_keep_registry_name_and_converted_values() {
+        let mapped = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": "2",
+            "limit": "3.0"
+        }))
+        .expect("valid source Read input");
+        assert_eq!(
+            mapped,
+            serde_json::json!({
+                "filePath": "src/file.txt",
+                "offset": 2,
+                "limit": 3
+            })
         );
     }
 }
