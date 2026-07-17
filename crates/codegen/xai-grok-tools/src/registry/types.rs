@@ -1361,7 +1361,11 @@ impl FinalizedToolset {
             let tools = self.tools.read();
             let tool = tools
                 .iter()
-                .find(|t| t.client_name == tool_name)
+                // `Write` is advertised to Claude while the session adapter
+                // deliberately dispatches to this tool's canonical lowercase
+                // id.  Client names remain the public lookup key; registry-id
+                // fallback is solely the internal compatibility seam.
+                .find(|t| t.client_name == tool_name || t.id == tool_name)
                 .ok_or_else(|| Self::tool_not_found_error(tool_name))?;
             (tool.reverse_params.clone(), tool.parse_input.clone())
         };
@@ -1398,7 +1402,7 @@ impl FinalizedToolset {
             let tools = self.tools.read();
             let entry = tools
                 .iter()
-                .find(|t| t.client_name == tool_name)
+                .find(|t| t.client_name == tool_name || t.id == tool_name)
                 .ok_or_else(|| Self::tool_not_found_error(tool_name))?;
             (
                 entry.registry_id.clone(),

@@ -167,6 +167,14 @@ fn wait_tasks_tool_config() -> ToolConfig {
 fn kill_task_tool_config() -> ToolConfig {
     ToolConfig::from(&grok_build::KillTaskTool).with_name("kill_command_or_subagent")
 }
+/// Claude Code's public `Write` definition, backed by the existing lowercase
+/// OpenCode implementation.  The session adapter performs the sole
+/// `Write` → `write` dispatch conversion after strict source-shaped parsing.
+pub fn claude_write_tool_config() -> ToolConfig {
+    ToolConfig::from(&opencode::OpenCodeWriteTool)
+        .with_name("Write")
+        .with_description("Write a file to the local filesystem.")
+}
 /// Complete workspace-executable toolset for hub registration.
 ///
 /// Extends `default_grok_build_toolset()` with tools that are dynamically
@@ -175,7 +183,7 @@ fn kill_task_tool_config() -> ToolConfig {
 /// zero local dispatch.
 pub fn workspace_grok_build_toolset() -> ToolServerConfig {
     let mut tools = default_grok_build_toolset().tools;
-    tools.push((&opencode::OpenCodeWriteTool).into());
+    tools.push(claude_write_tool_config());
     tools.push((&grok_build::EnterPlanModeTool).into());
     tools.push((&grok_build::ExitPlanModeTool).into());
     tools.push((&grok_build::AskUserQuestionTool).into());
@@ -199,7 +207,7 @@ fn grok_computer_toolset() -> ToolServerConfig {
         bash_tool_config(),
         (&grok_build::ReadFileTool).into(),
         (&grok_build::SearchReplaceTool).into(),
-        (&opencode::OpenCodeWriteTool).into(),
+        claude_write_tool_config(),
         (&grok_build::ListDirTool).into(),
         (&grok_build::GrepTool).into(),
         (&grok_build::KillTerminalCommandTool).into(),

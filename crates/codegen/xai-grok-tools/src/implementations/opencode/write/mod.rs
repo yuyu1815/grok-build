@@ -32,6 +32,17 @@ pub struct WriteInput {
 
     /// The full file content to write.
     pub content: String,
+
+    /// Set only by the Claude-facing session adapter after it has accepted a
+    /// strict `Write` request.  It is deliberately absent from the public
+    /// schema and leaves ordinary lowercase `write` behavior untouched.
+    #[serde(
+        default,
+        rename = "__claude_write_adapter",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    #[schemars(skip)]
+    pub(crate) claude_facing: bool,
 }
 
 // ─── Tool ────────────────────────────────────────────────────────────
@@ -115,15 +126,25 @@ impl xai_tool_runtime::Tool for WriteTool {
         // ── Check if file exists and read old content ────────────
         let (existed, old_content) = match fs.read_file(&path).await {
             Ok(bytes) => (true, Some(String::from_utf8_lossy(&bytes).into_owned())),
-            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
-                (false, None)
-            }
-            Err(error) => {
+            Err(error) if input.claude_facing => {
                 return Err(xai_tool_runtime::ToolError::execution(
                     xai_tool_protocol::ToolId::new("write").expect("valid"),
                     error.to_string(),
                 ));
             }
+            Err(_) => (false, None),
+        };
+
+        // FileWriteTool's `if (oldContent)` classifies an existing empty file
+        // as a create.  Keep that source-facing distinction in the adapter;
+        // lowercase OpenCode `write` retains its established existence-based
+        // classification.
+        let is_update = if input.claude_facing {
+            old_content
+                .as_deref()
+                .is_some_and(|content| !content.is_empty())
+        } else {
+            existed
         };
 
         // ── Create parent directories if needed ──────────────────
@@ -155,7 +176,7 @@ impl xai_tool_runtime::Tool for WriteTool {
             absolute_path: path.clone(),
             content: input.content.clone(),
             previous_content: old_content.clone(),
-            is_new_file: !existed,
+            is_new_file: !is_update,
         });
 
         let old_string = old_content.unwrap_or_default();
@@ -171,7 +192,7 @@ impl xai_tool_runtime::Tool for WriteTool {
             line_prefix: String::new(),
         }];
 
-        let tool_output_for_prompt = if existed {
+        let tool_output_for_prompt = if is_update {
             format!("Wrote file successfully to {}.", path.display())
         } else {
             format!("The file {} has been created.", path.display())
@@ -262,6 +283,7 @@ mod tests {
         let input = WriteInput {
             file_path: tmp.path().join("new.txt").to_string_lossy().into_owned(),
             content: "hello\nworld\n".to_string(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared_resources.clone()), input)
             .await
@@ -291,6 +313,7 @@ mod tests {
         let input = WriteInput {
             file_path: file_path.to_string_lossy().into_owned(),
             content: "new content\n".to_string(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -306,6 +329,29 @@ mod tests {
         assert_eq!(content, "new content\n");
     }
 
+    #[tokio::test]
+    async fn claude_adapter_classifies_existing_empty_file_as_create() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("empty-existing.txt");
+        std::fs::write(&file_path, "").unwrap();
+        let result = xai_tool_runtime::Tool::run(
+            &WriteTool,
+            test_ctx(test_resources(tmp.path()).into_shared()),
+            WriteInput {
+                file_path: file_path.to_string_lossy().into_owned(),
+                content: "new content\n".to_owned(),
+                claude_facing: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        let SearchReplaceOutput::EditsApplied(applied) = result else {
+            panic!("expected EditsApplied");
+        };
+        assert!(applied.tool_output_for_prompt.contains("created"));
+    }
+
     // ── Creates parent directories ──────────────────────────────
 
     #[tokio::test]
@@ -318,6 +364,7 @@ mod tests {
         let input = WriteInput {
             file_path: nested.to_string_lossy().into_owned(),
             content: "nested\n".to_string(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -329,7 +376,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_not_found_read_error_stops_before_parent_creation_or_write() {
+    async fn claude_adapter_non_not_found_read_error_stops_before_parent_creation_or_write() {
         let tmp = TempDir::new().unwrap();
         let target = tmp.path().join("must-not-exist/target.txt");
         let parent = target.parent().unwrap().to_path_buf();
@@ -344,6 +391,7 @@ mod tests {
             WriteInput {
                 file_path: target.to_string_lossy().into_owned(),
                 content: "must not be written".to_owned(),
+                claude_facing: true,
             },
         )
         .await;
@@ -357,6 +405,33 @@ mod tests {
         );
         assert!(!parent.exists(), "read error must stop before mkdir");
         assert!(!target.exists(), "read error must stop before write");
+    }
+
+    #[tokio::test]
+    async fn lowercase_write_keeps_non_not_found_read_error_compatibility() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("legacy/target.txt");
+        let mut resources = Resources::new();
+        resources.insert(Cwd(tmp.path().to_path_buf()));
+        resources.insert(FileSystem(Arc::new(RefusingReadFs)));
+        resources.insert(NotificationHandle(ToolNotificationHandle::noop()));
+
+        let result = xai_tool_runtime::Tool::run(
+            &WriteTool,
+            test_ctx(resources.into_shared()),
+            WriteInput {
+                file_path: target.to_string_lossy().into_owned(),
+                content: "legacy behavior".to_owned(),
+                claude_facing: false,
+            },
+        )
+        .await;
+
+        assert!(result.is_err(), "the refusing filesystem must reject write");
+        assert!(
+            target.parent().unwrap().exists(),
+            "lowercase path still reaches mkdir"
+        );
     }
 
     // ── Tool metadata ──────────────────────────────────────────
@@ -411,6 +486,7 @@ mod tests {
         let input = WriteInput {
             file_path: file_path.to_string_lossy().into_owned(),
             content: String::new(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -436,6 +512,7 @@ mod tests {
         let input = WriteInput {
             file_path: file_path.to_string_lossy().into_owned(),
             content: "new\n".to_string(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -467,6 +544,7 @@ mod tests {
         let input = WriteInput {
             file_path: "subdir/relative.txt".to_string(),
             content: "resolved\n".to_string(),
+            claude_facing: false,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -496,6 +574,7 @@ mod tests {
         let input = WriteInput {
             file_path: "/tmp/test.txt".to_string(),
             content: "data".to_string(),
+            claude_facing: false,
         };
         let result =
             xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input).await;
@@ -522,6 +601,7 @@ mod tests {
         let input = WriteInput {
             file_path: "/tmp/test.txt".to_string(),
             content: "data".to_string(),
+            claude_facing: false,
         };
         let result =
             xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input).await;
@@ -554,6 +634,7 @@ mod tests {
             WriteInput {
                 file_path: file_path.to_string_lossy().into_owned(),
                 content: "notification content\n".to_owned(),
+                claude_facing: false,
             },
         )
         .await

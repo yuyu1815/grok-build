@@ -1748,7 +1748,6 @@ mod claude_write_permission_tests {
     use super::support::test_agent_with_tools;
     use super::*;
     use tokio::sync::mpsc;
-    use xai_grok_tools::implementations::opencode::OpenCodeWriteTool;
     use xai_grok_tools::registry::types::ToolConfig;
     use xai_grok_workspace::permission::{AccessKind, PermissionCommand};
 
@@ -1763,9 +1762,43 @@ mod claude_write_permission_tests {
     async fn write_actor() -> replay_buffer_send_update_tests::ReplaySendUpdateFixture {
         let mut fixture = make_replay_send_update_fixture().await;
         fixture.actor.agent = std::cell::RefCell::new(
-            test_agent_with_tools(vec![ToolConfig::for_tool::<OpenCodeWriteTool>()]).await,
+            test_agent_with_tools(vec![xai_grok_agent::config::claude_write_tool_config()]).await,
         );
         fixture
+    }
+
+    #[tokio::test]
+    async fn source_write_public_definition_has_exact_name_description_and_closed_schema() {
+        let fixture = write_actor().await;
+        let bridge = fixture.actor.agent.borrow().tool_bridge().clone();
+        let definition = bridge
+            .tool_definitions_builtins_only()
+            .await
+            .into_iter()
+            .find(|definition| definition.function.name == "Write")
+            .expect("the product toolset must advertise Claude-facing Write");
+
+        assert_eq!(
+            definition.function.description.as_deref(),
+            Some("Write a file to the local filesystem.")
+        );
+        assert_eq!(definition.function.parameters["type"], "object");
+        assert_eq!(
+            definition.function.parameters["required"],
+            serde_json::json!(["file_path", "content"])
+        );
+        assert_eq!(
+            definition.function.parameters["properties"]["file_path"]["type"],
+            "string"
+        );
+        assert_eq!(
+            definition.function.parameters["properties"]["content"]["type"],
+            "string"
+        );
+        assert_eq!(
+            definition.function.parameters["additionalProperties"],
+            false
+        );
     }
 
     async fn last_tool_result(actor: &SessionActor, call_id: &str) -> String {

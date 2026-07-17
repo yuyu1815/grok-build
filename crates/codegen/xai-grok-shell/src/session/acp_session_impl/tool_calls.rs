@@ -77,7 +77,7 @@ fn parse_and_dispatch_tool_name(
     match function_name {
         "Write"
             if matches!(
-                bridge.tool_kind("write"),
+                bridge.tool_kind("Write"),
                 Some(xai_grok_tools::types::tool::ToolKind::Write)
             ) =>
         {
@@ -905,7 +905,7 @@ impl SessionActor {
         let parse_tool_name = parse_and_dispatch_tool_name(&bridge, &call.function.name);
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
-        let raw_input = match &parse_result {
+        let mut raw_input = match &parse_result {
             Ok(value) => value.clone(),
             Err(e) => {
                 if let Some(objects) = crate::session::helpers::tool_input_parsing::try_extract_concatenated_json_objects(
@@ -963,6 +963,15 @@ impl SessionActor {
             )
             .await?;
             return Ok(Err(ToolLoop::ToolParsingError));
+        }
+        if call.function.name == "Write" {
+            raw_input
+                .as_object_mut()
+                .expect("validated Write input is an object")
+                .insert(
+                    "__claude_write_adapter".to_string(),
+                    serde_json::Value::Bool(true),
+                );
         }
         let tool_input = match self
             .agent

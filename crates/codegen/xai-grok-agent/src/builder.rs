@@ -740,7 +740,7 @@ impl AgentBuilder {
             if self.write_file_enabled && !has_write_tool {
                 tool_config
                     .tools
-                    .push((&xai_grok_tools::implementations::opencode::OpenCodeWriteTool).into());
+                    .push(crate::config::claude_write_tool_config());
             }
             ensure_plan_mode_tools(&mut tool_config);
         }

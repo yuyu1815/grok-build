@@ -70,7 +70,14 @@ changes, or pager changes.
 ## Implementation record (separate from approved contract)
 
 - Removed pre-existing Grep routing and Grep tests from the Write PR.
-- Added a behavioral regression test proving a non-`NotFound` pre-write read
-  error reaches the caller and leaves both parent directory and target absent.
-- Existing focused session tests cover strict input rejection, permission
-  non-reachability, exact `Write → write` routing, and lowercase compatibility.
+- Product toolsets advertise the source-facing `Write` definition while the
+  session adapter alone resolves it to lowercase `write` for dispatch.
+- The adapter marks only exact `Write` dispatches, so a non-`NotFound`
+  pre-write read error reaches that caller before mkdir, write, or notification;
+  the shared lowercase `write` behavior remains unchanged.
+- The adapter classifies an existing empty file as `create`, matching source
+  `if (oldContent)` behavior rather than treating existence alone as `update`.
+- Focused tests cover public definition/schema/description, strict input
+  rejection, permission non-reachability, exact `Write → write` routing,
+  adapter read-error handling, empty-file classification, and lowercase
+  compatibility.
