@@ -172,7 +172,10 @@ async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution()
                 ("glob", "false"),
                 ("output_mode", r#""not-a-mode""#),
                 ("head_limit", "true"),
-                ("multiline", r#""true""#),
+                ("multiline", r#""TRUE""#),
+                ("-i", r#""yes""#),
+                ("-n", "1"),
+                ("multiline", "null"),
             ] {
                 let call_id = format!("invalid_{field}");
                 let arguments = format!(r#"{{"pattern":"x","path":"missing","{field}":{value}}}"#);
@@ -183,6 +186,30 @@ async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution()
                 assert!(message.starts_with("Failed to parse arguments for tool `Grep`:"));
                 assert_ne!(message, UNSUPPORTED_MESSAGE);
             }
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_coerces_strict_string_booleans_before_unsupported() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            let result = actor
+                .execute_tool_calls(vec![tool_call(
+                    "string_booleans",
+                    "Grep",
+                    r#"{"pattern":"x","-n":"true","-i":"false","multiline":"true"}"#,
+                )])
+                .await
+                .expect("a source-valid string-boolean Grep should stop through the session loop");
+
+            assert!(matches!(result, ToolLoop::Continue));
+            assert_eq!(
+                tool_result_text(&actor, "string_booleans").await,
+                UNSUPPORTED_MESSAGE
+            );
         })
         .await;
 }

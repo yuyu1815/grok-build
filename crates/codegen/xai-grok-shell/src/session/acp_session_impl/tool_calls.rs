@@ -68,6 +68,29 @@ impl<'de> serde::Deserialize<'de> for SourceGrepNumber {
     }
 }
 
+/// Source-facing `Grep` accepts native booleans and the two string boolean
+/// literals that its input normalizer coerces. Keep this deliberately stricter
+/// than the shared lenient boolean parser: alternate spellings and numeric
+/// forms are schema failures, not silently accepted arguments.
+fn deserialize_source_grep_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match <serde_json::Value as serde::Deserialize>::deserialize(deserializer)? {
+        serde_json::Value::Bool(value) => Ok(Some(value)),
+        serde_json::Value::String(value) => match value.as_str() {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            _ => Err(serde::de::Error::custom(
+                "expected a boolean or string boolean \"true\"/\"false\"",
+            )),
+        },
+        value => Err(serde::de::Error::custom(format!(
+            "expected a boolean or string boolean \"true\"/\"false\", got {value}"
+        ))),
+    }
+}
+
 /// Exact strict schema for source-facing uppercase `Grep`.
 #[allow(dead_code)]
 #[derive(serde::Deserialize)]
@@ -84,14 +107,23 @@ struct SourceGrepInput {
     #[serde(rename = "-C")]
     context_short: Option<SourceGrepNumber>,
     context: Option<SourceGrepNumber>,
-    #[serde(rename = "-n")]
+    #[serde(
+        rename = "-n",
+        default,
+        deserialize_with = "deserialize_source_grep_bool"
+    )]
     line_numbers: Option<bool>,
-    #[serde(rename = "-i")]
+    #[serde(
+        rename = "-i",
+        default,
+        deserialize_with = "deserialize_source_grep_bool"
+    )]
     case_insensitive: Option<bool>,
     #[serde(rename = "type")]
     file_type: Option<String>,
     head_limit: Option<SourceGrepNumber>,
     offset: Option<SourceGrepNumber>,
+    #[serde(default, deserialize_with = "deserialize_source_grep_bool")]
     multiline: Option<bool>,
 }
 
