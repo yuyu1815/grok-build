@@ -132,9 +132,7 @@ pub struct ReadFileInput {
     )]
     pub limit: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[serde(deserialize_with = "deserialize_optional_pages")]
     #[schemars(
-        with = "String",
         description = "Page range for PDF files (e.g. '1-5', '3', '10-'). Required for PDFs with more than 10 pages. Max 20 pages per call. Ignored for non-PDF files."
     )]
     pub pages: Option<String>,
@@ -143,22 +141,6 @@ pub struct ReadFileInput {
         description = "Output format for PDF files. 'image' (default) renders pages as images. 'text' extracts text content. Ignored for non-PDF files."
     )]
     pub format: Option<String>,
-}
-
-/// Deserialize the optional `pages` field without treating explicit JSON null
-/// as an omitted field. Claude Code's `z.string().optional()` accepts absence
-/// but rejects null at the schema boundary.
-fn deserialize_optional_pages<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    match <serde_json::Value as serde::Deserialize>::deserialize(deserializer)? {
-        serde_json::Value::String(value) => Ok(Some(value)),
-        serde_json::Value::Null => Err(serde::de::Error::custom("pages must be a string")),
-        value => Err(serde::de::Error::custom(format!(
-            "pages must be a string, got {value}"
-        ))),
-    }
 }
 async fn cursor_rules_on_read_enabled(resources: &SharedResources) -> bool {
     let res = resources.lock().await;
@@ -2359,24 +2341,6 @@ pub fn verify(req: &HttpRequest) -> Result<Claims, Error> {
         let str_neg: ReadFileInput =
             serde_json::from_str(r#"{"target_file":"x","offset":"-3"}"#).unwrap();
         assert_eq!(str_neg.offset, Some(-3));
-    }
-    #[test]
-    fn read_file_input_pages_schema_rejects_explicit_null_only() {
-        let omitted: ReadFileInput = serde_json::from_str(r#"{"target_file":"x"}"#).unwrap();
-        assert_eq!(omitted.pages, None);
-
-        let valid: ReadFileInput =
-            serde_json::from_str(r#"{"target_file":"x","pages":"1-3"}"#).unwrap();
-        assert_eq!(valid.pages.as_deref(), Some("1-3"));
-
-        assert!(
-            serde_json::from_str::<ReadFileInput>(r#"{"target_file":"x","pages":null}"#).is_err()
-        );
-        assert!(serde_json::from_str::<ReadFileInput>(r#"{"target_file":"x","pages":1}"#).is_err());
-
-        let schema = serde_json::to_value(schemars::schema_for!(ReadFileInput)).unwrap();
-        let pages = &schema["properties"]["pages"];
-        assert_eq!(pages["type"], "string");
     }
     #[test]
     fn stored_read_offset_drops_negatives() {
