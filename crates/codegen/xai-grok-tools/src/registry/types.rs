@@ -1453,6 +1453,26 @@ impl FinalizedToolset {
         }
         Err(stream_no_terminal_error())
     }
+    /// Dispatch through an exact internal registry ID while retaining the
+    /// configured public definition, parameter mapping, and output conversion.
+    /// This is deliberately not a client-name fallback.
+    pub async fn call_by_registry_id(
+        self: &Arc<Self>,
+        registry_id: &str,
+        tool_args: serde_json::Value,
+        tool_call_id: &str,
+        cwd_override: Option<std::path::PathBuf>,
+    ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
+        let client_name = self
+            .tools
+            .read()
+            .iter()
+            .find(|tool| tool.registry_id == registry_id)
+            .map(|tool| tool.client_name.clone())
+            .ok_or_else(|| Self::tool_not_found_error(registry_id))?;
+        self.call(&client_name, tool_args, tool_call_id, cwd_override)
+            .await
+    }
     /// Streaming sibling of [`call`].
     ///
     /// Forwards every inner [`ToolStreamItem::Progress`] unchanged, and when the

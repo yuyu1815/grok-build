@@ -848,8 +848,7 @@ impl SessionActor {
         );
         // Source-facing Claude names route only to their lowercase OpenCode
         // counterparts. Existing lowercase calls retain their original path.
-        let registry_tool_name = source_facing_registry_target(&call.function.name)
-            .unwrap_or(call.function.name.as_str());
+        let source_registry_name = source_facing_registry_target(&call.function.name);
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
         let raw_input = match &parse_result {
@@ -868,7 +867,7 @@ impl SessionActor {
                         let bridge = self.agent.borrow().tool_bridge().clone();
                         for (idx, obj) in objects.iter().enumerate() {
                             if bridge
-                                .try_parse(registry_tool_name, obj.clone())
+                                .try_parse(&call.function.name, obj.clone())
                                 .await
                                 .is_ok()
                             {
@@ -902,7 +901,7 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(registry_tool_name, raw_input.clone())
+            .try_parse(&call.function.name, raw_input.clone())
             .await
         {
             Ok(input) => input,
@@ -983,9 +982,8 @@ impl SessionActor {
         // `Glob` is the Claude-facing name; only the lowercase OpenCode tool
         // is registered for execution. Preserve that target through the
         // prepared-call boundary so dispatch cannot fall back to `Glob`.
-        let dispatch_target_name = tool_input
-            .dispatch_target_name()
-            .or_else(|| source_facing_registry_target(&call.function.name).map(str::to_owned));
+        let dispatch_target_name = tool_input.dispatch_target_name();
+        let registry_tool_name = source_registry_name.map(str::to_owned);
         let resolved_tool_name = dispatch_target_name
             .clone()
             .unwrap_or_else(|| call.function.name.clone());
@@ -1420,6 +1418,7 @@ impl SessionActor {
             model_id: model_id_str,
             concatenated_json_count,
             dispatch_target_name,
+            registry_tool_name,
             is_read_only,
         };
         Ok(Ok(prepared))

@@ -523,7 +523,7 @@ fn opencode_toolset() -> ToolServerConfig {
             (&opencode::OpenCodeEditTool).into(),
             (&opencode::OpenCodeWriteTool).into(),
             (&opencode::OpenCodeGrepTool).into(),
-            (&opencode::OpenCodeGlobTool).into(),
+            ToolConfig::from(&opencode::OpenCodeGlobTool).with_name("Glob"),
             (&opencode::OpenCodeTodoWriteTool).into(),
             (&opencode::OpenCodeSkillTool).into(),
             kill_task_tool_config(),
@@ -1735,6 +1735,23 @@ mod tests {
         assert!(
             gc.tools.iter().any(|t| t.id == write_id),
             "grok-computer preset must include the `{write_id}` tool"
+        );
+    }
+
+    #[test]
+    fn opencode_glob_keeps_the_claude_public_name_separate_from_its_registry_id() {
+        let definition = AgentDefinition::opencode();
+        let glob = definition
+            .tool_config
+            .tools
+            .iter()
+            .find(|tool| tool.id == ToolConfig::from(&opencode::OpenCodeGlobTool).id)
+            .expect("opencode must configure the Glob implementation");
+
+        assert_eq!(glob.name_override.as_deref(), Some("Glob"));
+        assert_eq!(
+            ToolConfig::from(&opencode::OpenCodeGlobTool).id,
+            "OpenCode:glob"
         );
     }
     #[test]

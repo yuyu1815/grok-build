@@ -22,15 +22,26 @@ pub(super) async fn dispatch_tool(
         mode = "local",
         "dispatch_tool"
     );
-    let dispatch_name = dispatch_name(prepared);
-    workspace_ops
-        .call_tool(
-            dispatch_name,
-            prepared.parsed_args.clone(),
-            &prepared.tool_call_id.0,
-            Some(session_id),
-        )
-        .await
+    if let Some(registry_name) = prepared.registry_tool_name.as_deref() {
+        workspace_ops
+            .call_tool_by_registry_id(
+                registry_name,
+                prepared.parsed_args.clone(),
+                &prepared.tool_call_id.0,
+                Some(session_id),
+            )
+            .await
+    } else {
+        let dispatch_name = dispatch_name(prepared);
+        workspace_ops
+            .call_tool(
+                dispatch_name,
+                prepared.parsed_args.clone(),
+                &prepared.tool_call_id.0,
+                Some(session_id),
+            )
+            .await
+    }
 }
 
 /// Wire a prepared Claude-facing call to its internal registry name.
@@ -39,28 +50,6 @@ fn dispatch_name(prepared: &PreparedToolCall) -> &str {
         .dispatch_target_name
         .as_deref()
         .unwrap_or(&prepared.tool_name)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn public_glob_prepared_call_dispatches_to_lowercase_registry_tool() {
-        let prepared = PreparedToolCall {
-            call_id: "glob-e2e".to_owned(),
-            tool_call_id: acp::ToolCallId::new(std::sync::Arc::from("glob-e2e")),
-            tool_name: "Glob".to_owned(),
-            raw_arguments: r#"{\"pattern\":\"*.rs\"}"#.to_owned(),
-            parsed_args: serde_json::json!({"pattern": "*.rs"}),
-            model_id: "test".to_owned(),
-            concatenated_json_count: 0,
-            dispatch_target_name: Some("glob".to_owned()),
-            is_read_only: true,
-        };
-
-        assert_eq!(dispatch_name(&prepared), "glob");
-    }
 }
 
 /// First string-valued argument among `keys`, in priority order.

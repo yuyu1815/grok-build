@@ -537,6 +537,9 @@ pub(crate) struct PreparedToolCall {
     /// Resolved target for meta-dispatch tools (`use_tool`, `CallMcpTool`);
     /// `None` for ordinary tools. See [`ToolInput::dispatch_target_name`].
     dispatch_target_name: Option<String>,
+    /// Registry key used to execute an exact source-facing tool whose public
+    /// name is intentionally different (currently `Glob` → `glob`).
+    registry_tool_name: Option<String>,
     /// Read-only per `ToolKind`; decides whether the call takes the per-file lock.
     is_read_only: bool,
 }

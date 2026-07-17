@@ -1513,6 +1513,67 @@ impl WorkspaceOps {
             }
         }
     }
+    /// Dispatch a known internal registry ID. This is reserved for callers
+    /// which intentionally separate a source-facing tool name from its lower
+    /// implementation key.
+    pub async fn call_tool_by_registry_id(
+        &self,
+        registry_id: &str,
+        args: Value,
+        call_id: &str,
+        session_id: Option<&str>,
+    ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
+        match self {
+            Self::Local { handle } => {
+                let session_id = session_id.ok_or_else(|| {
+                    xai_tool_runtime::ToolError::custom(
+                        "missing_session",
+                        "session_id required for local tool dispatch",
+                    )
+                })?;
+                let session = handle.session(session_id).ok_or_else(|| {
+                    xai_tool_runtime::ToolError::custom(
+                        "session_not_found",
+                        format!("workspace session not found: {session_id} — call bind_local_session() first"),
+                    )
+                })?;
+                session
+                    .toolset()
+                    .call_by_registry_id(registry_id, args, call_id, None)
+                    .await
+            }
+            Self::Proxy { client } => {
+                if !client.is_connected() {
+                    return Err(xai_tool_runtime::ToolError::network_error(
+                        "The workspace server connection was lost. Please restart your session to reconnect.",
+                    ));
+                }
+                let tool_id = xai_tool_protocol::ToolId::new(registry_id).map_err(|e| {
+                    xai_tool_runtime::ToolError::custom(
+                        "hub_proxy_error",
+                        format!("invalid tool name: {e}"),
+                    )
+                })?;
+                let mut ctx = xai_tool_runtime::ToolCallContext::default();
+                ctx.call_id =
+                    xai_tool_protocol::ToolCallId::new(call_id.to_owned()).unwrap_or(ctx.call_id);
+                let mut stream = client.harness().call(tool_id, args, ctx).await;
+                let typed = crate::hub_channel::consume_stream_terminal(&mut stream)
+                    .await
+                    .inspect_err(|e| {
+                        if is_transport_fatal(e) {
+                            client.mark_disconnected();
+                        }
+                    })?;
+                serde_json::from_value::<ToolRunResult>(typed.value).map_err(|e| {
+                    xai_tool_runtime::ToolError::custom(
+                        "tool_result_deserialize",
+                        format!("tool result deserialization failed: {e}"),
+                    )
+                })
+            }
+        }
+    }
 }
 #[cfg(test)]
 impl WorkspaceOps {
