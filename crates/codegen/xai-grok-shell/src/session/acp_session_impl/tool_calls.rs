@@ -92,21 +92,48 @@ where
     }
 }
 
+/// Deserialize an optional source-facing field while preserving the source
+/// schema's distinction between omission and an explicit `null`.
+fn deserialize_source_grep_non_null_option<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom(
+            "expected an omitted field or a non-null value",
+        ));
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
 /// Exact strict schema for source-facing uppercase `Grep`.
 #[allow(dead_code)]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceGrepInput {
     pattern: String,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     path: Option<String>,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     glob: Option<String>,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     output_mode: Option<SourceGrepOutputMode>,
     #[serde(rename = "-B")]
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     before: Option<SourceGrepNumber>,
     #[serde(rename = "-A")]
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     after: Option<SourceGrepNumber>,
     #[serde(rename = "-C")]
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     context_short: Option<SourceGrepNumber>,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     context: Option<SourceGrepNumber>,
     #[serde(
         rename = "-n",
@@ -121,8 +148,11 @@ struct SourceGrepInput {
     )]
     case_insensitive: Option<bool>,
     #[serde(rename = "type")]
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     file_type: Option<String>,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     head_limit: Option<SourceGrepNumber>,
+    #[serde(deserialize_with = "deserialize_source_grep_non_null_option")]
     offset: Option<SourceGrepNumber>,
     #[serde(default, deserialize_with = "deserialize_source_grep_bool")]
     multiline: Option<bool>,

@@ -192,6 +192,40 @@ async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution()
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn source_grep_rejects_explicit_null_for_each_non_nullable_optional_field() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            for field in [
+                "path",
+                "glob",
+                "output_mode",
+                "-B",
+                "-A",
+                "-C",
+                "context",
+                "type",
+                "head_limit",
+                "offset",
+            ] {
+                let call_id = format!("null_{field}");
+                let arguments = format!(r#"{{"pattern":"x","{field}":null}}"#);
+                let result = prepare(&actor, tool_call(&call_id, "Grep", &arguments)).await;
+
+                assert!(
+                    matches!(result, Err(ToolLoop::ToolParsingError)),
+                    "explicit null for {field} must fail strict schema validation"
+                );
+                let message = tool_result_text(&actor, &call_id).await;
+                assert!(message.starts_with("Failed to parse arguments for tool `Grep`:"));
+                assert_ne!(message, UNSUPPORTED_MESSAGE);
+            }
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn source_grep_coerces_strict_string_booleans_before_unsupported() {
     let local = tokio::task::LocalSet::new();
     local
