@@ -31,6 +31,7 @@ fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool
 /// Convert the source-facing Claude `Read` schema to the registered OpenCode
 /// `read` schema. Only the exact case-sensitive source name is accepted.
 const SOURCE_READ_MAX_PAGES: i64 = 20;
+const SOURCE_READ_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,9 +58,10 @@ enum SourceReadNumber {
 }
 
 /// Match Claude's `semanticNumber`: decimal numeric strings are coerced to a
-/// number before the inner integer constraint is applied. Other strings are
-/// left invalid, rather than accepting JavaScript `Number` coercions such as
-/// the empty string or whitespace.
+/// number before the inner integer constraint is applied. The source's
+/// JavaScript trim rules apply before its decimal-grammar gate; other strings
+/// remain invalid rather than accepting wider `Number` coercions such as an
+/// empty string.
 fn deserialize_semantic_number_opt<'de, D>(
     deserializer: D,
 ) -> Result<Option<SourceReadNumber>, D::Error>
@@ -69,7 +71,13 @@ where
     let value = serde_json::Value::deserialize(deserializer)?;
     let (literal, string_input) = match value {
         serde_json::Value::Number(number) => (number.to_string(), false),
-        serde_json::Value::String(string) if is_decimal_number_literal(&string) => (string, true),
+        serde_json::Value::String(string) => {
+            let trimmed = trim_js_whitespace(&string);
+            if !is_decimal_number_literal(trimmed) {
+                return Err(serde::de::Error::custom("expected a finite decimal number"));
+            }
+            (trimmed.to_owned(), true)
+        }
         _ => return Err(serde::de::Error::custom("expected a finite decimal number")),
     };
 
@@ -138,7 +146,7 @@ fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLit
     if !value.is_finite() {
         return SourceIntegerLiteral::Invalid;
     }
-    if value < 0.0 || value.fract() != 0.0 {
+    if value < 0.0 || value.fract() != 0.0 || value >= SOURCE_READ_MAX_SAFE_INTEGER {
         return SourceIntegerLiteral::Invalid;
     }
     if value > f64::from(u32::MAX) {
@@ -146,6 +154,33 @@ fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLit
     }
 
     SourceIntegerLiteral::U32(value as u32)
+}
+
+/// ECMAScript's `String.prototype.trim()` whitespace set. Rust's Unicode
+/// `trim()` differs at both U+0085 and U+FEFF, so use the source language's
+/// boundary here rather than the host language's broader predicate.
+fn trim_js_whitespace(value: &str) -> &str {
+    value.trim_matches(|character: char| {
+        matches!(
+            character,
+            '\u{0009}'
+                | '\u{000A}'
+                | '\u{000B}'
+                | '\u{000C}'
+                | '\u{000D}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'
+                ..='\u{200A}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{3000}'
+                    | '\u{FEFF}'
+        )
+    })
 }
 
 fn is_decimal_number_literal(value: &str) -> bool {
@@ -3082,9 +3117,15 @@ mod permission_access_classification_tests {
         assert_eq!(mapped["offset"], 1);
         assert_eq!(mapped["limit"], 20);
 
+        let mapped = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+            "offset": "\u{FEFF}\u{00A0} 1.0 \u{00A0}\u{FEFF}",
+        }))
+        .expect("source JavaScript trim whitespace should be accepted");
+        assert_eq!(mapped["offset"], 1);
+
         for value in [
             serde_json::json!(""),
-            serde_json::json!(" 1"),
             serde_json::json!("+1"),
             serde_json::json!("1e2"),
             serde_json::json!("1.5"),
@@ -3193,6 +3234,27 @@ mod permission_access_classification_tests {
         }))
         .expect_err("a Number()-infinite source decimal must fail source schema validation");
         assert!(matches!(error, SourceReadInputError::Invalid(_)));
+    }
+
+    #[test]
+    fn source_read_safe_integer_boundary_is_source_schema_validation_failure() {
+        for value in [
+            serde_json::json!(9_007_199_254_740_992_u64),
+            serde_json::json!("9007199254740992"),
+            // JavaScript rounds this to 2^53 before its safe-integer check.
+            serde_json::json!("9007199254740993"),
+        ] {
+            let error = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.txt",
+                "offset": value,
+            }))
+            .expect_err("values at or above 2^53 must fail source schema validation");
+            assert!(matches!(
+                error,
+                SourceReadInputError::Invalid(error)
+                    if error.kind == ToolErrorKind::InvalidArguments
+            ));
+        }
     }
 
     #[test]

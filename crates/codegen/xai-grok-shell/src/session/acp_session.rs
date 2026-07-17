@@ -1889,6 +1889,50 @@ mod tool_meta_stamp_tests {
             })
             .await;
     }
+
+    /// The safe-integer boundary is source schema validation, not the later
+    /// target-width unsupported boundary. Exercise the actual preflight seam
+    /// so a future reordering cannot turn it into a permission prompt.
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_read_safe_integer_boundary_stops_before_permission() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut fixture = make_replay_send_update_fixture().await;
+                let (perm_tx, _perm_rx) = mpsc::unbounded_channel();
+                fixture.actor.permissions = PermissionHandle::Actor {
+                    cmd_tx: perm_tx,
+                    yolo_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    auto_state: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    side_query_wired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    yolo_pin: None,
+                    deny_read_globs: Arc::new(vec![]),
+                    in_flight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                };
+                let call = crate::sampling::types::ToolCallResponse {
+                    id: "source-read-safe-integer".to_string(),
+                    kind: "function".to_string(),
+                    function: crate::sampling::types::ToolCallFunction::new(
+                        "Read",
+                        serde_json::json!({
+                            "file_path": "src/file.txt",
+                            "offset": "9007199254740992",
+                        })
+                        .to_string(),
+                    ),
+                };
+
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_millis(100),
+                    fixture.actor.prepare_tool_call(call, &mut Vec::new()),
+                )
+                .await
+                .expect("safe-integer failure must not wait for permission")
+                .expect("schema failure handling must not fail ACP");
+                assert!(matches!(result, Err(ToolLoop::ToolParsingError)));
+            })
+            .await;
+    }
 }
 /// Drop guard that records aggregate turn metrics on the current tracing span
 struct TurnMetrics {
