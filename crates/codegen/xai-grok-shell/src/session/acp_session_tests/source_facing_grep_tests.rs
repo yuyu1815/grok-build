@@ -226,6 +226,41 @@ async fn source_grep_rejects_explicit_null_for_each_non_nullable_optional_field(
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn source_grep_accepts_omission_for_each_non_nullable_optional_field() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            for field in [
+                "path",
+                "glob",
+                "output_mode",
+                "-B",
+                "-A",
+                "-C",
+                "context",
+                "type",
+                "head_limit",
+                "offset",
+            ] {
+                let call_id = format!("omitted_{field}");
+                let result =
+                    prepare(&actor, tool_call(&call_id, "Grep", r#"{"pattern":"x"}"#)).await;
+
+                assert!(
+                    matches!(result, Err(ToolLoop::Continue)),
+                    "omitted {field} must be accepted by strict schema validation"
+                );
+                assert_eq!(
+                    tool_result_text(&actor, &call_id).await,
+                    UNSUPPORTED_MESSAGE
+                );
+            }
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn source_grep_coerces_strict_string_booleans_before_unsupported() {
     let local = tokio::task::LocalSet::new();
     local
