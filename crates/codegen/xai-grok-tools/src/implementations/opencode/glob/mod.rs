@@ -28,6 +28,7 @@ use crate::types::tool_io::ToolInput;
 // ─── Constants ──────────────────────────────────────────────────────
 
 const DEFAULT_RESULT_LIMIT: usize = 100;
+const MAX_BUFFER_SIZE: usize = 20_000_000;
 
 /// Per-tool configuration supplied through the production registry.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -43,8 +44,8 @@ crate::register_resource!("opencode", "Glob", GlobParams);
 const DESCRIPTION: &str = r#"- Fast file pattern matching tool that works with any codebase size
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
-- Use this tool when you need to find files by name or path pattern
-- For content search, use Grep instead"#;
+- Use this tool when you need to find files by name patterns
+- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead"#;
 
 // ─── Input ──────────────────────────────────────────────────────────
 
@@ -52,16 +53,20 @@ const DESCRIPTION: &str = r#"- Fast file pattern matching tool that works with a
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobInput {
-    /// Glob pattern to match files against (e.g. "**/*.ts", "src/**/*.tsx").
+    /// The glob pattern to match files against.
+    #[schemars(description = "The glob pattern to match files against")]
     pub pattern: String,
 
-    /// Directory to search in. Defaults to the current working directory.
+    /// The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.
     #[serde(
         default,
         deserialize_with = "deserialize_optional_non_null_string",
         skip_serializing_if = "Option::is_none"
     )]
     #[schemars(schema_with = "optional_string_schema")]
+    #[schemars(
+        description = "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
+    )]
     pub path: Option<String>,
 }
 
@@ -292,6 +297,7 @@ pub fn expand_glob_path(cwd: &Path, display_cwd: Option<&Path>, input: &str) -> 
 pub async fn validate_path_metadata(
     permission_path: &Path,
     supplied_path: Option<&str>,
+    cwd: &Path,
 ) -> Result<(), xai_tool_runtime::ToolError> {
     let Some(path) = supplied_path.filter(|path| !path.is_empty()) else {
         return Ok(());
@@ -302,16 +308,26 @@ pub async fn validate_path_metadata(
     if is_windows_unc_path(permission_path) {
         return Ok(());
     }
-    let metadata = tokio::fs::metadata(permission_path).await.map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            xai_tool_runtime::ToolError::invalid_arguments(format!(
-                "Directory does not exist: {path}."
-            ))
-            .with_details(serde_json::json!({"errorCode": 1}))
-        } else {
-            xai_tool_runtime::ToolError::execution(tool_id(), err.to_string())
+    let metadata = match tokio::fs::metadata(permission_path).await {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut message = format!(
+                "Directory does not exist: {path}. Note: your current working directory is {}.",
+                cwd.display()
+            );
+            if let Some(suggestion) = suggest_path_under_cwd(permission_path, cwd).await {
+                message.push_str(&format!(" Did you mean {}?", suggestion.display()));
+            }
+            return Err(xai_tool_runtime::ToolError::invalid_arguments(message)
+                .with_details(serde_json::json!({"errorCode": 1})));
         }
-    })?;
+        Err(err) => {
+            return Err(xai_tool_runtime::ToolError::execution(
+                tool_id(),
+                err.to_string(),
+            ));
+        }
+    };
     if !metadata.is_dir() {
         return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
             "Path is not a directory: {path}"
@@ -319,6 +335,18 @@ pub async fn validate_path_metadata(
         .with_details(serde_json::json!({"errorCode": 2})));
     }
     Ok(())
+}
+
+async fn suggest_path_under_cwd(path: &Path, cwd: &Path) -> Option<PathBuf> {
+    let parent = cwd.parent()?;
+    if !path.starts_with(parent) || path.starts_with(cwd) || path == cwd {
+        return None;
+    }
+    let candidate = cwd.join(path.strip_prefix(parent).ok()?);
+    tokio::fs::metadata(&candidate)
+        .await
+        .ok()
+        .map(|_| candidate)
 }
 
 fn absolute_pattern_root(pattern: &str) -> Option<(PathBuf, String)> {
@@ -419,14 +447,8 @@ async fn run_ripgrep(
     let mut stderr_pipe = child.stderr.take().ok_or_else(|| {
         xai_tool_runtime::ToolError::execution(tool_id(), "ripgrep stderr was not piped")
     })?;
-    let stdout_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        stdout_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
-    });
-    let stderr_task = tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        stderr_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
-    });
+    let stdout_task = tokio::spawn(async move { read_capped(&mut stdout_pipe).await });
+    let stderr_task = tokio::spawn(async move { read_capped(&mut stderr_pipe).await });
 
     let deadline = Instant::now() + timeout_duration();
     let status = loop {
@@ -497,6 +519,23 @@ async fn run_ripgrep(
     })
 }
 
+/// Source embedded ripgrep caps stdout and stderr independently, retains each
+/// prefix, and lets the process finish. The cap is not a kill condition.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(captured);
+        }
+        if captured.len() < MAX_BUFFER_SIZE {
+            let remaining = MAX_BUFFER_SIZE - captured.len();
+            captured.extend_from_slice(&chunk[..read.min(remaining)]);
+        }
+    }
+}
+
 // ─── Tool ───────────────────────────────────────────────────────────
 
 /// Glob tool — lists files matching a glob pattern, sorted by mtime.
@@ -530,7 +569,7 @@ impl xai_tool_runtime::Tool for GlobTool {
         _ctx: &::xai_tool_runtime::ListToolsContext,
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
-            "glob",
+            "Glob",
             crate::types::tool_metadata::ToolMetadata::description_template(self),
         )
     }
@@ -577,7 +616,7 @@ impl xai_tool_runtime::Tool for GlobTool {
             &input.path.clone().unwrap_or_default(),
         );
 
-        validate_path_metadata(&permission_path, input.path.as_deref()).await?;
+        validate_path_metadata(&permission_path, input.path.as_deref(), &cwd).await?;
 
         let (search_dir, search_pattern) = absolute_pattern_root(&input.pattern).map_or(
             (permission_path.clone(), input.pattern.clone()),
@@ -891,8 +930,9 @@ mod tests {
             .expect("Glob schema must expose path");
 
         assert_eq!(path["type"], "string");
-        assert!(
-            !path.to_string().contains("null"),
+        assert_ne!(
+            path["type"],
+            serde_json::json!(["string", "null"]),
             "model-facing Glob schema must not permit path: null: {path}"
         );
         assert!(
@@ -902,6 +942,45 @@ mod tests {
                 .contains(&serde_json::json!("path")),
             "path remains optional"
         );
+    }
+
+    #[test]
+    fn public_definition_matches_the_source_descriptions() {
+        assert_eq!(
+            DESCRIPTION,
+            r#"- Fast file pattern matching tool that works with any codebase size
+- Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Returns matching file paths sorted by modification time
+- Use this tool when you need to find files by name patterns
+- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead"#,
+        );
+        let schema = crate::registry::types::generate_schema::<GlobInput>();
+        assert_eq!(
+            schema["properties"]["pattern"]["description"],
+            "The glob pattern to match files against"
+        );
+        assert_eq!(
+            schema["properties"]["path"]["description"],
+            "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_path_includes_source_cwd_note_and_dropped_repo_suggestion() {
+        let parent = TempDir::new().unwrap();
+        let cwd = parent.path().join("repo");
+        std::fs::create_dir_all(cwd.join("src")).unwrap();
+        let requested = parent.path().join("src");
+
+        let error = validate_path_metadata(&requested, Some(requested.to_str().unwrap()), &cwd)
+            .await
+            .expect_err("missing path must fail validation");
+        let message = error.to_string();
+        assert!(message.contains(&format!(
+            "Note: your current working directory is {}.",
+            cwd.display()
+        )));
+        assert!(message.contains(&format!("Did you mean {}?", cwd.join("src").display())));
     }
 
     #[tokio::test]
@@ -1113,9 +1192,13 @@ mod tests {
             "//glob-validation-missing-path",
         );
         assert_eq!(path, PathBuf::from("/glob-validation-missing-path"));
-        let error = validate_path_metadata(&path, Some("//glob-validation-missing-path"))
-            .await
-            .expect_err("POSIX double-slash paths must not skip validation");
+        let error = validate_path_metadata(
+            &path,
+            Some("//glob-validation-missing-path"),
+            Path::new("/workspace"),
+        )
+        .await
+        .expect_err("POSIX double-slash paths must not skip validation");
 
         assert!(error.to_string().contains("Directory does not exist:"));
     }
@@ -1158,7 +1241,7 @@ mod tests {
     #[test]
     fn glob_description_matches_the_file_matching_tool_contract() {
         assert!(DESCRIPTION.contains("Fast file pattern matching"));
-        assert!(DESCRIPTION.contains("For content search, use Grep instead"));
+        assert!(DESCRIPTION.contains("use the Agent tool instead"));
         assert!(!DESCRIPTION.contains("Large directories are summarized"));
     }
 
