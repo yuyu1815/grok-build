@@ -1937,6 +1937,7 @@ mod claude_write_permission_tests {
             .run_until(async {
                 for (id, arguments) in [
                     ("top-level-null", "null"),
+                    ("top-level-boolean", "true"),
                     ("top-level-array", "[]"),
                     ("top-level-string", r#""not-an-object""#),
                     ("top-level-number", "42"),
@@ -1951,8 +1952,16 @@ mod claude_write_permission_tests {
                     ),
                     ("wrong-path-type", r#"{"file_path":42,"content":"new"}"#),
                     (
+                        "wrong-path-boolean",
+                        r#"{"file_path":true,"content":"new"}"#,
+                    ),
+                    (
                         "wrong-content-type",
                         r#"{"file_path":"/tmp/no-side-effect.txt","content":42}"#,
+                    ),
+                    (
+                        "wrong-content-boolean",
+                        r#"{"file_path":"/tmp/no-side-effect.txt","content":true}"#,
                     ),
                 ] {
                     let mut fixture = write_actor().await;
