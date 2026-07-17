@@ -368,6 +368,7 @@ impl FileToolset {
                 ToolConfig::for_tool::<grok_build::ReadFileTool>(),
                 ToolConfig::for_tool::<grok_build::SearchReplaceTool>(),
                 ToolConfig::for_tool::<grok_build::GrepTool>(),
+                ToolConfig::for_tool::<xai_grok_tools::implementations::opencode::SourceGrepTool>(),
             ]),
             Self::Hashline => {
                 hashline_config.validate()?;

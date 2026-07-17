@@ -251,6 +251,10 @@ impl From<&xai_grok_tools::types::ToolInput> for AccessKind {
                 path: g.path.clone(),
                 glob: g.glob.clone(),
             },
+            ToolInput::SourceGrep(g) => AccessKind::Grep {
+                path: g.path.clone(),
+                glob: g.glob.clone(),
+            },
             ToolInput::TodoWrite(_)
             | ToolInput::TaskOutput(_)
             | ToolInput::WaitTasks(_)

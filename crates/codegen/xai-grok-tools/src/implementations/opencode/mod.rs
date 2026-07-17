@@ -25,6 +25,7 @@ pub use bash::BashTool as OpenCodeBashTool;
 pub use edit::EditTool as OpenCodeEditTool;
 pub use glob::GlobTool as OpenCodeGlobTool;
 pub use grep::GrepTool as OpenCodeGrepTool;
+pub use grep::SourceGrepTool;
 pub use read::ReadTool as OpenCodeReadTool;
 pub use skill::SkillTool as OpenCodeSkillTool;
 pub use todowrite::TodoWriteTool as OpenCodeTodoWriteTool;

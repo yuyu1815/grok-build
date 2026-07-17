@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 
-#[cfg(test)]
 use serde::de::Error as _;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -27,7 +26,6 @@ const RESULT_LIMIT: usize = 100;
 const MAX_LINE_LENGTH: usize = 2000;
 /// Claude Code's embedded-rg capture limit.  This is deliberately expressed
 /// in UTF-16 code units, not bytes; JavaScript `String#length` uses this unit.
-#[cfg(test)]
 const EMBEDDED_CAPTURE_UTF16_CAP: usize = 20_000_000;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -65,12 +63,9 @@ pub struct GrepInput {
     pub include: Option<String>,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 struct SemanticNumber(f64);
 
-#[cfg(test)]
-#[allow(dead_code)]
 impl SemanticNumber {
     fn ripgrep_arg(self) -> String {
         self.0.to_string()
@@ -81,7 +76,6 @@ impl SemanticNumber {
     }
 }
 
-#[cfg(test)]
 impl<'de> serde::Deserialize<'de> for SemanticNumber {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -120,15 +114,26 @@ impl<'de> serde::Deserialize<'de> for SemanticNumber {
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-#[derive(Clone, Debug, serde::Deserialize)]
+impl schemars::JsonSchema for SemanticNumber {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "source_grep_number".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "anyOf": [{ "type": "number" }, { "type": "string" }] })
+    }
+}
+
+/// Claude Code's public uppercase `Grep` input.  This is deliberately a
+/// separate tool from OpenCode's lowercase `grep`: their schemas and result
+/// projections are different public contracts.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct SourceGrepInput {
-    pattern: String,
-    path: Option<String>,
-    glob: Option<String>,
-    output_mode: Option<String>,
+pub struct SourceGrepInput {
+    pub pattern: String,
+    pub path: Option<String>,
+    pub glob: Option<String>,
+    pub output_mode: Option<String>,
     #[serde(rename = "-B")]
     before: Option<SemanticNumber>,
     #[serde(rename = "-A")]
@@ -147,7 +152,6 @@ struct SourceGrepInput {
     multiline: Option<bool>,
 }
 
-#[cfg(test)]
 fn timeout_override_secs(value: Option<&str>) -> Option<u64> {
     // JavaScript parseInt(value, 10): consume an optional sign and decimal
     // prefix only.  A positive result is the only effective override.
@@ -170,8 +174,6 @@ fn timeout_override_secs(value: Option<&str>) -> Option<u64> {
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 fn source_default_timeout_secs() -> u64 {
     #[cfg(target_os = "linux")]
     if std::fs::read_to_string("/proc/sys/kernel/osrelease")
@@ -183,7 +185,6 @@ fn source_default_timeout_secs() -> u64 {
     20
 }
 
-#[cfg(test)]
 fn truncate_utf16(text: String, cap: usize) -> String {
     if text.encode_utf16().count() <= cap {
         return text;
@@ -197,8 +198,6 @@ fn truncate_utf16(text: String, cap: usize) -> String {
     String::from_utf16_lossy(&units)
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 fn source_slice<T: Clone>(
     items: &[T],
     offset: SemanticNumber,
@@ -226,8 +225,6 @@ fn source_slice<T: Clone>(
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 async fn run_source_grep(
     ctx: xai_tool_runtime::ToolCallContext,
     input: SourceGrepInput,
@@ -506,6 +503,60 @@ async fn run_source_grep(
         match_count: lines.len(),
         file_matches: Vec::new(),
     })
+}
+
+/// Source-compatible uppercase Claude Code `Grep`.
+#[derive(Debug, Default)]
+pub struct SourceGrepTool;
+
+impl crate::types::tool_metadata::ToolMetadata for SourceGrepTool {
+    fn kind(&self) -> ToolKind {
+        ToolKind::Search
+    }
+    fn tool_namespace(&self) -> ToolNamespace {
+        ToolNamespace::OpenCode
+    }
+    fn description_template(&self) -> &str {
+        "Search file contents with ripgrep."
+    }
+    fn requires_expr(&self) -> Expr<ToolRequirement> {
+        Expr::True
+    }
+}
+
+impl xai_tool_runtime::Tool for SourceGrepTool {
+    type Args = SourceGrepInput;
+    type Output = GrepSearchOutput;
+
+    fn id(&self) -> xai_tool_protocol::ToolId {
+        xai_tool_protocol::ToolId::new("Grep").expect("valid tool id")
+    }
+
+    fn description(
+        &self,
+        _ctx: &xai_tool_runtime::ListToolsContext,
+    ) -> xai_tool_types::ToolDescription {
+        xai_tool_types::ToolDescription::new(
+            "Grep",
+            crate::types::tool_metadata::ToolMetadata::description_template(self),
+        )
+    }
+
+    fn capabilities(&self) -> xai_tool_protocol::ToolCapabilities {
+        xai_tool_protocol::ToolCapabilities {
+            is_read_only: true,
+            tool_scope: Some(xai_tool_protocol::ToolScope::Read),
+            ..Default::default()
+        }
+    }
+
+    async fn run(
+        &self,
+        ctx: xai_tool_runtime::ToolCallContext,
+        input: SourceGrepInput,
+    ) -> Result<GrepSearchOutput, xai_tool_runtime::ToolError> {
+        run_source_grep(ctx, input).await
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

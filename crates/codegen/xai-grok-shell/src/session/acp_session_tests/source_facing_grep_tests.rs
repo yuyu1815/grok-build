@@ -3,18 +3,19 @@
 use super::support::*;
 use super::*;
 
-const UNSUPPORTED_MESSAGE: &str = "unsupported: Claude Code parity for Grep is not implemented";
-
 async fn grep_actor() -> SessionActor {
-    use xai_grok_tools::implementations::opencode::grep::GrepTool;
+    use xai_grok_tools::implementations::opencode::grep::{GrepTool, SourceGrepTool};
     use xai_grok_tools::registry::types::ToolConfig;
 
     let (gateway_tx, _gateway_rx) =
         tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
     let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
     let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
-    *actor.agent.borrow_mut() =
-        test_agent_with_tools(vec![ToolConfig::for_tool::<GrepTool>()]).await;
+    *actor.agent.borrow_mut() = test_agent_with_tools(vec![
+        ToolConfig::for_tool::<GrepTool>(),
+        ToolConfig::for_tool::<SourceGrepTool>(),
+    ])
+    .await;
     actor
 }
 
@@ -61,22 +62,21 @@ async fn source_grep_marker_is_isolated_to_the_uppercase_route() {
             let actor = grep_actor().await;
 
             let marker = r#"__CLAUDE_CODE_GREP__{"pattern":"x"}"#;
-            let uppercase = actor
-                .execute_tool_calls(vec![tool_call(
+            let uppercase = prepare(
+                &actor,
+                tool_call(
                     "uppercase",
                     "Grep",
                     &format!(
                         r#"{{"pattern":{}}}"#,
                         serde_json::to_string(marker).unwrap()
                     ),
-                )])
-                .await
-                .expect("source Grep should stop through the session loop");
-            assert!(matches!(uppercase, ToolLoop::Continue));
-            assert_eq!(
-                tool_result_text(&actor, "uppercase").await,
-                UNSUPPORTED_MESSAGE
-            );
+                ),
+            )
+            .await
+            .expect("uppercase Grep must resolve to its own public tool");
+            assert_eq!(uppercase.registry_tool_name, "Grep");
+            assert_eq!(uppercase.parsed_args["pattern"], marker);
 
             let lowercase = prepare(
                 &actor,
@@ -115,14 +115,14 @@ async fn lowercase_grep_remains_on_its_existing_route() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_returns_the_fixed_unsupported_text_on_the_model_surface() {
+async fn source_grep_executes_on_the_model_surface() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let actor = grep_actor().await;
             let result = actor
                 .execute_tool_calls(vec![tool_call(
-                    "source_unsupported",
+                    "source_execution",
                     "Grep",
                     r#"{"pattern":"x"}"#,
                 )])
@@ -131,8 +131,8 @@ async fn source_grep_returns_the_fixed_unsupported_text_on_the_model_surface() {
 
             assert!(matches!(result, ToolLoop::Continue));
             assert_eq!(
-                tool_result_text(&actor, "source_unsupported").await,
-                UNSUPPORTED_MESSAGE
+                tool_result_text(&actor, "source_execution").await,
+                "No files found"
             );
         })
         .await;
@@ -163,7 +163,7 @@ async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution() {
+async fn source_grep_strict_schema_failure_precedes_resolution() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -185,7 +185,6 @@ async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution()
                 assert!(matches!(result, Err(ToolLoop::ToolParsingError)), "{field}");
                 let message = tool_result_text(&actor, &call_id).await;
                 assert!(message.starts_with("Failed to parse arguments for tool `Grep`:"));
-                assert_ne!(message, UNSUPPORTED_MESSAGE);
             }
         })
         .await;
@@ -219,7 +218,6 @@ async fn source_grep_rejects_explicit_null_for_each_non_nullable_optional_field(
                 );
                 let message = tool_result_text(&actor, &call_id).await;
                 assert!(message.starts_with("Failed to parse arguments for tool `Grep`:"));
-                assert_ne!(message, UNSUPPORTED_MESSAGE);
             }
         })
         .await;
@@ -247,66 +245,57 @@ async fn source_grep_accepts_omission_for_each_non_nullable_optional_field() {
                 let result =
                     prepare(&actor, tool_call(&call_id, "Grep", r#"{"pattern":"x"}"#)).await;
 
-                assert!(
-                    matches!(result, Err(ToolLoop::Continue)),
-                    "omitted {field} must be accepted by strict schema validation"
-                );
-                assert_eq!(
-                    tool_result_text(&actor, &call_id).await,
-                    UNSUPPORTED_MESSAGE
-                );
+                let prepared = result.expect("omitted source field must be accepted");
+                assert_eq!(prepared.registry_tool_name, "Grep", "{field}");
             }
         })
         .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_coerces_strict_string_booleans_before_unsupported() {
+async fn source_grep_coerces_strict_string_booleans_before_dispatch() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let actor = grep_actor().await;
-            let result = actor
-                .execute_tool_calls(vec![tool_call(
+            let prepared = prepare(
+                &actor,
+                tool_call(
                     "string_booleans",
                     "Grep",
                     r#"{"pattern":"x","-n":"true","-i":"false","multiline":"true"}"#,
-                )])
-                .await
-                .expect("a source-valid string-boolean Grep should stop through the session loop");
-
-            assert!(matches!(result, ToolLoop::Continue));
-            assert_eq!(
-                tool_result_text(&actor, "string_booleans").await,
-                UNSUPPORTED_MESSAGE
-            );
+                ),
+            )
+            .await
+            .expect("a source-valid string-boolean Grep should dispatch");
+            assert_eq!(prepared.registry_tool_name, "Grep");
         })
         .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_parses_every_schema_field_before_stopping_as_unsupported() {
+async fn source_grep_parses_every_schema_field_before_dispatch() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let actor = grep_actor().await;
-            let result = actor
-                .execute_tool_calls(vec![tool_call(
+            let prepared = prepare(
+                &actor,
+                tool_call(
                     "all_fields",
                     "Grep",
                     r#"{"pattern":"x","path":"missing","glob":"*.rs","output_mode":"content","-B":"-5","-A":3.14,"-C":"0","context":-2.5,"-n":true,"-i":false,"type":"rust","head_limit":"1.25","offset":-1,"multiline":true}"#,
-                )])
-                .await
-                .expect("a schema-valid source Grep should stop through the session loop");
-
-            assert!(matches!(result, ToolLoop::Continue));
-            assert_eq!(tool_result_text(&actor, "all_fields").await, UNSUPPORTED_MESSAGE);
+                ),
+            )
+            .await
+            .expect("a schema-valid source Grep should dispatch");
+            assert_eq!(prepared.registry_tool_name, "Grep");
         })
         .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn source_grep_stops_before_path_resolution_permission_or_dispatch() {
+async fn source_grep_reaches_path_permission_and_dispatch_preflight() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -318,13 +307,10 @@ async fn source_grep_stops_before_path_resolution_permission_or_dispatch() {
                     &mut deferred,
                 )
                 .await
-                .expect("valid source Grep should stop through the existing session path");
+                .expect("valid source Grep should reach the normal preflight");
 
-            assert!(matches!(result, Err(ToolLoop::Continue)));
-            assert_eq!(
-                tool_result_text(&actor, "source_stop").await,
-                UNSUPPORTED_MESSAGE
-            );
+            let prepared = result.expect("valid source Grep should be prepared");
+            assert_eq!(prepared.registry_tool_name, "Grep");
         })
         .await;
 }

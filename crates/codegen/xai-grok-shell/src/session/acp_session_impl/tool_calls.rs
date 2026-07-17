@@ -927,11 +927,7 @@ impl SessionActor {
         let tool_call_id = acp::ToolCallId::new(Arc::from(call.id.clone()));
         let model_id_str = self.current_model_id().await;
         let is_source_grep = call.function.name == "Grep";
-        let registry_tool_name = if is_source_grep {
-            "grep".to_string()
-        } else {
-            call.function.name.clone()
-        };
+        let registry_tool_name = call.function.name.clone();
         tracing::info!(
             "Model requesting tool: name='{}', call_id='{}'",
             call.function.name,
@@ -1058,20 +1054,7 @@ impl SessionActor {
         };
         if is_source_grep {
             match prepare_source_grep_input(&raw_input) {
-                Ok(()) => {
-                    let err = anyhow::anyhow!(SOURCE_GREP_UNSUPPORTED_MESSAGE);
-                    self.handle_tool_error(
-                        &tool_call_id,
-                        &call.id,
-                        &call.function.name,
-                        None,
-                        &err,
-                        &model_id_str,
-                        true,
-                    )
-                    .await;
-                    return Ok(Err(ToolLoop::Continue));
-                }
+                Ok(()) => {}
                 Err(err) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,

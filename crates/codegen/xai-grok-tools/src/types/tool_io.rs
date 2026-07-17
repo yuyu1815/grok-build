@@ -31,6 +31,7 @@ use crate::implementations::grok_build::web_fetch::WebFetchInput;
 use crate::implementations::grok_build::web_search::WebSearchInput;
 use crate::implementations::lsp::LspToolInput;
 use crate::implementations::memory::types::{MemoryGetInput, MemorySearchInput};
+use crate::implementations::opencode::grep::SourceGrepInput;
 use crate::implementations::opencode::write::WriteInput;
 use crate::implementations::search_tool::SearchToolInput;
 use crate::implementations::skills::skill::SkillInput;
@@ -62,6 +63,7 @@ pub enum ToolInput {
     SearchReplace(SearchReplaceInput),
     Bash(BashToolInput),
     Grep(GrepSearchInput),
+    SourceGrep(SourceGrepInput),
     ListDir(ListDirInput),
     TodoWrite(TodoWriteInput),
     Skill(SkillInput),
