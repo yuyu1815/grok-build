@@ -337,28 +337,6 @@ impl xai_tool_runtime::Tool for ReadTool {
         }
 
         // Build the XML-wrapped output.
-        let last_read_line = if raw_lines.is_empty() {
-            offset
-        } else {
-            offset + raw_lines.len() - 1
-        };
-        let next_offset = last_read_line + 1;
-        let _truncated = has_more_lines || truncated_by_bytes;
-
-        let footer = if truncated_by_bytes {
-            format!(
-                "\n\n(Output capped at 50 KB. Showing lines {}-{}. Use offset={} to continue.)",
-                offset, last_read_line, next_offset,
-            )
-        } else if has_more_lines {
-            format!(
-                "\n\n(Showing lines {}-{} of {}. Use offset={} to continue.)",
-                offset, last_read_line, total_lines, next_offset,
-            )
-        } else {
-            format!("\n\n(End of file - total {} lines)", total_lines)
-        };
-
         let formatted = if content_lines.is_empty() {
             if total_lines == 0 {
                 "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>".to_string()
@@ -369,10 +347,7 @@ impl xai_tool_runtime::Tool for ReadTool {
                 )
             }
         } else {
-            format!(
-                "{}{}{}",
-                content_lines, footer, CYBER_RISK_MITIGATION_REMINDER
-            )
+            format!("{}{}", content_lines, CYBER_RISK_MITIGATION_REMINDER)
         };
 
         let raw_output = raw_lines.join("\n");
@@ -568,7 +543,6 @@ mod tests {
                 assert!(fc.content.contains("1\tline1"));
                 assert!(fc.content.contains("2\tline2"));
                 assert!(fc.content.contains("3\tline3"));
-                assert!(fc.content.contains("(End of file"));
                 assert!(fc.content.contains("Whenever you read a file"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
@@ -626,7 +600,6 @@ mod tests {
             ReadFileOutput::FileContent(fc) => {
                 assert!(fc.content.contains("2\t2"));
                 assert!(fc.content.contains("3\t3"));
-                assert!(fc.content.contains("Showing lines 2-3 of 5"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
