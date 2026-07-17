@@ -51,16 +51,17 @@ fn source_facing_registry_target(tool_name: &str) -> Option<&'static str> {
 
 /// The lowercase OpenCode `glob` tool retains its established implementation.
 /// The Claude-facing `Glob` route cannot yet prove the source lifecycle for
-/// plugin-cache exclusion, availability probing, buffer overflow, cancellation,
-/// EAGAIN retry, macOS codesigning, or structured result projection.  Do not
-/// let that unproven route return a file-listing success result.
+/// plugin-cache exclusion, configured result limits, availability probing,
+/// buffer overflow, cancellation, EAGAIN retry, macOS codesigning, or structured
+/// result projection. Do not let that unproven route return a file-listing
+/// success result.
 fn claude_glob_lifecycle_unsupported_message() -> &'static str {
-    "Glob is unsupported: the Claude-compatible lifecycle adapter for plugin-cache exclusion, ripgrep availability, buffer limits, cancellation, EAGAIN retry, macOS codesigning, and structured results is not implemented."
+    "Glob is unsupported: the Claude-compatible lifecycle adapter for plugin-cache exclusion, configured result limits, ripgrep availability, buffer limits, cancellation, EAGAIN retry, macOS codesigning, and structured results is not implemented."
 }
 
 #[cfg(test)]
 mod source_facing_registry_target_tests {
-    use super::{claude_glob_lifecycle_unsupported_message, source_facing_registry_target};
+    use super::*;
 
     #[test]
     fn routes_only_exact_source_facing_ids() {
@@ -78,6 +79,7 @@ mod source_facing_registry_target_tests {
         let message = claude_glob_lifecycle_unsupported_message();
         for boundary in [
             "plugin-cache",
+            "configured result limits",
             "availability",
             "buffer",
             "cancellation",
@@ -87,6 +89,82 @@ mod source_facing_registry_target_tests {
         ] {
             assert!(message.contains(boundary), "missing {boundary}: {message}");
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn claude_glob_terminal_ordering_stops_before_permission_and_rg_dispatch() {
+        use crate::sampling::types::{ToolCallFunction, ToolCallResponse};
+        use crate::session::acp_session::support::{create_test_actor, test_agent_with_tools};
+        use xai_grok_tools::{
+            implementations::opencode::OpenCodeGlobTool, registry::types::ToolConfig,
+        };
+
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+                let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+                *actor.agent.borrow_mut() = test_agent_with_tools(vec![
+                    ToolConfig::for_tool::<OpenCodeGlobTool>().with_param("max_results", 1),
+                ])
+                .await;
+
+                // The initial tool-call update needs an acknowledgement. A permission
+                // prompt would instead make this test time out below, proving the
+                // terminal adapter failure happened before permission handling.
+                tokio::task::spawn_local(async move {
+                    while let Some(message) = gateway_rx.recv().await {
+                        if let xai_acp_lib::AcpClientMessage::SessionNotification(request) = message {
+                            let _ = request.response_tx.send(Ok(()));
+                        }
+                    }
+                });
+
+                let mut deferred = Vec::new();
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    actor.prepare_tool_call(
+                        ToolCallResponse {
+                            id: "glob-configured-limit".to_string(),
+                            kind: "function".to_string(),
+                            function: ToolCallFunction::new(
+                                "Glob",
+                                r#"{"pattern":"**/*","path":"/tmp"}"#,
+                            ),
+                        },
+                        &mut deferred,
+                    ),
+                )
+                .await
+                .expect("Glob must terminate before a permission prompt or rg dispatch")
+                .expect("Glob preparation must return a tool-loop result");
+
+                assert!(
+                    matches!(result, Err(ToolLoop::Continue)),
+                    "validated Claude Glob must end at the unsupported terminal boundary: {result:?}"
+                );
+                assert!(deferred.is_empty(), "terminal failure must not schedule a success follow-up");
+
+                let conversation = actor.chat_state_handle.get_conversation().await;
+                let result_text = conversation
+                    .iter()
+                    .find_map(|item| match item {
+                        xai_grok_sampling_types::ConversationItem::ToolResult(result)
+                            if result.tool_call_id == "glob-configured-limit" =>
+                        {
+                            Some(result.content.to_string())
+                        }
+                        _ => None,
+                    })
+                    .expect("terminal failure must be returned to the model");
+                assert!(result_text.contains("configured result limits"), "{result_text}");
+                assert!(result_text.contains("unsupported"), "{result_text}");
+                assert!(
+                    !result_text.contains("workspace_result"),
+                    "rg success output must be unreachable: {result_text}"
+                );
+            })
+            .await;
     }
 }
 /// Model-facing result when a wait is aborted for a pending interjection.
