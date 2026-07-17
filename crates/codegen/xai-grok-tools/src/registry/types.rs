@@ -2872,6 +2872,42 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn public_glob_definition_parses_and_dispatches_through_lower_registry_id() {
+        let tmp = TempDir::new().unwrap();
+        let builder = ToolRegistryBuilder::new();
+        let config = ToolServerConfig {
+            tools: vec![ToolConfig::for_tool::<opencode::OpenCodeGlobTool>().with_name("Glob")],
+            behavior_preset: None,
+        };
+        let toolset = Arc::new(
+            builder
+                .finalize(config, test_session_context(&tmp))
+                .unwrap(),
+        );
+
+        assert!(
+            toolset
+                .tool_definitions()
+                .iter()
+                .any(|definition| definition.function.name == "Glob")
+        );
+        toolset
+            .try_parse("Glob", &serde_json::json!({"pattern": "*.missing"}))
+            .await
+            .expect("the public Glob definition must parse before dispatch");
+        let result = toolset
+            .call_by_registry_id(
+                "glob",
+                serde_json::json!({"pattern": "*.missing"}),
+                "public-glob-e2e",
+                None,
+            )
+            .await
+            .expect("the lower glob registry implementation must execute");
+        assert!(!result.output.is_error(), "{result:?}");
+    }
+
+    #[tokio::test]
     async fn call_sets_effective_tool_name_for_use_tool_dispatch() {
         let tmp = TempDir::new().unwrap();
         let builder = ToolRegistryBuilder::new();
