@@ -314,3 +314,96 @@ async fn source_grep_reaches_path_permission_and_dispatch_preflight() {
         })
         .await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_missing_supplied_path_fails_before_permission_or_dispatch() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            let result = prepare(
+                &actor,
+                tool_call(
+                    "missing_path",
+                    "Grep",
+                    r#"{"pattern":"x","path":"missing"}"#,
+                ),
+            )
+            .await;
+
+            assert!(matches!(result, Err(ToolLoop::ToolParsingError)));
+            assert_eq!(
+                tool_result_text(&actor, "missing_path").await,
+                "InputValidationError: Path does not exist: missing."
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_is_available_through_the_hashline_toolset() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            use crate::tools::config::{FileToolset, HashlineSchemeConfig};
+
+            let (gateway_tx, _gateway_rx) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            *actor.agent.borrow_mut() = test_agent_with_tools(
+                FileToolset::Hashline
+                    .tool_configs(&HashlineSchemeConfig::default())
+                    .expect("the default hashline toolset is valid"),
+            )
+            .await;
+
+            let prepared = prepare(&actor, tool_call("hashline_grep", "Grep", r#"{"pattern":"x"}"#))
+                .await
+                .expect("Hashline must register the public Grep tool");
+            assert_eq!(prepared.tool_name, "Grep");
+            assert_eq!(prepared.registry_tool_name, "Grep");
+            assert_eq!(prepared.parsed_args["pattern"], "x");
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_acp_raw_input_uses_the_public_grep_envelope() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, mut gateway_rx) =
+                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+            *actor.agent.borrow_mut() = test_agent_with_tools(vec![
+                xai_grok_tools::registry::types::ToolConfig::for_tool::<
+                    xai_grok_tools::implementations::opencode::grep::GrepTool,
+                >(),
+                xai_grok_tools::registry::types::ToolConfig::for_tool::<
+                    xai_grok_tools::implementations::opencode::grep::SourceGrepTool,
+                >(),
+            ])
+            .await;
+
+            let result = actor
+                .execute_tool_calls(vec![tool_call("raw_input", "Grep", r#"{"pattern":"x"}"#)])
+                .await
+                .expect("source Grep should execute through ACP");
+            assert!(matches!(result, ToolLoop::Continue));
+
+            let mut saw_public_raw_input = false;
+            while let Ok(message) = gateway_rx.try_recv() {
+                let serialized = serde_json::to_value(message).unwrap();
+                let raw_inputs = serialized.pointer("/params/update/rawInput");
+                if let Some(raw_input) = raw_inputs {
+                    saw_public_raw_input = true;
+                    assert_eq!(raw_input["pattern"], "x");
+                    assert!(raw_input.get("variant").is_none(), "{raw_input}");
+                }
+            }
+            assert!(saw_public_raw_input, "expected an ACP rawInput update");
+        })
+        .await;
+}

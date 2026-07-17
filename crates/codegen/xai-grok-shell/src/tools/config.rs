@@ -409,6 +409,8 @@ impl FileToolset {
                         behavior_version: None,
                         kind: None,
                     },
+                    ToolConfig::for_tool::<xai_grok_tools::implementations::opencode::SourceGrepTool>(
+                    ),
                 ])
             }
         }
@@ -429,11 +431,12 @@ mod tests {
         let configs = FileToolset::Standard
             .tool_configs(&HashlineSchemeConfig::default())
             .unwrap();
-        assert_eq!(configs.len(), 3);
+        assert_eq!(configs.len(), 4);
         let ids: Vec<&str> = configs.iter().map(|c| c.id.as_str()).collect();
         assert!(ids.contains(&"GrokBuild:read_file"));
         assert!(ids.contains(&"GrokBuild:search_replace"));
         assert!(ids.contains(&"GrokBuild:grep"));
+        assert!(ids.contains(&"Grep"));
     }
 
     #[test]
@@ -441,11 +444,12 @@ mod tests {
         let configs = FileToolset::Hashline
             .tool_configs(&HashlineSchemeConfig::default())
             .unwrap();
-        assert_eq!(configs.len(), 3);
+        assert_eq!(configs.len(), 4);
         let ids: Vec<&str> = configs.iter().map(|c| c.id.as_str()).collect();
         assert!(ids.contains(&"GrokBuildHashline:hashline_read"));
         assert!(ids.contains(&"GrokBuildHashline:hashline_edit"));
         assert!(ids.contains(&"GrokBuildHashline:hashline_grep"));
+        assert!(ids.contains(&"Grep"));
     }
 
     /// Plan/explore omit `search_replace` by contract ("no Write/Edit/

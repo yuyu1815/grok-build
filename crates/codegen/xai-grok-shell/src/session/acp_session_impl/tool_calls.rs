@@ -1109,6 +1109,27 @@ impl SessionActor {
                 return Ok(Err(ToolLoop::ToolParsingError));
             }
         };
+        if is_source_grep {
+            if let xai_grok_tools::types::ToolInput::SourceGrep(input) = &tool_input {
+                if let Some(path) = input.path.as_deref()
+                    && !self
+                        .tool_context
+                        .fs
+                        .exists(std::path::Path::new(path))
+                        .await
+                        .unwrap_or(false)
+                {
+                    self.handle_tool_validation_error(
+                        &tool_call_id,
+                        &call.id,
+                        &call.function.name,
+                        format!("Path does not exist: {path}."),
+                    )
+                    .await?;
+                    return Ok(Err(ToolLoop::ToolParsingError));
+                }
+            }
+        }
         let access_kind = AccessKind::from(&tool_input);
         let plan_gate = plan_mode_edit_gate(&self.plan_mode.lock(), &tool_input, &access_kind);
         if plan_gate != PlanEditGate::Allow {
@@ -1764,7 +1785,12 @@ impl SessionActor {
         tool_call_input: ToolInput,
     ) -> Result<(String, acp::ToolKind, serde_json::Value), acp::Error> {
         #[allow(unused_mut)]
-        let mut raw_input = serde_json::to_value(&tool_call_input)?;
+        let mut raw_input = match &tool_call_input {
+            // `SourceGrep` is an internal dispatch variant.  ACP clients see
+            // the Claude-facing `Grep` envelope, never that implementation name.
+            ToolInput::SourceGrep(input) => serde_json::to_value(input)?,
+            input => serde_json::to_value(input)?,
+        };
         let canonical_meta = self.stamp_tool_meta(None, wire_name, Some(&tool_call_input));
         let (title, kind, locations, content) = match tool_call_input {
             ToolInput::ListDir(list_dir) => (
@@ -2095,6 +2121,38 @@ impl SessionActor {
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
         self.chat_state_handle.push_tool_result(tool_chat);
+        Ok(())
+    }
+    async fn handle_tool_validation_error(
+        &self,
+        tool_call_id: &acp::ToolCallId,
+        call_id: &str,
+        function_name: &str,
+        detail: String,
+    ) -> Result<(), acp::Error> {
+        let message = format!("InputValidationError: {detail}");
+        tracing::error!(
+            session_id = % self.session_info.id.0,
+            tool_name = function_name,
+            error_kind = "input_validation_failure",
+            error_message = %message,
+            "tool_error: input_validation_failure"
+        );
+        self.signals_handle().record_tool_failure(function_name);
+        self.send_update(
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                tool_call_id.clone(),
+                acp::ToolCallUpdateFields::new()
+                    .status(Some(acp::ToolCallStatus::Failed))
+                    .content(Some(vec![acp::ToolCallContent::from(
+                        acp::ContentBlock::Text(acp::TextContent::new(message.clone())),
+                    )])),
+            )),
+            None,
+        )
+        .await;
+        self.chat_state_handle
+            .push_tool_result(ConversationItem::tool_result(call_id.to_string(), message));
         Ok(())
     }
     /// Sweep `pending_inputs` and `pending_notifications` for entries

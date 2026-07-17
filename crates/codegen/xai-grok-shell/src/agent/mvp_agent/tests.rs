@@ -1092,6 +1092,7 @@ async fn file_toolset_override_e2e_to_finalized_toolset() {
     assert!(names.contains(&"hashline_read"), "defs: {names:?}");
     assert!(names.contains(&"hashline_edit"), "defs: {names:?}");
     assert!(names.contains(&"hashline_grep"), "defs: {names:?}");
+    assert!(names.contains(&"Grep"), "defs: {names:?}");
     assert!(!names.contains(&"read_file"), "defs: {names:?}");
     assert!(!names.contains(&"search_replace"), "defs: {names:?}");
     assert!(names.contains(&"list_dir"), "defs: {names:?}");
