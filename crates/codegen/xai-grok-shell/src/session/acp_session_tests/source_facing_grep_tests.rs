@@ -163,6 +163,52 @@ async fn source_grep_unknown_fields_fail_before_registry_dispatch() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn source_grep_strict_schema_failure_precedes_unsupported_and_resolution() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            for (field, value) in [
+                ("glob", "false"),
+                ("output_mode", r#""not-a-mode""#),
+                ("head_limit", "true"),
+                ("multiline", r#""true""#),
+            ] {
+                let call_id = format!("invalid_{field}");
+                let arguments = format!(r#"{{"pattern":"x","path":"missing","{field}":{value}}}"#);
+                let result = prepare(&actor, tool_call(&call_id, "Grep", &arguments)).await;
+
+                assert!(matches!(result, Err(ToolLoop::ToolParsingError)), "{field}");
+                let message = tool_result_text(&actor, &call_id).await;
+                assert!(message.starts_with("Failed to parse arguments for tool `Grep`:"));
+                assert_ne!(message, UNSUPPORTED_MESSAGE);
+            }
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn source_grep_parses_every_schema_field_before_stopping_as_unsupported() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let actor = grep_actor().await;
+            let result = actor
+                .execute_tool_calls(vec![tool_call(
+                    "all_fields",
+                    "Grep",
+                    r#"{"pattern":"x","path":"missing","glob":"*.rs","output_mode":"content","-B":"-5","-A":3.14,"-C":"0","context":-2.5,"-n":true,"-i":false,"type":"rust","head_limit":"1.25","offset":-1,"multiline":true}"#,
+                )])
+                .await
+                .expect("a schema-valid source Grep should stop through the session loop");
+
+            assert!(matches!(result, ToolLoop::Continue));
+            assert_eq!(tool_result_text(&actor, "all_fields").await, UNSUPPORTED_MESSAGE);
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn source_grep_stops_before_path_resolution_permission_or_dispatch() {
     let local = tokio::task::LocalSet::new();
     local

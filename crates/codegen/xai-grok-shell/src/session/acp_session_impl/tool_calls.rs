@@ -25,6 +25,76 @@ const SOURCE_GREP_FIELDS: [&str; 14] = [
     "multiline",
 ];
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceGrepOutputMode {
+    Content,
+    FilesWithMatches,
+    Count,
+}
+
+/// A source schema number: a finite JSON number or a decimal literal string.
+///
+/// This only establishes the source-facing schema boundary. Valid uppercase
+/// `Grep` inputs stop at the unsupported boundary before any value is used.
+#[derive(Debug)]
+struct SourceGrepNumber;
+
+impl<'de> serde::Deserialize<'de> for SourceGrepNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = <serde_json::Value as serde::Deserialize>::deserialize(deserializer)?;
+        let valid = match value {
+            serde_json::Value::Number(number) => number.as_f64().is_some_and(f64::is_finite),
+            serde_json::Value::String(text) => {
+                let unsigned = text.strip_prefix('-').unwrap_or(&text);
+                match unsigned.split_once('.') {
+                    None => !unsigned.is_empty() && unsigned.chars().all(|c| c.is_ascii_digit()),
+                    Some((whole, fraction)) => {
+                        !whole.is_empty()
+                            && !fraction.is_empty()
+                            && whole.chars().all(|c| c.is_ascii_digit())
+                            && fraction.chars().all(|c| c.is_ascii_digit())
+                    }
+                }
+            }
+            _ => false,
+        };
+        valid.then_some(Self).ok_or_else(|| {
+            serde::de::Error::custom("expected a finite number or decimal numeric string")
+        })
+    }
+}
+
+/// Exact strict schema for source-facing uppercase `Grep`.
+#[allow(dead_code)]
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceGrepInput {
+    pattern: String,
+    path: Option<String>,
+    glob: Option<String>,
+    output_mode: Option<SourceGrepOutputMode>,
+    #[serde(rename = "-B")]
+    before: Option<SourceGrepNumber>,
+    #[serde(rename = "-A")]
+    after: Option<SourceGrepNumber>,
+    #[serde(rename = "-C")]
+    context_short: Option<SourceGrepNumber>,
+    context: Option<SourceGrepNumber>,
+    #[serde(rename = "-n")]
+    line_numbers: Option<bool>,
+    #[serde(rename = "-i")]
+    case_insensitive: Option<bool>,
+    #[serde(rename = "type")]
+    file_type: Option<String>,
+    head_limit: Option<SourceGrepNumber>,
+    offset: Option<SourceGrepNumber>,
+    multiline: Option<bool>,
+}
+
 fn source_grep_input_error(detail: impl Into<String>) -> xai_tool_runtime::ToolError {
     xai_tool_runtime::ToolError::custom("invalid_source_grep_input", detail.into())
 }
@@ -41,26 +111,17 @@ fn prepare_source_grep_input(
     let object = raw_input
         .as_object()
         .ok_or_else(|| source_grep_input_error("source-facing Grep arguments must be an object"))?;
-    if !matches!(object.get("pattern"), Some(serde_json::Value::String(_))) {
-        return Err(source_grep_input_error(
-            "source-facing Grep requires a string `pattern`",
-        ));
-    }
-    if let Some(path) = object.get("path")
-        && !path.is_string()
+    if let Some(field) = object
+        .keys()
+        .find(|field| !SOURCE_GREP_FIELDS.contains(&field.as_str()))
     {
-        return Err(source_grep_input_error(
-            "source-facing Grep `path` must be a string when provided",
-        ));
-    }
-    if let Some(field) = object.keys().find(|field| {
-        *field != "pattern" && *field != "path" && !SOURCE_GREP_FIELDS.contains(&field.as_str())
-    }) {
         return Err(source_grep_input_error(format!(
             "unknown source-facing Grep field `{field}`"
         )));
     }
-    Ok(())
+    serde_json::from_value::<SourceGrepInput>(raw_input.clone())
+        .map(|_| ())
+        .map_err(|err| source_grep_input_error(format!("invalid source-facing Grep input: {err}")))
 }
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
