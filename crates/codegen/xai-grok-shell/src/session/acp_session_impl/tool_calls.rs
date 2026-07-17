@@ -50,7 +50,7 @@ impl<'de> serde::Deserialize<'de> for SourceGrepNumber {
             serde_json::Value::Number(number) => number.as_f64().is_some_and(f64::is_finite),
             serde_json::Value::String(text) => {
                 let unsigned = text.strip_prefix('-').unwrap_or(&text);
-                match unsigned.split_once('.') {
+                let is_decimal_literal = match unsigned.split_once('.') {
                     None => !unsigned.is_empty() && unsigned.chars().all(|c| c.is_ascii_digit()),
                     Some((whole, fraction)) => {
                         !whole.is_empty()
@@ -58,7 +58,8 @@ impl<'de> serde::Deserialize<'de> for SourceGrepNumber {
                             && whole.chars().all(|c| c.is_ascii_digit())
                             && fraction.chars().all(|c| c.is_ascii_digit())
                     }
-                }
+                };
+                is_decimal_literal && text.parse::<f64>().is_ok_and(f64::is_finite)
             }
             _ => false,
         };
