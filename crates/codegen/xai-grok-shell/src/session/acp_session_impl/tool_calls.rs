@@ -8,24 +8,6 @@
 use super::*;
 use futures::StreamExt;
 
-const CLAUDE_GREP_UNSUPPORTED_MESSAGE: &str =
-    "unsupported: Claude Code parity for Grep is not implemented";
-
-const CLAUDE_GREP_UNSUPPORTED_FIELDS: &[&str] = &[
-    "glob",
-    "output_mode",
-    "-B",
-    "-A",
-    "-C",
-    "context",
-    "-n",
-    "-i",
-    "type",
-    "head_limit",
-    "offset",
-    "multiline",
-];
-
 const CLAUDE_WRITE_SCHEMA_UNRESOLVED: &str = "unsupported/unresolved: exact Claude Write schema diagnostic and ACP payload are not established";
 
 /// Validate the strict source-facing Write object without changing the shared
@@ -56,34 +38,6 @@ fn validate_source_write_input(
             CLAUDE_WRITE_SCHEMA_UNRESOLVED,
         ))
     }
-}
-
-/// A source `Grep` request with a source-schema field that has no approved
-/// lowercase OpenCode mapping must not fall through serde's unknown-field
-/// handling into an `rg` invocation.
-fn source_grep_has_unsupported_field(function_name: &str, raw_input: &serde_json::Value) -> bool {
-    if function_name != "Grep" {
-        return false;
-    }
-
-    let Some(object) = raw_input.as_object() else {
-        return false;
-    };
-
-    // Preserve the existing parser's model-facing failure for malformed required
-    // fields; the explicit unsupported predicate applies only to an otherwise
-    // source-shaped object.
-    if !object
-        .get("pattern")
-        .is_some_and(serde_json::Value::is_string)
-        || object.get("path").is_some_and(|path| !path.is_string())
-    {
-        return false;
-    }
-
-    CLAUDE_GREP_UNSUPPORTED_FIELDS
-        .iter()
-        .any(|field| object.contains_key(*field))
 }
 
 /// Select the permission target for the approved Claude-facing Write mapping.
@@ -128,14 +82,6 @@ fn parse_and_dispatch_tool_name(
             ) =>
         {
             "write".to_string()
-        }
-        "Grep"
-            if matches!(
-                bridge.tool_kind("grep"),
-                Some(xai_grok_tools::types::tool::ToolKind::Search)
-            ) =>
-        {
-            "grep".to_string()
         }
         _ => function_name.to_string(),
     }
@@ -1017,15 +963,6 @@ impl SessionActor {
             )
             .await?;
             return Ok(Err(ToolLoop::ToolParsingError));
-        }
-        if source_grep_has_unsupported_field(&call.function.name, &raw_input) {
-            self.handle_tool_not_executed(
-                &call.id,
-                &tool_call_id,
-                CLAUDE_GREP_UNSUPPORTED_MESSAGE.to_string(),
-            )
-            .await?;
-            return Ok(Err(ToolLoop::Continue));
         }
         let tool_input = match self
             .agent

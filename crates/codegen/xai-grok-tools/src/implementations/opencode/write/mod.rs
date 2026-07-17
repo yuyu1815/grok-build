@@ -115,7 +115,15 @@ impl xai_tool_runtime::Tool for WriteTool {
         // ── Check if file exists and read old content ────────────
         let (existed, old_content) = match fs.read_file(&path).await {
             Ok(bytes) => (true, Some(String::from_utf8_lossy(&bytes).into_owned())),
-            Err(_) => (false, None),
+            Err(error) if error.io_error_kind() == Some(std::io::ErrorKind::NotFound) => {
+                (false, None)
+            }
+            Err(error) => {
+                return Err(xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("write").expect("valid"),
+                    error.to_string(),
+                ));
+            }
         };
 
         // ── Create parent directories if needed ──────────────────
@@ -198,6 +206,7 @@ impl xai_tool_runtime::Tool for WriteTool {
 
 #[cfg(test)]
 mod tests {
+    use crate::computer::types::{AsyncFileSystem, ComputerError};
     use crate::types::tool_metadata::test_ctx;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -215,6 +224,30 @@ mod tests {
         resources.insert(FileSystem(Arc::new(LocalFs)));
         resources.insert(NotificationHandle(ToolNotificationHandle::noop()));
         resources
+    }
+
+    struct RefusingReadFs;
+
+    #[async_trait::async_trait]
+    impl AsyncFileSystem for RefusingReadFs {
+        async fn read_file(&self, _path: &std::path::Path) -> Result<Vec<u8>, ComputerError> {
+            Err(ComputerError::io_with_kind(
+                "source pre-write read failed",
+                std::io::ErrorKind::PermissionDenied,
+            ))
+        }
+
+        async fn write_file(
+            &self,
+            _path: &std::path::Path,
+            _data: &[u8],
+        ) -> Result<(), ComputerError> {
+            panic!("a non-NotFound pre-write read error must stop before write")
+        }
+
+        async fn delete_file(&self, _path: &std::path::Path) -> Result<(), ComputerError> {
+            Ok(())
+        }
     }
 
     // ── Write new file ──────────────────────────────────────────
@@ -293,6 +326,37 @@ mod tests {
         assert!(matches!(result, SearchReplaceOutput::EditsApplied(_)));
         let content = std::fs::read_to_string(&nested).unwrap();
         assert_eq!(content, "nested\n");
+    }
+
+    #[tokio::test]
+    async fn non_not_found_read_error_stops_before_parent_creation_or_write() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("must-not-exist/target.txt");
+        let parent = target.parent().unwrap().to_path_buf();
+        let mut resources = Resources::new();
+        resources.insert(Cwd(tmp.path().to_path_buf()));
+        resources.insert(FileSystem(Arc::new(RefusingReadFs)));
+        resources.insert(NotificationHandle(ToolNotificationHandle::noop()));
+
+        let result = xai_tool_runtime::Tool::run(
+            &WriteTool,
+            test_ctx(resources.into_shared()),
+            WriteInput {
+                file_path: target.to_string_lossy().into_owned(),
+                content: "must not be written".to_owned(),
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("source pre-write read failed")
+        );
+        assert!(!parent.exists(), "read error must stop before mkdir");
+        assert!(!target.exists(), "read error must stop before write");
     }
 
     // ── Tool metadata ──────────────────────────────────────────

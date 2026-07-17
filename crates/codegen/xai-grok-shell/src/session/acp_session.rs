@@ -1748,7 +1748,7 @@ mod claude_write_permission_tests {
     use super::support::test_agent_with_tools;
     use super::*;
     use tokio::sync::mpsc;
-    use xai_grok_tools::implementations::opencode::{OpenCodeGrepTool, OpenCodeWriteTool};
+    use xai_grok_tools::implementations::opencode::OpenCodeWriteTool;
     use xai_grok_tools::registry::types::ToolConfig;
     use xai_grok_workspace::permission::{AccessKind, PermissionCommand};
 
@@ -1764,14 +1764,6 @@ mod claude_write_permission_tests {
         let mut fixture = make_replay_send_update_fixture().await;
         fixture.actor.agent = std::cell::RefCell::new(
             test_agent_with_tools(vec![ToolConfig::for_tool::<OpenCodeWriteTool>()]).await,
-        );
-        fixture
-    }
-
-    async fn grep_actor() -> replay_buffer_send_update_tests::ReplaySendUpdateFixture {
-        let mut fixture = make_replay_send_update_fixture().await;
-        fixture.actor.agent = std::cell::RefCell::new(
-            test_agent_with_tools(vec![ToolConfig::for_tool::<OpenCodeGrepTool>()]).await,
         );
         fixture
     }
@@ -2032,52 +2024,6 @@ mod claude_write_permission_tests {
                     assert!(
                         !message.is_empty(),
                         "{id} must use the existing model-facing tool_result failure"
-                    );
-                }
-            })
-            .await;
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn source_grep_unsupported_fields_fail_before_registry_parse() {
-        const MESSAGE: &str = "unsupported: Claude Code parity for Grep is not implemented";
-        let local = tokio::task::LocalSet::new();
-        local
-            .run_until(async {
-                for (field, arguments) in [
-                    ("glob", r#"{"pattern":"needle","glob":"*.rs"}"#),
-                    (
-                        "output_mode",
-                        r#"{"pattern":"needle","output_mode":"content"}"#,
-                    ),
-                    ("-B", r#"{"pattern":"needle","-B":1}"#),
-                    ("-A", r#"{"pattern":"needle","-A":1}"#),
-                    ("-C", r#"{"pattern":"needle","-C":1}"#),
-                    ("context", r#"{"pattern":"needle","context":1}"#),
-                    ("-n", r#"{"pattern":"needle","-n":true}"#),
-                    ("-i", r#"{"pattern":"needle","-i":true}"#),
-                    ("type", r#"{"pattern":"needle","type":"rust"}"#),
-                    ("head_limit", r#"{"pattern":"needle","head_limit":1}"#),
-                    ("offset", r#"{"pattern":"needle","offset":1}"#),
-                    ("multiline", r#"{"pattern":"needle","multiline":true}"#),
-                ] {
-                    let fixture = grep_actor().await;
-                    let outcome = fixture
-                        .actor
-                        .prepare_tool_call(
-                            write_call(&format!("call-grep-{field}"), "Grep", arguments),
-                            &mut Vec::new(),
-                        )
-                        .await
-                        .expect("unsupported source field should not be an ACP error");
-                    assert!(
-                        matches!(outcome, Err(ToolLoop::Continue)),
-                        "{field} must stop before lowercase grep dispatch: {outcome:?}"
-                    );
-                    assert_eq!(
-                        last_tool_result(&fixture.actor, &format!("call-grep-{field}")).await,
-                        MESSAGE,
-                        "{field} must use the approved model-facing failure"
                     );
                 }
             })
