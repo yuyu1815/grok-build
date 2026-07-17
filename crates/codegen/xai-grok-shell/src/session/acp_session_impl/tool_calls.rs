@@ -32,6 +32,17 @@ fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool
 /// `read` schema. Only the exact case-sensitive source name is accepted.
 const SOURCE_READ_MAX_PAGES: i64 = 20;
 const SOURCE_READ_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0;
+const SOURCE_READ_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
+const SOURCE_READ_BINARY_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tiff", "tif", "mp4", "mov", "avi", "mkv",
+    "webm", "wmv", "flv", "m4v", "mpeg", "mpg", "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma",
+    "aiff", "opus", "zip", "tar", "gz", "bz2", "7z", "rar", "xz", "z", "tgz", "iso", "exe", "dll",
+    "so", "dylib", "bin", "o", "a", "obj", "lib", "app", "msi", "deb", "rpm", "pdf", "doc", "docx",
+    "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "ttf", "otf", "woff", "woff2", "eot", "pyc",
+    "pyo", "class", "jar", "war", "ear", "node", "wasm", "rlib", "sqlite", "sqlite3", "db", "mdb",
+    "idx", "psd", "ai", "eps", "sketch", "fig", "xd", "blend", "3ds", "max", "swf", "fla", "lockb",
+    "dat", "data",
+];
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -319,6 +330,60 @@ fn registry_tool_name_for_source(source_tool_name: &str) -> &str {
         "Read" => "read",
         _ => source_tool_name,
     }
+}
+
+/// Source `Read` performs these pure path checks after schema/pages validation
+/// and before its permission decision or any filesystem I/O. Keep this at the
+/// Claude-facing adapter boundary: the lower OpenCode reader cannot enforce
+/// the required ordering because it runs only after permission has resolved.
+fn validate_source_read_preflight(
+    file_path: &str,
+    cwd: &std::path::Path,
+    display_cwd: Option<&std::path::Path>,
+) -> Result<(), xai_tool_runtime::ToolError> {
+    let resolved =
+        xai_grok_tools::types::resources::resolve_model_path(cwd, display_cwd, file_path);
+    let resolved_text = resolved.to_string_lossy();
+    let ext = resolved_text
+        .rsplit_once('.')
+        .map(|(_, ext)| format!(".{}", ext.to_ascii_lowercase()))
+        .unwrap_or_default();
+
+    if SOURCE_READ_BINARY_EXTENSIONS.contains(&ext.trim_start_matches('.'))
+        && ext != ".pdf"
+        && !SOURCE_READ_IMAGE_EXTENSIONS.contains(&ext.trim_start_matches('.'))
+    {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "This tool cannot read binary files. The file appears to be a binary {ext} file. Please use appropriate tools for binary file analysis."
+        )));
+    }
+
+    let is_stdio_fd = resolved_text.starts_with("/proc/")
+        && ["/fd/0", "/fd/1", "/fd/2"]
+            .iter()
+            .any(|suffix| resolved_text.ends_with(suffix));
+    let blocked = [
+        "/dev/zero",
+        "/dev/random",
+        "/dev/urandom",
+        "/dev/full",
+        "/dev/stdin",
+        "/dev/tty",
+        "/dev/console",
+        "/dev/stdout",
+        "/dev/stderr",
+        "/dev/fd/0",
+        "/dev/fd/1",
+        "/dev/fd/2",
+    ]
+    .contains(&resolved_text.as_ref());
+    if blocked || is_stdio_fd {
+        return Err(xai_tool_runtime::ToolError::invalid_arguments(format!(
+            "Cannot read '{file_path}': this device file would block or produce infinite output."
+        )));
+    }
+
+    Ok(())
 }
 
 /// Classify the exact source-facing Claude Read input for permission.
@@ -1194,7 +1259,30 @@ impl SessionActor {
         let registry_tool_name = registry_tool_name_for_source(&call.function.name);
         let registry_raw_input = if call.function.name == "Read" {
             match source_read_input_for_registry(&raw_input) {
-                Ok(input) => input,
+                Ok(input) => {
+                    let display_cwd = self.display_cwd.get().map(std::path::Path::new);
+                    let file_path = raw_input
+                        .get("file_path")
+                        .and_then(serde_json::Value::as_str)
+                        .expect("source Read schema validated file_path as a string");
+                    if let Err(err) = validate_source_read_preflight(
+                        file_path,
+                        std::path::Path::new(&self.session_info.cwd),
+                        display_cwd,
+                    ) {
+                        self.handle_tool_parse_error(
+                            &tool_call_id,
+                            &call.id,
+                            &call.function.name,
+                            err,
+                            &call.function.arguments,
+                            &model_id_str,
+                        )
+                        .await?;
+                        return Ok(Err(ToolLoop::ToolParsingError));
+                    }
+                    input
+                }
                 Err(SourceReadInputError::Invalid(err)) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,
@@ -1276,9 +1364,10 @@ impl SessionActor {
         let dispatch_target_name = tool_input
             .dispatch_target_name()
             .or_else(|| (call.function.name == "Read").then(|| registry_tool_name.to_string()));
-        let resolved_tool_name = dispatch_target_name
-            .clone()
-            .unwrap_or_else(|| call.function.name.clone());
+        // Hooks observe the tool the Claude caller invoked. `read` is solely
+        // an internal dispatch target for this adapter and must not leak into
+        // hook matching, hook telemetry, or permission-denied notifications.
+        let hook_tool_name = call.function.name.clone();
         if self.hook_event_active(xai_grok_hooks::event::HookEventName::PreToolUse) {
             let (hook_tool_input, hook_tool_input_truncated) =
                 xai_grok_hooks::event::truncate_payload(raw_input.clone());
@@ -1286,7 +1375,7 @@ impl SessionActor {
                 xai_grok_hooks::event::HookEventName::PreToolUse,
                 None,
                 xai_grok_hooks::event::HookPayload::PreToolUse {
-                    tool_name: resolved_tool_name.clone(),
+                    tool_name: hook_tool_name.clone(),
                     tool_use_id: call.id.clone(),
                     tool_input: hook_tool_input,
                     tool_input_truncated: hook_tool_input_truncated,
@@ -1302,14 +1391,14 @@ impl SessionActor {
                         .await;
                 self.send_hook_execution(
                     "pre_tool_use",
-                    Some(&resolved_tool_name),
+                    Some(&hook_tool_name),
                     None,
                     &pre_result.results,
                 )
                 .await;
                 self.emit_hook_executed_telemetry(
                     "pre_tool_use",
-                    Some(&resolved_tool_name),
+                    Some(&hook_tool_name),
                     &pre_result.results,
                 )
                 .await;
@@ -1320,7 +1409,7 @@ impl SessionActor {
                         .deny_tool(
                             &call.id,
                             &tool_call_id,
-                            resolved_tool_name.clone(),
+                            hook_tool_name.clone(),
                             hook_name,
                             reason,
                         )
@@ -1519,13 +1608,13 @@ impl SessionActor {
                     self.dispatch_hook(
                         xai_grok_hooks::event::HookEventName::PermissionDenied,
                         xai_grok_hooks::event::HookPayload::PermissionDenied {
-                            tool_name: resolved_tool_name.clone(),
+                            tool_name: hook_tool_name.clone(),
                             tool_use_id: tool_call_id.to_string(),
                             tool_input: tool_input_value,
                             tool_input_truncated,
                         },
                         None,
-                        Some(&resolved_tool_name),
+                        Some(&hook_tool_name),
                     )
                     .await;
                     let loop_action = if is_policy_deny {
@@ -3008,7 +3097,7 @@ fn execute_tool_call_parts(
 mod permission_access_classification_tests {
     use super::{
         SourceReadInputError, access_kind_for_permission_request, registry_tool_name_for_source,
-        source_read_input_for_registry, validate_source_read_pages,
+        source_read_input_for_registry, validate_source_read_pages, validate_source_read_preflight,
     };
     use std::path::Path;
     use xai_grok_tools::types::ToolInput;
@@ -3040,6 +3129,25 @@ mod permission_access_classification_tests {
         assert!(
             matches!(access, AccessKind::Read(Some(path)) if path == "/workspace/project/src/secret.txt")
         );
+    }
+
+    #[test]
+    fn source_read_binary_and_device_preflight_stop_before_permission() {
+        let cwd = Path::new("/workspace/project");
+        let binary = validate_source_read_preflight("archive.zip", cwd, None)
+            .expect_err("known binary extension must fail before permission");
+        assert!(binary.to_string().contains("binary .zip file"));
+
+        let device = validate_source_read_preflight("/dev/zero", cwd, None)
+            .expect_err("blocking device must fail before permission");
+        assert!(
+            device
+                .to_string()
+                .contains("would block or produce infinite output")
+        );
+
+        validate_source_read_preflight("image.png", cwd, None)
+            .expect("source image extension proceeds to the post-permission unsupported boundary");
     }
 
     #[test]

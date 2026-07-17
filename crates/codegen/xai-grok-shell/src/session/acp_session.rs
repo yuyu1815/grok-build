@@ -541,13 +541,11 @@ pub(crate) struct PreparedToolCall {
     is_read_only: bool,
 }
 impl PreparedToolCall {
-    /// The tool name hooks see: the resolved dispatch target, else the wire name.
-    /// The single source for the resolved name across the dispatch-phase hook
-    /// events (PostToolUse / PostToolUseFailure) and their telemetry labels.
+    /// The tool name hooks see: the source-facing wire name, never an internal
+    /// dispatch adapter. In particular, Claude `Read` dispatches to lowercase
+    /// `read` internally while hooks must continue to observe `Read`.
     pub(crate) fn hook_tool_name(&self) -> &str {
-        self.dispatch_target_name
-            .as_deref()
-            .unwrap_or(&self.tool_name)
+        &self.tool_name
     }
 }
 #[cfg(test)]
@@ -1806,6 +1804,7 @@ mod tool_meta_stamp_tests {
                     .expect("source Read must pass permission");
 
                 assert_eq!(prepared.dispatch_target_name.as_deref(), Some("read"));
+                assert_eq!(prepared.hook_tool_name(), "Read");
                 let expected_path = file.path().to_string_lossy().into_owned();
                 assert_eq!(
                     prepared.parsed_args["filePath"].as_str(),

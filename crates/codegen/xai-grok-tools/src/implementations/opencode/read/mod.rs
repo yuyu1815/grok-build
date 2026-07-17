@@ -9,11 +9,6 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-#[cfg(test)]
-use base64::Engine as _;
-#[cfg(test)]
-use base64::engine::general_purpose;
-
 use crate::types::output::{FileContent, ReadFileOutput};
 use crate::types::requirements::Expr;
 #[allow(unused_imports)]
@@ -25,17 +20,18 @@ use crate::types::tool_io::ToolInput;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-/// Default maximum number of lines returned per read.
+/// OpenCode's directory-listing default. Claude-facing text reads do not use
+/// this cap: omitting `limit` reads the whole file subject to the 256 KiB
+/// whole-file guard below.
 const DEFAULT_READ_LIMIT: u32 = 2000;
-
-/// Maximum character length per line before truncation.
-const MAX_LINE_LENGTH: usize = 2000;
-
-/// Maximum bytes of text content returned per read (50 KB).
-const MAX_BYTES: usize = 50 * 1024;
 
 /// Claude's default whole-file guard when no explicit range was requested.
 const CLAUDE_MAX_FILE_BYTES: u64 = 256 * 1024;
+
+/// Extensions which Claude's source reader routes to its image branch. Image
+/// rendering is explicitly outside approved-29, so this implementation must
+/// fail visibly after permission instead of returning a completed image read.
+const CLAUDE_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
 
 const CYBER_RISK_MITIGATION_REMINDER: &str = "\n\n<system-reminder>\nWhenever you read a file, you should consider whether it would be considered malware. You CAN and SHOULD provide analysis of malware, what it is doing. But you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer questions about the code behavior.\n</system-reminder>\n";
 
@@ -213,9 +209,10 @@ impl xai_tool_runtime::Tool for ReadTool {
             .unwrap_or("")
             .to_lowercase();
 
-        // PDF/page extraction and notebook rendering are explicitly unsupported
-        // for this OpenCode Read implementation. Return through the existing
-        // model-facing Read failure path before reading the target bytes.
+        // PDF/page extraction, notebook rendering, and image rendering are
+        // explicitly unsupported by approved-29. Return a model-facing
+        // failure after the caller has passed the Claude-facing permission
+        // boundary; never report these calls as completed reads.
         if extension == "pdf" {
             return Ok(ReadFileOutput::FileReadError(
                 "unsupported: Claude Code parity for PDF/pages is not implemented".to_string(),
@@ -224,6 +221,12 @@ impl xai_tool_runtime::Tool for ReadTool {
         if extension == "ipynb" {
             return Ok(ReadFileOutput::FileReadError(
                 "unsupported: Claude Code parity for notebook is not implemented".to_string(),
+            ));
+        }
+        if CLAUDE_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+            return Ok(ReadFileOutput::FileReadError(
+                "unsupported: Claude Code parity for image rendering is not implemented"
+                    .to_string(),
             ));
         }
         // Read the file bytes for all remaining branches.
@@ -238,18 +241,18 @@ impl xai_tool_runtime::Tool for ReadTool {
             }
         };
 
-        // Check for images via magic-byte detection. Route through
-        // compression — raw bytes (truncated or non-endpoint formats)
-        // must never reach the conversation.
+        // A misleading extension must not make a successful image result
+        // observable either. The source reader classifies image extensions
+        // before its image branch; the byte check closes the non-extension
+        // route while image parity remains explicitly unsupported.
         if let Ok(meta) =
             crate::implementations::grok_build::read_file::bytes_to_metadata(&file_bytes)
             && meta.is_image()
         {
-            return Ok(crate::implementations::read_file::image::image_read_output(
-                file_bytes,
-                meta.mime_type,
-            )
-            .await);
+            return Ok(ReadFileOutput::FileReadError(
+                "unsupported: Claude Code parity for image rendering is not implemented"
+                    .to_string(),
+            ));
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -274,55 +277,25 @@ impl xai_tool_runtime::Tool for ReadTool {
         let all_lines: Vec<&str> = file_content.split('\n').collect();
         let total_lines = all_lines.len();
 
-        let limit = input.limit.unwrap_or(DEFAULT_READ_LIMIT) as usize;
+        let limit = input.limit.map(|limit| limit as usize);
         let offset = input.offset.unwrap_or(1) as usize;
         let start = if offset == 0 { 0 } else { offset - 1 };
 
-        // Validate offset against file size.
-        if total_lines > 0 && start >= total_lines {
-            return Ok(ReadFileOutput::FileReadError(format!(
-                "Offset {} is out of range for this file ({} lines)",
-                offset, total_lines,
-            )));
-        }
-
-        // Collect lines with byte-cap and line-limit.
+        // The source reader has no 2,000-line, 2,000-character, or 50 KiB
+        // output caps. `limit`, when supplied, is the sole line cap.
         let mut raw_lines: Vec<String> = Vec::new();
-        let mut byte_count: usize = 0;
-        let mut truncated_by_bytes = false;
-        let mut has_more_lines = false;
 
         for (i, line_text) in all_lines.iter().enumerate() {
             if i < start {
                 continue;
             }
 
-            if raw_lines.len() >= limit {
-                has_more_lines = true;
-                continue; // keep counting total lines
-            }
-
-            // Truncate long lines.
-            let line_text = line_text.strip_suffix('\r').unwrap_or(line_text);
-            let line = if line_text.len() > MAX_LINE_LENGTH {
-                format!(
-                    "{}... (line truncated to {} chars)",
-                    &line_text[..MAX_LINE_LENGTH],
-                    MAX_LINE_LENGTH
-                )
-            } else {
-                line_text.to_string()
-            };
-
-            let line_byte_len = line.len() + if raw_lines.is_empty() { 0 } else { 1 }; // +1 for newline separator
-            if byte_count + line_byte_len > MAX_BYTES {
-                truncated_by_bytes = true;
-                has_more_lines = true;
+            if limit.is_some_and(|limit| raw_lines.len() >= limit) {
                 break;
             }
 
-            raw_lines.push(line);
-            byte_count += line_byte_len;
+            let line_text = line_text.strip_suffix('\r').unwrap_or(line_text);
+            raw_lines.push(line_text.to_string());
         }
 
         // Claude's default compact renderer uses a tab between the line
@@ -725,22 +698,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn image_file_detection() {
+    async fn image_file_is_explicitly_unsupported() {
         let tmp = TempDir::new().unwrap();
         let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
         let file_path = canonical_tmp.join("photo.png");
-
-        // Real PNG: small enough to pass through the compression gate
-        // byte-identical.
-        let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
-            image::ImageBuffer::from_pixel(32, 32, image::Rgba([1, 2, 3, 255]));
-        let mut png_bytes = Vec::new();
-        img.write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
-        std::fs::write(&file_path, &png_bytes).unwrap();
+        std::fs::write(&file_path, b"not inspected: image parity is non-scope").unwrap();
 
         let tool = ReadTool;
         let resources = test_resources(&canonical_tmp);
@@ -756,66 +718,20 @@ mod tests {
             .await
             .unwrap();
         match result {
-            ReadFileOutput::ImageContent(img) => {
-                assert_eq!(img.mime_type, "image/png");
-                // The base64 data must be non-empty and decode back to our bytes.
-                let decoded = general_purpose::STANDARD.decode(&img.data).unwrap();
-                assert_eq!(decoded, png_bytes);
-            }
-            other => panic!("Expected ImageContent, got {:?}", other),
-        }
-    }
-
-    /// A truncated JPEG on disk must not be embedded raw; the compression
-    /// path re-encodes the decodable portion into complete bytes.
-    #[tokio::test]
-    async fn truncated_image_not_embedded_raw() {
-        let tmp = TempDir::new().unwrap();
-        let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
-        let file_path = canonical_tmp.join("cut.jpg");
-
-        let img: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> =
-            image::ImageBuffer::from_fn(200, 150, |x, y| {
-                image::Rgb([(x ^ y) as u8, (x * 3) as u8, (y * 5) as u8])
-            });
-        let mut jpeg = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 85)
-            .encode_image(&image::DynamicImage::ImageRgb8(img))
-            .unwrap();
-        jpeg.truncate(jpeg.len() / 2);
-        std::fs::write(&file_path, &jpeg).unwrap();
-
-        let tool = ReadTool;
-        let resources = test_resources(&canonical_tmp);
-        let input = ReadInput {
-            file_path: file_path.to_string_lossy().to_string(),
-            offset: None,
-            limit: None,
-            pages: None,
-        };
-        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
-            .await
-            .unwrap();
-        match result {
-            ReadFileOutput::ImageContent(img) => {
-                let decoded = general_purpose::STANDARD.decode(&img.data).unwrap();
-                assert_ne!(decoded, jpeg, "raw truncated bytes must not embed");
-                assert!(
-                    crate::util::image_validate::image_structurally_complete(&decoded),
-                    "embedded bytes must be structurally complete"
-                );
-            }
-            other => panic!("Expected re-encoded ImageContent, got {:?}", other),
+            ReadFileOutput::FileReadError(message) => assert_eq!(
+                message,
+                "unsupported: Claude Code parity for image rendering is not implemented"
+            ),
+            other => panic!("Expected unsupported image failure, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    async fn long_line_truncation() {
+    async fn long_lines_are_not_opencode_truncated() {
         let tmp = TempDir::new().unwrap();
         let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
         let file_path = canonical_tmp.join("long.txt");
 
-        // Create a line well beyond MAX_LINE_LENGTH (2000 chars).
         let long_line = "X".repeat(3000);
         std::fs::write(&file_path, &long_line).unwrap();
 
@@ -834,23 +750,19 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert!(
-                    fc.content.contains("(line truncated to 2000 chars)"),
-                    "Expected truncation message, got: {}",
-                    fc.content,
-                );
+                assert!(fc.content.contains(&long_line));
+                assert!(!fc.content.contains("line truncated"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
     }
 
     #[tokio::test]
-    async fn byte_cap_truncation() {
+    async fn text_output_is_not_capped_at_opencode_50_kib() {
         let tmp = TempDir::new().unwrap();
         let canonical_tmp = dunce::canonicalize(tmp.path()).unwrap();
         let file_path = canonical_tmp.join("big.txt");
 
-        // Each line is ~100 bytes; we need >50 KB = 51200 bytes total.
         let line = "A".repeat(99); // 99 chars + newline = 100 bytes per line
         let num_lines = 600; // 600 * 100 = 60_000 bytes, well over 50KB
         let content: String = (0..num_lines)
@@ -874,11 +786,8 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert!(
-                    fc.content.contains("Output capped at 50 KB"),
-                    "Expected byte-cap footer, got: {}",
-                    fc.content,
-                );
+                assert!(fc.content.contains("600\t"));
+                assert!(!fc.content.contains("Output capped at 50 KB"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
@@ -905,14 +814,13 @@ mod tests {
             .await
             .unwrap();
         match result {
-            ReadFileOutput::FileReadError(msg) => {
-                assert!(
-                    msg.contains("out of range"),
-                    "Expected 'out of range', got: {}",
-                    msg,
+            ReadFileOutput::FileContent(fc) => {
+                assert_eq!(
+                    fc.content,
+                    "<system-reminder>Warning: the file exists but is shorter than the provided offset (10). The file has 4 lines.</system-reminder>"
                 );
             }
-            other => panic!("Expected FileReadError, got {:?}", other),
+            other => panic!("Expected source reminder, got {:?}", other),
         }
     }
 
@@ -938,11 +846,10 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert_eq!(fc.total_lines, 0);
-                assert!(
-                    fc.content.contains("total 0 lines"),
-                    "Expected 'total 0 lines', got: {}",
+                assert_eq!(fc.total_lines, 1);
+                assert_eq!(
                     fc.content,
+                    "<system-reminder>Warning: the file exists but is shorter than the provided offset (1). The file has 1 lines.</system-reminder>"
                 );
             }
             other => panic!("Expected FileContent, got {:?}", other),
@@ -976,11 +883,9 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert!(
-                    fc.content.contains("Showing lines 1-5 of 100"),
-                    "Expected 'Showing lines 1-5 of 100', got: {}",
-                    fc.content,
-                );
+                assert!(fc.content.contains("1\tline 1"));
+                assert!(fc.content.contains("5\tline 5"));
+                assert!(!fc.content.contains("6\tline 6"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
