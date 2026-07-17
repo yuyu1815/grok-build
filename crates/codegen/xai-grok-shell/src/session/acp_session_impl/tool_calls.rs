@@ -57,11 +57,10 @@ enum SourceReadNumber {
     OutOfTargetRange,
 }
 
-/// Match Claude's `semanticNumber`: decimal numeric strings are coerced to a
-/// number before the inner integer constraint is applied. The source's
-/// JavaScript trim rules apply before its decimal-grammar gate; other strings
-/// remain invalid rather than accepting wider `Number` coercions such as an
-/// empty string.
+/// Match Claude's `semanticNumber`: decimal numeric strings are first checked
+/// against its raw-string decimal grammar, then coerced to a number before the
+/// inner integer constraint is applied. In particular, whitespace is not
+/// trimmed before this grammar gate.
 fn deserialize_semantic_number_opt<'de, D>(
     deserializer: D,
 ) -> Result<Option<SourceReadNumber>, D::Error>
@@ -72,11 +71,10 @@ where
     let (literal, string_input) = match value {
         serde_json::Value::Number(number) => (number.to_string(), false),
         serde_json::Value::String(string) => {
-            let trimmed = trim_js_whitespace(&string);
-            if !is_decimal_number_literal(trimmed) {
+            if !is_decimal_number_literal(&string) {
                 return Err(serde::de::Error::custom("expected a finite decimal number"));
             }
-            (trimmed.to_owned(), true)
+            (string, true)
         }
         _ => return Err(serde::de::Error::custom("expected a finite decimal number")),
     };
@@ -154,33 +152,6 @@ fn source_integer_literal(value: &str, allow_exponent: bool) -> SourceIntegerLit
     }
 
     SourceIntegerLiteral::U32(value as u32)
-}
-
-/// ECMAScript's `String.prototype.trim()` whitespace set. Rust's Unicode
-/// `trim()` differs at both U+0085 and U+FEFF, so use the source language's
-/// boundary here rather than the host language's broader predicate.
-fn trim_js_whitespace(value: &str) -> &str {
-    value.trim_matches(|character: char| {
-        matches!(
-            character,
-            '\u{0009}'
-                | '\u{000A}'
-                | '\u{000B}'
-                | '\u{000C}'
-                | '\u{000D}'
-                | '\u{0020}'
-                | '\u{00A0}'
-                | '\u{1680}'
-                | '\u{2000}'
-                ..='\u{200A}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202F}'
-                    | '\u{205F}'
-                    | '\u{3000}'
-                    | '\u{FEFF}'
-        )
-    })
 }
 
 fn is_decimal_number_literal(value: &str) -> bool {
@@ -3117,13 +3088,6 @@ mod permission_access_classification_tests {
         assert_eq!(mapped["offset"], 1);
         assert_eq!(mapped["limit"], 20);
 
-        let mapped = source_read_input_for_registry(&serde_json::json!({
-            "file_path": "src/file.txt",
-            "offset": "\u{FEFF}\u{00A0} 1.0 \u{00A0}\u{FEFF}",
-        }))
-        .expect("source JavaScript trim whitespace should be accepted");
-        assert_eq!(mapped["offset"], 1);
-
         for value in [
             serde_json::json!(""),
             serde_json::json!("+1"),
@@ -3139,6 +3103,43 @@ mod permission_access_classification_tests {
                 }))
                 .is_err(),
                 "unexpectedly accepted offset {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_read_semantic_number_strings_with_whitespace_fail_before_pages_or_dispatch() {
+        for (field, value) in [
+            ("offset", " 1"),
+            ("offset", "1 "),
+            ("offset", "1\t"),
+            ("offset", "\n1"),
+            ("limit", " 1"),
+            ("limit", "1 "),
+            ("limit", "1\t"),
+            ("limit", "\n1"),
+        ] {
+            let mut input = serde_json::json!({
+                "file_path": "src/file.pdf",
+                "pages": "invalid",
+            });
+            input
+                .as_object_mut()
+                .expect("Read test input is an object")
+                .insert(
+                    field.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+
+            let error = source_read_input_for_registry(&input)
+                .expect_err("whitespace-containing semantic number must fail source validation");
+            assert!(
+                matches!(
+                    error,
+                    SourceReadInputError::Invalid(error)
+                        if error.kind == ToolErrorKind::InvalidArguments
+                ),
+                "{field}={value:?}"
             );
         }
     }
