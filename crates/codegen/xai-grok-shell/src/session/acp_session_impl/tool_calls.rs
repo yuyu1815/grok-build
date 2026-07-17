@@ -940,7 +940,7 @@ impl SessionActor {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
             let permission_path = expand_glob_path(&cwd, display_cwd.as_deref(), path);
-            if let Err(error) = validate_path_metadata(&permission_path, Some(path)).await {
+            if let Err(error) = validate_path_metadata(&permission_path, Some(path), &cwd).await {
                 let error: anyhow::Error = error.into();
                 let _ = self
                     .handle_tool_error(
@@ -954,7 +954,7 @@ impl SessionActor {
                     .await;
                 return Ok(Err(ToolLoop::Continue));
             }
-            AccessKind::Read(Some(permission_path))
+            AccessKind::Read(Some(permission_path.to_string_lossy().into_owned()))
         } else {
             AccessKind::from(&tool_input)
         };
@@ -980,7 +980,12 @@ impl SessionActor {
         } else {
             None
         };
-        let dispatch_target_name = tool_input.dispatch_target_name();
+        // `Glob` is the Claude-facing name; only the lowercase OpenCode tool
+        // is registered for execution. Preserve that target through the
+        // prepared-call boundary so dispatch cannot fall back to `Glob`.
+        let dispatch_target_name = tool_input
+            .dispatch_target_name()
+            .or_else(|| source_facing_registry_target(&call.function.name).map(str::to_owned));
         let resolved_tool_name = dispatch_target_name
             .clone()
             .unwrap_or_else(|| call.function.name.clone());

@@ -16,7 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::implementations::grok_build::grep::ripgrep::{rg_path, uses_bundled_rg};
+use crate::implementations::grok_build::grep::ripgrep::rg_path;
 use crate::types::output::ToolOutput;
 #[allow(unused_imports)]
 use crate::types::resources::{
@@ -213,7 +213,7 @@ async fn codesign_ripgrep_if_necessary() {
     #[cfg(all(target_os = "macos", bundle_rg))]
     {
         static CHECKED: OnceLock<()> = OnceLock::new();
-        if CHECKED.set(()).is_err() || !uses_bundled_rg() {
+        if CHECKED.set(()).is_err() {
             return;
         }
         let binary = rg_path();
@@ -252,9 +252,7 @@ async fn codesign_ripgrep_if_necessary() {
         }
     }
     #[cfg(not(all(target_os = "macos", bundle_rg)))]
-    {
-        let _ = uses_bundled_rg;
-    }
+    {}
 }
 
 /// `GlobTool.validateInput` checks the result of `expandPath`, not the raw
