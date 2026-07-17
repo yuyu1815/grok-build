@@ -226,7 +226,7 @@ async fn codesign_ripgrep_if_necessary() {
             tracing::debug!(path = %binary.display(), "ripgrep codesign check failed");
             return;
         };
-        if !String::from_utf8_lossy(&check.stdout).contains("linker-signed") {
+        if !String::from_utf8_lossy(&check.stderr).contains("linker-signed") {
             return;
         }
         if let Err(error) = Command::new("codesign")
@@ -369,6 +369,14 @@ fn absolute_pattern_root(pattern: &str) -> Option<(PathBuf, String)> {
         ));
     }
     Some((PathBuf::from(base), relative.to_string()))
+}
+
+fn is_critical_process_error(stderr: &str) -> bool {
+    stderr.contains("ENOENT")
+        || stderr.contains("EACCES")
+        || stderr.contains("EPERM")
+        || stderr.contains("No such file or directory")
+        || stderr.contains("os error 2")
 }
 
 struct RipgrepOutput {
@@ -643,11 +651,7 @@ impl xai_tool_runtime::Tool for GlobTool {
         let started = Instant::now();
         codesign_ripgrep_if_necessary().await;
         let mut result = run_ripgrep(&args, &search_dir, &cancellation).await?;
-        let is_critical = |result: &RipgrepOutput| {
-            result.stderr.contains("ENOENT")
-                || result.stderr.contains("EACCES")
-                || result.stderr.contains("EPERM")
-        };
+        let is_critical = |result: &RipgrepOutput| is_critical_process_error(&result.stderr);
         // Source checks critical process errors before the EAGAIN retry branch.
         if !result.status.success() && result.status.code() != Some(1) && is_critical(&result) {
             return Err(xai_tool_runtime::ToolError::execution(
@@ -785,6 +789,35 @@ mod tests {
         assert_eq!(output.num_files, 0);
         assert!(!output.truncated);
         assert!(output.model_text().contains("No files found"));
+    }
+
+    #[tokio::test]
+    async fn absolute_pattern_with_missing_root_is_a_critical_error() {
+        let tmp = TempDir::new().unwrap();
+        let missing_root = tmp.path().join("does-not-exist");
+        let pattern = format!("{}/*.rs", missing_root.display());
+
+        let error = xai_tool_runtime::Tool::run(
+            &GlobTool,
+            test_ctx(test_resources(tmp.path()).into_shared()),
+            GlobInput {
+                pattern,
+                path: None,
+            },
+        )
+        .await
+        .expect_err("ripgrep's missing absolute search root must not become an empty result");
+
+        assert!(error.to_string().contains("No such file or directory"));
+    }
+
+    #[test]
+    fn critical_process_error_matches_source_file_not_found_diagnostics() {
+        assert!(is_critical_process_error(
+            "error: /missing: No such file or directory (os error 2)"
+        ));
+        assert!(is_critical_process_error("ENOENT"));
+        assert!(!is_critical_process_error("no matches found"));
     }
 
     #[tokio::test]
