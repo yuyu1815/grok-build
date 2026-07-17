@@ -167,9 +167,9 @@ fn wait_tasks_tool_config() -> ToolConfig {
 fn kill_task_tool_config() -> ToolConfig {
     ToolConfig::from(&grok_build::KillTaskTool).with_name("kill_command_or_subagent")
 }
-/// Claude Code's public `Write` definition, backed by the existing lowercase
-/// OpenCode implementation.  The session adapter performs the sole
-/// `Write` → `write` dispatch conversion after strict source-shaped parsing.
+/// Claude Code's public `Write` definition, backed by the lowercase OpenCode
+/// implementation key. The finalized registry keeps the source-facing client
+/// name separate from the implementation's `write` LocalRegistry key.
 pub fn claude_write_tool_config() -> ToolConfig {
     ToolConfig::from(&opencode::OpenCodeWriteTool)
         .with_name("Write")

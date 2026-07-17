@@ -64,29 +64,6 @@ fn access_kind_for_model_tool_call(
     AccessKind::from(input)
 }
 
-/// Resolve approved source-facing ids to their existing lowercase OpenCode
-/// registry entries.
-///
-/// Lowercase requests are intentionally not rewritten: they remain the existing
-/// OpenCode request path. Source-facing ids route only when the established
-/// kind-specific lowercase target is present.
-fn parse_and_dispatch_tool_name(
-    bridge: &xai_grok_tools::bridge::ToolBridge,
-    function_name: &str,
-) -> String {
-    match function_name {
-        "Write"
-            if matches!(
-                bridge.tool_kind("Write"),
-                Some(xai_grok_tools::types::tool::ToolKind::Write)
-            ) =>
-        {
-            "write".to_string()
-        }
-        _ => function_name.to_string(),
-    }
-}
-
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
 fn is_mcp_create_pull_request(tool_name: &str) -> bool {
@@ -902,7 +879,10 @@ impl SessionActor {
             &call.function.arguments,
         );
         let bridge = self.agent.borrow().tool_bridge().clone();
-        let parse_tool_name = parse_and_dispatch_tool_name(&bridge, &call.function.name);
+        // Keep the source-facing name through parse, permission, and dispatch.
+        // The finalized registry resolves its `client_name` (`Write`) to the
+        // implementation key (`write`); lowering here would bypass that lookup.
+        let parse_tool_name = call.function.name.clone();
         let parse_result = serde_json::from_str::<serde_json::Value>(args_str);
         let mut concatenated_json_count: usize = 0;
         let mut raw_input = match &parse_result {

@@ -1873,7 +1873,7 @@ mod claude_write_permission_tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn source_write_routes_but_lowercase_write_keeps_existing_permission_path() {
+    async fn source_write_keeps_its_client_name_through_permission() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
@@ -1921,35 +1921,67 @@ mod claude_write_permission_tests {
                     .expect("prepare should not return ACP error")
                     .expect("valid Write should pass permission");
 
-                assert_eq!(prepared.tool_name, "write");
+                assert_eq!(prepared.tool_name, "Write");
                 assert_eq!(
                     prepared.parsed_args["file_path"], "/display-worktree/nested/file.txt",
                     "permission resolution must not mutate dispatch input"
                 );
-
-                let lowercase = fixture
-                    .actor
-                    .prepare_tool_call(
-                        write_call(
-                            "call-lowercase-write",
-                            "write",
-                            r#"{"file_path":"/display-worktree/unchanged.txt","content":"new","extra":true}"#,
-                        ),
-                        &mut Vec::new(),
-                    )
-                    .await
-                    .expect("prepare should not return ACP error")
-                    .expect("existing lowercase write should remain valid");
-                assert_eq!(lowercase.tool_name, "write");
                 let accesses = access.lock().await;
                 assert!(
                     matches!(
                         accesses.as_slice(),
-                        [AccessKind::Edit(source), AccessKind::Edit(lowercase)]
-                            if source == "/tmp/nested/file.txt"
-                                && lowercase == "/display-worktree/unchanged.txt"
+                        [AccessKind::Edit(source)] if source == "/tmp/nested/file.txt"
                     ),
-                    "only source-facing Write may use the resolver before permission: {accesses:?}"
+                    "source-facing Write must use the resolver before permission: {accesses:?}"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn source_write_dispatches_via_client_name_to_lowercase_registry_key() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let mut fixture = write_actor().await;
+                let temp_dir = tempfile::tempdir().expect("temp directory");
+                let path = temp_dir.path().join("written-by-source-write.txt");
+
+                fixture
+                    .actor
+                    .workspace_ops
+                    .bind_local_session(
+                        &fixture.actor.session_id_string(),
+                        fixture.actor.tool_context.cwd.as_path().to_path_buf(),
+                        fixture.actor.tool_context.hunk_tracker_handle.clone(),
+                        fixture.actor.agent.borrow().tool_bridge().toolset(),
+                        None,
+                    )
+                    .expect("source-facing Write toolset must bind for normal dispatch");
+
+                fixture
+                    .actor
+                    .execute_tool_calls(vec![write_call(
+                        "call-source-write-dispatch",
+                        "Write",
+                        &format!(
+                            r#"{{"file_path":{},"content":"source-facing content"}}"#,
+                            serde_json::to_string(&path.to_string_lossy()).expect("path JSON")
+                        ),
+                    )])
+                    .await
+                    .expect("Write tool loop should complete");
+
+                assert_eq!(
+                    std::fs::read_to_string(&path)
+                        .expect("Write must reach lowercase implementation"),
+                    "source-facing content"
+                );
+                assert!(
+                    !last_tool_result(&fixture.actor, "call-source-write-dispatch")
+                        .await
+                        .contains("Tool not found"),
+                    "normal client-name dispatch must not look up a lowercase client name"
                 );
             })
             .await;

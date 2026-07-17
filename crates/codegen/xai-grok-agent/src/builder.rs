@@ -733,14 +733,22 @@ impl AgentBuilder {
                     (&xai_grok_tools::implementations::grok_build::ReferenceToVideoTool).into(),
                 );
             }
-            let has_write_tool = tool_config
-                .tools
-                .iter()
-                .any(|tc| tc.id.ends_with(":write") || tc.id.ends_with(":Write"));
-            if self.write_file_enabled && !has_write_tool {
-                tool_config
+            if self.write_file_enabled {
+                let claude_write = crate::config::claude_write_tool_config();
+                if let Some(existing_write) = tool_config
                     .tools
-                    .push(crate::config::claude_write_tool_config());
+                    .iter_mut()
+                    .find(|tool| tool.id == claude_write.id)
+                {
+                    // A pre-registered lowercase OpenCode write implementation
+                    // must still be exposed as Claude's source-facing `Write`.
+                    // Keep its parameters but replace only public definition
+                    // fields; the registry continues to dispatch to `write`.
+                    existing_write.name_override = claude_write.name_override;
+                    existing_write.description_override = claude_write.description_override;
+                } else {
+                    tool_config.tools.push(claude_write);
+                }
             }
             ensure_plan_mode_tools(&mut tool_config);
         }
@@ -1328,6 +1336,45 @@ mod tests {
             config_source: xai_grok_tools::types::config_source::ConfigSource::Builtin,
         }
     }
+
+    #[tokio::test]
+    async fn lowercase_write_pre_registration_still_exposes_source_facing_write() {
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::implementations::opencode::OpenCodeWriteTool;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+
+        let mut definition = crate::config::AgentDefinition::default_grok_build();
+        definition
+            .tool_config
+            .tools
+            .push((&OpenCodeWriteTool).into());
+        let agent = AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition(definition)
+        .build()
+        .await
+        .expect("a pre-registered lowercase write tool must not block Write injection");
+
+        let names: Vec<String> = agent
+            .tool_bridge()
+            .tool_definitions_builtins_only()
+            .await
+            .into_iter()
+            .map(|definition| definition.function.name)
+            .collect();
+        assert!(
+            names.contains(&"Write".to_string()),
+            "tool definitions: {names:?}"
+        );
+        assert!(
+            !names.contains(&"write".to_string()),
+            "the product-facing definition must use the source name: {names:?}"
+        );
+    }
+
     #[test]
     fn build_task_description_builtin_includes_tools() {
         let subagents = vec![
