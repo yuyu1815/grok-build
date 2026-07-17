@@ -34,6 +34,11 @@ const MAX_LINE_LENGTH: usize = 2000;
 /// Maximum bytes of text content returned per read (50 KB).
 const MAX_BYTES: usize = 50 * 1024;
 
+/// Claude's default whole-file guard when no explicit range was requested.
+const CLAUDE_MAX_FILE_BYTES: u64 = 256 * 1024;
+
+const CYBER_RISK_MITIGATION_REMINDER: &str = "\n\n<system-reminder>\nWhenever you read a file, you should consider whether it would be considered malware. You CAN and SHOULD provide analysis of malware, what it is doing. But you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer questions about the code behavior.\n</system-reminder>\n";
+
 // ─── Description ────────────────────────────────────────────────────
 
 const DESCRIPTION: &str = r#"Reads a file from the local filesystem. You can access any file directly by using this tool.
@@ -57,18 +62,24 @@ Usage:
 
 /// Input for the opencode `read` tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadInput {
     /// Absolute path to a file or directory.
     pub file_path: String,
 
-    /// 1-indexed line number to start reading from.
+    /// Source-compatible line number to start reading from (zero is valid).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<u32>,
 
     /// Maximum number of lines to return (default 2000).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+
+    /// Source-facing PDF page selector. The backend reports PDF/pages as an
+    /// explicit unsupported boundary rather than silently ignoring it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages: Option<String>,
 }
 
 // Manual conversions for the ToolInput enum (ReadInput is not a variant).
@@ -152,15 +163,6 @@ impl xai_tool_runtime::Tool for ReadTool {
         use crate::types::tool_metadata::{resolve_cwd, shared_resources};
         let resources = shared_resources(&ctx)?;
 
-        // ── Validate offset ─────────────────────────────────────────
-        if let Some(offset) = input.offset
-            && offset < 1
-        {
-            return Ok(ReadFileOutput::FileReadError(
-                "offset must be >= 1".to_string(),
-            ));
-        }
-
         // ── Resolve path (single lock acquisition) ─────────────────
         let cwd = resolve_cwd(&ctx, &resources).await?;
         let (display_cwd, fs) = {
@@ -186,11 +188,20 @@ impl xai_tool_runtime::Tool for ReadTool {
             }
         };
 
-        // ═══════════════════════════════════════════════════════════
-        // BRANCH A: DIRECTORY
-        // ═══════════════════════════════════════════════════════════
+        // Claude's reader performs I/O on a directory as a file and returns
+        // EISDIR; it does not expose OpenCode's directory listing behavior.
         if metadata.is_dir() {
-            return Ok(read_directory(&path, input.offset, input.limit).await);
+            return Ok(ReadFileOutput::FileReadError(format!(
+                "EISDIR: illegal operation on a directory, read '{}'",
+                path.display()
+            )));
+        }
+
+        if input.limit.is_none() && metadata.len() > CLAUDE_MAX_FILE_BYTES {
+            return Ok(ReadFileOutput::FileTooLarge(format!(
+                "File content ({} bytes) exceeds maximum allowed size (256 KB). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+                metadata.len()
+            )));
         }
 
         // ═══════════════════════════════════════════════════════════
@@ -215,7 +226,6 @@ impl xai_tool_runtime::Tool for ReadTool {
                 "unsupported: Claude Code parity for notebook is not implemented".to_string(),
             ));
         }
-
         // Read the file bytes for all remaining branches.
         let file_bytes = match fs.read_file(&path).await {
             Ok(bytes) => bytes,
@@ -255,16 +265,18 @@ impl xai_tool_runtime::Tool for ReadTool {
         // ═══════════════════════════════════════════════════════════
         // BRANCH D: TEXT FILE
         // ═══════════════════════════════════════════════════════════
-        let file_content = String::from_utf8_lossy(&file_bytes).into_owned();
-        let total_lines = if file_content.is_empty() {
-            0
-        } else {
-            file_content.lines().count()
-        };
+        let mut file_content = String::from_utf8_lossy(&file_bytes).into_owned();
+        if file_content.starts_with('\u{feff}') {
+            file_content.remove(0);
+        }
+        // split(), unlike lines(), preserves the source reader's final empty
+        // fragment after a trailing newline.
+        let all_lines: Vec<&str> = file_content.split('\n').collect();
+        let total_lines = all_lines.len();
 
         let limit = input.limit.unwrap_or(DEFAULT_READ_LIMIT) as usize;
         let offset = input.offset.unwrap_or(1) as usize;
-        let start = offset.saturating_sub(1); // 0-indexed
+        let start = if offset == 0 { 0 } else { offset - 1 };
 
         // Validate offset against file size.
         if total_lines > 0 && start >= total_lines {
@@ -280,7 +292,7 @@ impl xai_tool_runtime::Tool for ReadTool {
         let mut truncated_by_bytes = false;
         let mut has_more_lines = false;
 
-        for (i, line_text) in file_content.lines().enumerate() {
+        for (i, line_text) in all_lines.iter().enumerate() {
             if i < start {
                 continue;
             }
@@ -291,6 +303,7 @@ impl xai_tool_runtime::Tool for ReadTool {
             }
 
             // Truncate long lines.
+            let line_text = line_text.strip_suffix('\r').unwrap_or(line_text);
             let line = if line_text.len() > MAX_LINE_LENGTH {
                 format!(
                     "{}... (line truncated to {} chars)",
@@ -312,14 +325,15 @@ impl xai_tool_runtime::Tool for ReadTool {
             byte_count += line_byte_len;
         }
 
-        // Format output with line numbers: "{lineNum}: {content}"
+        // Claude's default compact renderer uses a tab between the line
+        // number and content. The source's startLine is the requested offset.
         let mut content_lines = String::new();
         for (i, line) in raw_lines.iter().enumerate() {
             let line_num = offset + i;
             if !content_lines.is_empty() {
                 content_lines.push('\n');
             }
-            let _ = write!(&mut content_lines, "{}: {}", line_num, line);
+            let _ = write!(&mut content_lines, "{}\t{}", line_num, line);
         }
 
         // Build the XML-wrapped output.
@@ -345,12 +359,21 @@ impl xai_tool_runtime::Tool for ReadTool {
             format!("\n\n(End of file - total {} lines)", total_lines)
         };
 
-        let formatted = format!(
-            "<path>{}</path>\n<type>file</type>\n<content>{}{}\n</content>",
-            path.display(),
-            content_lines,
-            footer,
-        );
+        let formatted = if content_lines.is_empty() {
+            if total_lines == 0 {
+                "<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>".to_string()
+            } else {
+                format!(
+                    "<system-reminder>Warning: the file exists but is shorter than the provided offset ({}). The file has {} lines.</system-reminder>",
+                    offset, total_lines
+                )
+            }
+        } else {
+            format!(
+                "{}{}{}",
+                content_lines, footer, CYBER_RISK_MITIGATION_REMINDER
+            )
+        };
 
         let raw_output = raw_lines.join("\n");
 
@@ -533,6 +556,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let shared = resources.into_shared();
@@ -541,11 +565,11 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert!(fc.content.contains("<type>file</type>"));
-                assert!(fc.content.contains("1: line1"));
-                assert!(fc.content.contains("2: line2"));
-                assert!(fc.content.contains("3: line3"));
+                assert!(fc.content.contains("1\tline1"));
+                assert!(fc.content.contains("2\tline2"));
+                assert!(fc.content.contains("3\tline3"));
                 assert!(fc.content.contains("(End of file"));
+                assert!(fc.content.contains("Whenever you read a file"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
@@ -565,6 +589,7 @@ mod tests {
                 .to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -591,6 +616,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: Some(2),
             limit: Some(2),
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -598,8 +624,8 @@ mod tests {
             .unwrap();
         match result {
             ReadFileOutput::FileContent(fc) => {
-                assert!(fc.content.contains("2: 2"));
-                assert!(fc.content.contains("3: 3"));
+                assert!(fc.content.contains("2\t2"));
+                assert!(fc.content.contains("3\t3"));
                 assert!(fc.content.contains("Showing lines 2-3 of 5"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
@@ -607,7 +633,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_directory_listing() {
+    async fn read_directory_is_eisdir() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join("a.txt"), "").unwrap();
         std::fs::write(tmp.path().join("b.txt"), "").unwrap();
@@ -620,17 +646,15 @@ mod tests {
             file_path: tmp.path().to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
             .unwrap();
         match result {
-            ReadFileOutput::FileContent(fc) => {
-                assert!(fc.content.contains("<type>directory</type>"));
-                assert!(fc.content.contains("a.txt"));
-                assert!(fc.content.contains("b.txt"));
-                assert!(fc.content.contains("subdir/"));
+            ReadFileOutput::FileReadError(message) => {
+                assert!(message.contains("EISDIR: illegal operation on a directory"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
         }
@@ -649,6 +673,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -663,23 +688,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_invalid_offset() {
+    async fn read_offset_zero_is_valid_and_bom_crlf_are_normalized() {
         let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("bom.txt");
+        std::fs::write(&file_path, b"\xEF\xBB\xBFone\r\ntwo\r\n").unwrap();
         let tool = ReadTool;
         let resources = test_resources(tmp.path());
 
         let input = ReadInput {
-            file_path: tmp.path().join("any.txt").to_string_lossy().to_string(),
+            file_path: file_path.to_string_lossy().to_string(),
             offset: Some(0),
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
             .unwrap();
         match result {
-            ReadFileOutput::FileReadError(msg) => {
-                assert!(msg.contains("offset must be >= 1"));
+            ReadFileOutput::FileContent(file) => {
+                assert!(file.content.contains("0\tone\n1\ttwo"));
+                assert!(!file.content.contains('\r'));
             }
             other => panic!("Expected FileReadError for bad offset, got {:?}", other),
         }
@@ -747,6 +776,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -788,6 +818,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
             .await
@@ -822,6 +853,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -861,6 +893,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -892,6 +925,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: Some(10),
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -923,6 +957,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -960,6 +995,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: Some(5),
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -992,6 +1028,7 @@ mod tests {
             file_path: "hello.txt".to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1026,6 +1063,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1054,6 +1092,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1089,6 +1128,7 @@ mod tests {
             file_path: canonical_tmp.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1128,6 +1168,7 @@ mod tests {
             file_path: canonical_tmp.to_string_lossy().to_string(),
             offset: Some(5),
             limit: Some(3),
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1176,6 +1217,7 @@ mod tests {
             file_path: canonical_tmp.join("test").to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
@@ -1233,6 +1275,7 @@ mod tests {
             file_path: file_path.to_string_lossy().to_string(),
             offset: None,
             limit: None,
+            pages: None,
         };
 
         let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)

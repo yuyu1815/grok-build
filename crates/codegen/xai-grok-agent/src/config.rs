@@ -519,7 +519,11 @@ fn opencode_toolset() -> ToolServerConfig {
     ToolServerConfig {
         tools: vec![
             (&opencode::OpenCodeBashTool).into(),
-            (&opencode::OpenCodeReadTool).into(),
+            // Public Claude spelling and field name; registry dispatch still
+            // uses the lowercase OpenCode `read` implementation.
+            ToolConfig::from(&opencode::OpenCodeReadTool)
+                .with_name("Read")
+                .with_param_rename("filePath", "file_path"),
             (&opencode::OpenCodeEditTool).into(),
             (&opencode::OpenCodeWriteTool).into(),
             (&opencode::OpenCodeGrepTool).into(),
