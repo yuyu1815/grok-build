@@ -44,7 +44,19 @@ struct SourceReadRequiredInput {
     #[serde(deserialize_with = "deserialize_semantic_number_opt")]
     limit: Option<SourceReadNumber>,
     #[serde(default)]
+    #[serde(deserialize_with = "deserialize_source_read_pages_opt")]
     pages: Option<String>,
+}
+
+fn deserialize_source_read_pages_opt<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(pages) => Ok(Some(pages)),
+        serde_json::Value::Null => Err(serde::de::Error::custom("expected a string")),
+        _ => Err(serde::de::Error::custom("expected a string")),
+    }
 }
 
 /// A source-valid semantic number either fits the registered OpenCode `u32`
@@ -3075,6 +3087,53 @@ mod permission_access_classification_tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn source_read_pages_distinguishes_omitted_string_null_and_wrong_type_at_adapter_seam() {
+        let omitted = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.txt",
+        }))
+        .expect("omitted pages is source-valid");
+        assert_eq!(omitted["filePath"], "src/file.txt");
+        assert!(omitted.get("pages").is_none());
+
+        let string = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.pdf",
+            "pages": "1-2",
+        }))
+        .expect("string pages is source-valid");
+        assert_eq!(string["filePath"], "src/file.pdf");
+        assert!(string.get("pages").is_none());
+
+        for pages in [serde_json::Value::Null, serde_json::json!(42)] {
+            let error = source_read_input_for_registry(&serde_json::json!({
+                "file_path": "src/file.pdf",
+                "pages": pages,
+            }))
+            .expect_err("explicit null and wrong-type pages must fail at the source adapter");
+            assert!(matches!(
+                error,
+                SourceReadInputError::Invalid(error)
+                    if error.kind == ToolErrorKind::InvalidArguments
+            ));
+        }
+    }
+
+    #[test]
+    fn source_read_null_pages_does_not_reach_registry_mapping_or_page_validation() {
+        let error = source_read_input_for_registry(&serde_json::json!({
+            "file_path": "src/file.pdf",
+            "pages": null,
+        }))
+        .expect_err("explicit null must be rejected before dispatch");
+
+        assert!(matches!(
+            error,
+            SourceReadInputError::Invalid(error)
+                if error.kind == ToolErrorKind::InvalidArguments
+                    && !error.to_string().contains("Page range")
+        ));
     }
 
     #[test]
