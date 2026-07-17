@@ -170,7 +170,7 @@ fn source_grep_input_error(detail: impl Into<String>) -> xai_tool_runtime::ToolE
 /// never calls this function.
 fn prepare_source_grep_input(
     raw_input: &serde_json::Value,
-) -> Result<(), xai_tool_runtime::ToolError> {
+) -> Result<serde_json::Value, xai_tool_runtime::ToolError> {
     let object = raw_input
         .as_object()
         .ok_or_else(|| source_grep_input_error("source-facing Grep arguments must be an object"))?;
@@ -182,9 +182,28 @@ fn prepare_source_grep_input(
             "unknown source-facing Grep field `{field}`"
         )));
     }
-    serde_json::from_value::<SourceGrepInput>(raw_input.clone())
-        .map(|_| ())
-        .map_err(|err| source_grep_input_error(format!("invalid source-facing Grep input: {err}")))
+    serde_json::from_value::<SourceGrepInput>(raw_input.clone()).map_err(|err| {
+        source_grep_input_error(format!("invalid source-facing Grep input: {err}"))
+    })?;
+
+    // Claude Code's normalizer accepts these two string spellings for boolean
+    // fields. The Rust tool type is intentionally boolean, so pass the
+    // normalized value onward to the ordinary typed registry boundary.
+    let mut normalized = raw_input.clone();
+    let object = normalized
+        .as_object_mut()
+        .expect("validated source Grep input must remain an object");
+    for field in ["-n", "-i", "multiline"] {
+        if let Some(serde_json::Value::String(value)) = object.get(field) {
+            let boolean = match value.as_str() {
+                "true" => true,
+                "false" => false,
+                _ => unreachable!("source Grep boolean string was validated"),
+            };
+            object.insert(field.to_owned(), serde_json::Value::Bool(boolean));
+        }
+    }
+    Ok(normalized)
 }
 /// Whether a tool name is an MCP `create_pull_request` (qualified
 /// `server__create_pull_request` or bare).
@@ -1054,7 +1073,7 @@ impl SessionActor {
         };
         if is_source_grep {
             match prepare_source_grep_input(&raw_input) {
-                Ok(()) => {}
+                Ok(normalized) => raw_input = normalized,
                 Err(err) => {
                     self.handle_tool_parse_error(
                         &tool_call_id,
