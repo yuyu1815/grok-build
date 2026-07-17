@@ -69,7 +69,7 @@ pub(crate) async fn test_agent_with_tools(
     .await
 }
 #[cfg(test)]
-async fn test_agent_from_config(
+pub(crate) async fn test_agent_from_config(
     config: xai_grok_tools::registry::types::ToolServerConfig,
     definition: xai_grok_agent::AgentDefinition,
     backend: std::sync::Arc<dyn xai_grok_tools::computer::types::TerminalBackend>,

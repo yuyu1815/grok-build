@@ -325,13 +325,6 @@ fn source_read_input_for_registry(
     Ok(registry_input)
 }
 
-fn registry_tool_name_for_source(source_tool_name: &str) -> &str {
-    match source_tool_name {
-        "Read" => "read",
-        _ => source_tool_name,
-    }
-}
-
 /// Source `Read` performs these pure path checks after schema/pages validation
 /// and before its permission decision or any filesystem I/O. Keep this at the
 /// Claude-facing adapter boundary: the lower OpenCode reader cannot enforce
@@ -1256,7 +1249,6 @@ impl SessionActor {
         // `file_path`; OpenCode's registered runtime tool is `read` with
         // `filePath`. Invalid source Read input intentionally remains
         // unparseable and therefore follows the existing model-facing failure.
-        let registry_tool_name = registry_tool_name_for_source(&call.function.name);
         let registry_raw_input = if call.function.name == "Read" {
             match source_read_input_for_registry(&raw_input) {
                 Ok(input) => {
@@ -1314,7 +1306,12 @@ impl SessionActor {
             .agent
             .borrow()
             .tool_bridge()
-            .try_parse(registry_tool_name, registry_raw_input.clone())
+            // Lookup stays on the public client-facing name. The finalized
+            // `Read` entry owns the lowercase `read` registry id, which the
+            // bridge resolves only when it executes the prepared call.
+            // Looking up `read` here skips that entry and fails before the
+            // normal permission/dispatch path can run.
+            .try_parse(&call.function.name, registry_raw_input.clone())
             .await
         {
             Ok(input) => input,
@@ -1361,9 +1358,7 @@ impl SessionActor {
         } else {
             None
         };
-        let dispatch_target_name = tool_input
-            .dispatch_target_name()
-            .or_else(|| (call.function.name == "Read").then(|| registry_tool_name.to_string()));
+        let dispatch_target_name = tool_input.dispatch_target_name().map(str::to_owned);
         // Hooks observe the tool the Claude caller invoked. `read` is solely
         // an internal dispatch target for this adapter and must not leak into
         // hook matching, hook telemetry, or permission-denied notifications.
@@ -3096,8 +3091,8 @@ fn execute_tool_call_parts(
 #[cfg(test)]
 mod permission_access_classification_tests {
     use super::{
-        SourceReadInputError, access_kind_for_permission_request, registry_tool_name_for_source,
-        source_read_input_for_registry, validate_source_read_pages, validate_source_read_preflight,
+        SourceReadInputError, access_kind_for_permission_request, source_read_input_for_registry,
+        validate_source_read_pages, validate_source_read_preflight,
     };
     use std::path::Path;
     use xai_grok_tools::types::ToolInput;
@@ -3109,7 +3104,6 @@ mod permission_access_classification_tests {
         let raw = serde_json::json!({ "file_path": "src/secret.txt" });
         let mapped = source_read_input_for_registry(&raw).expect("valid source Read input");
 
-        assert_eq!(registry_tool_name_for_source("Read"), "read");
         assert_eq!(mapped["filePath"], "src/secret.txt");
         assert!(mapped.get("file_path").is_none());
     }
@@ -3161,10 +3155,6 @@ mod permission_access_classification_tests {
     }
 
     #[test]
-    fn existing_lowercase_read_registry_id_is_unchanged() {
-        assert_eq!(registry_tool_name_for_source("read"), "read");
-    }
-
     #[test]
     fn source_read_pages_use_parse_int_prefix_and_maximum_boundary() {
         for pages in ["1x", "1x-2y", " 20 ", "21", "+1x", "+1x-+2y"] {

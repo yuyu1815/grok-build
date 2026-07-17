@@ -536,6 +536,11 @@ pub(crate) struct PreparedToolCall {
     concatenated_json_count: usize,
     /// Resolved target for meta-dispatch tools (`use_tool`, `CallMcpTool`);
     /// `None` for ordinary tools. See [`ToolInput::dispatch_target_name`].
+    ///
+    /// An ordinary source-facing `Read` deliberately stays `None`: `Read` is
+    /// the toolset client name and its finalized entry owns registry id `read`.
+    /// Replacing it with `read` here would bypass the public entry during
+    /// workspace dispatch.
     dispatch_target_name: Option<String>,
     /// Read-only per `ToolKind`; decides whether the call takes the per-file lock.
     is_read_only: bool,
@@ -1615,7 +1620,7 @@ mod tool_meta_stamp_tests {
     //! ToolCall registered by `prepare_tool_call` and the permission-request
     //! ToolCallUpdate (a dropped `stamp_tool_meta` call would regress silently).
     use super::replay_buffer_send_update_tests::make_replay_send_update_fixture;
-    use super::support::test_agent_with_tools;
+    use super::support::{test_agent_from_config, test_agent_with_tools};
     use super::tool_dispatch::dispatch_tool;
     use super::*;
     use tokio::sync::mpsc;
@@ -1747,12 +1752,28 @@ mod tool_meta_stamp_tests {
         local
             .run_until(async {
                 let mut fixture = make_replay_send_update_fixture().await;
+                let definition = xai_grok_agent::AgentDefinition::opencode();
                 fixture.actor.agent = std::cell::RefCell::new(
-                    test_agent_with_tools(vec![ToolConfig::for_tool::<
-                        xai_grok_tools::implementations::opencode::OpenCodeReadTool,
-                    >()])
+                    test_agent_from_config(
+                        definition.tool_config.clone(),
+                        definition,
+                        std::sync::Arc::new(
+                            xai_grok_tools::computer::local::LocalTerminalBackend::new(),
+                        ),
+                    )
                     .await,
                 );
+                let bridge = fixture.actor.agent.borrow().tool_bridge().clone();
+                let read_definition = bridge
+                    .tool_definitions()
+                    .await
+                    .into_iter()
+                    .find(|definition| definition.function.name == "Read")
+                    .expect("the normal OpenCode toolset must publish source-facing Read");
+                let schema = &read_definition.function.parameters;
+                assert_eq!(schema["required"], serde_json::json!(["file_path"]));
+                assert_eq!(schema["properties"]["limit"]["minimum"], 1);
+                assert!(schema["properties"].get("filePath").is_none());
 
                 let (perm_tx, mut perm_rx) = mpsc::unbounded_channel();
                 fixture.actor.permissions = PermissionHandle::Actor {
@@ -1803,7 +1824,7 @@ mod tool_meta_stamp_tests {
                     .expect("prepare source Read must not error")
                     .expect("source Read must pass permission");
 
-                assert_eq!(prepared.dispatch_target_name.as_deref(), Some("read"));
+                assert_eq!(prepared.dispatch_target_name, None);
                 assert_eq!(prepared.hook_tool_name(), "Read");
                 let expected_path = file.path().to_string_lossy().into_owned();
                 assert_eq!(

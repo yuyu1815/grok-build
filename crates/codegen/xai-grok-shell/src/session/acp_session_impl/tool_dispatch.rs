@@ -35,8 +35,9 @@ pub(super) async fn dispatch_tool(
 
 /// The exact tool name and transformed arguments passed to
 /// [`WorkspaceOps::call_tool`]. Kept as a single seam so source-facing
-/// adapters cannot resolve a registry name or convert fields and then lose
-/// either value before the real workspace dispatch.
+/// adapters cannot convert fields and then lose them before the real workspace
+/// dispatch. Ordinary adapters retain their source-facing client name here;
+/// the toolset entry resolves that name to its lower registry id.
 fn dispatch_target_and_args(prepared: &PreparedToolCall) -> (&str, &serde_json::Value) {
     (
         prepared
@@ -54,7 +55,7 @@ mod dispatch_seam_tests {
     use std::sync::Arc;
 
     #[test]
-    fn source_read_transformed_payload_reaches_workspace_dispatch_seam() {
+    fn source_read_transformed_payload_retains_public_dispatch_name() {
         let prepared = PreparedToolCall {
             call_id: "call-1".to_string(),
             tool_call_id: acp::ToolCallId::new(Arc::from("call-1")),
@@ -67,12 +68,12 @@ mod dispatch_seam_tests {
             }),
             model_id: "test".to_string(),
             concatenated_json_count: 0,
-            dispatch_target_name: Some("read".to_string()),
+            dispatch_target_name: None,
             is_read_only: true,
         };
 
         let (name, args) = dispatch_target_and_args(&prepared);
-        assert_eq!(name, "read");
+        assert_eq!(name, "Read");
         assert_eq!(args["filePath"], "src/file.txt");
         assert_eq!(args["offset"], 2);
         assert_eq!(args["limit"], 3);
