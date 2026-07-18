@@ -3,11 +3,11 @@
 Status: `approved-3` implementation record
 
 This record preserves the approved public contract from
-`/Users/yusei.iwase.01/Desktop/claude_rust/docs/contracts/grok-build/subagent-reasoning-effort.md`:
+`docs/contracts/grok-build/subagent-reasoning-effort.md`:
 
 ```text
 preflight (pure validation)
-        ↓ no worktree / child / persistence / event side effect
+        ↓ no resource / DB / worktree / child side effect (failure notice may emit)
 materialize (worktree, rehydrate, context, persistence)
         ↓
 run/promote (child execution; active tracker owns lifecycle)
@@ -28,7 +28,17 @@ run/promote (child execution; active tracker owns lifecycle)
   until active promotion. The seam never performs async work in `Drop`.
 - Resume rehydrate failures remove only a partial destination; a source-owned
   existing worktree remains intact. Foreground/background failure and finish
-  notification semantics remain unchanged.
+  notification semantics remain unchanged; preflight failure notifications use
+  the effective `request.run_in_background || definition.background` mode.
+
+## Known P2 constraint
+
+If the entire spawn future is externally aborted or panics between worktree
+materialization and the next explicit cleanup checkpoint, Rust cannot await the
+worktree removal from `Drop`. The guard therefore does not hide asynchronous
+cleanup in `Drop`; normal cancellation and every handled pre-promote error use
+the explicit cleanup future. An externally aborted/panicking future may leave a
+fresh worktree for the existing startup/orphan cleanup sweep to reconcile.
 
 ## Implementation evidence
 

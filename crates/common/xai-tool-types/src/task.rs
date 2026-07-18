@@ -267,17 +267,24 @@ impl std::str::FromStr for SubagentReasoningEffort {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.to_ascii_lowercase().as_str() {
-            "none" => Ok(Self::None),
-            "minimal" => Ok(Self::Minimal),
-            "low" => Ok(Self::Low),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "xhigh" => Ok(Self::Xhigh),
-            "max" => Ok(Self::Max),
-            _ => Err(format!(
+        if value.eq_ignore_ascii_case("none") {
+            Ok(Self::None)
+        } else if value.eq_ignore_ascii_case("minimal") {
+            Ok(Self::Minimal)
+        } else if value.eq_ignore_ascii_case("low") {
+            Ok(Self::Low)
+        } else if value.eq_ignore_ascii_case("medium") {
+            Ok(Self::Medium)
+        } else if value.eq_ignore_ascii_case("high") {
+            Ok(Self::High)
+        } else if value.eq_ignore_ascii_case("xhigh") {
+            Ok(Self::Xhigh)
+        } else if value.eq_ignore_ascii_case("max") {
+            Ok(Self::Max)
+        } else {
+            Err(format!(
                 "invalid subagent reasoning effort: {value:?} (expected one of: none, minimal, low, medium, high, xhigh, max)"
-            )),
+            ))
         }
     }
 }

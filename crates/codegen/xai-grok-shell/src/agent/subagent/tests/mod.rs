@@ -130,6 +130,16 @@ fn resume_worktree_action_covers_three_outcomes() {
     assert_eq!(resume_worktree_action(false, None), ResumeWorktreeAction::Shared);
 }
 #[test]
+fn failed_rehydrate_never_removes_source_owned_destination() {
+    assert!(!super::rehydrate_destination_cleanup_owned(true));
+    assert!(super::rehydrate_destination_cleanup_owned(false));
+    assert_eq!(
+        super::resume_worktree_action(true, Some("refs/grok/subagents/existing")),
+        ResumeWorktreeAction::Rehydrate,
+        "an existing destination may still require rehydrate, but remains source-owned"
+    );
+}
+#[test]
 fn subagent_inherits_parent_lsp_via_context() {
     let parent: std::sync::Arc<dyn xai_grok_tools::implementations::lsp::LspBackend> = Arc::new(
         DummyLspDispatch,

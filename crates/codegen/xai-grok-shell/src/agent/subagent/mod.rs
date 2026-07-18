@@ -1873,6 +1873,13 @@ fn resume_worktree_action(dir_exists: bool, snapshot_ref: Option<&str>) -> Resum
         ResumeWorktreeAction::Shared
     }
 }
+
+/// Whether a failed resume rehydrate owns its destination and may remove it.
+/// Existing directories are source-owned and must survive a failed attempt;
+/// only a destination created by this invocation is disposable.
+fn rehydrate_destination_cleanup_owned(dir_existed_before: bool) -> bool {
+    !dir_existed_before
+}
 /// The parent session's working directory — the source path for a subagent
 /// worktree. Prefers the reconstructed `SessionInfo` cwd, falling back to
 /// `parent_cwd`.
@@ -2102,6 +2109,7 @@ fn send_pre_spawn_failure(
     coordinator: &std::cell::RefCell<SubagentCoordinator>,
     ctx: &SubagentSpawnContext,
     gateway: &GatewaySender,
+    effective_run_in_background: bool,
 ) {
     let SubagentRequest {
         id,
@@ -2109,11 +2117,11 @@ fn send_pre_spawn_failure(
         description,
         parent_prompt_id,
         result_tx,
-        run_in_background,
+        run_in_background: _request_run_in_background,
         surface_completion,
         ..
     } = request;
-    if run_in_background {
+    if effective_run_in_background {
         let notification_subagent_id = id.clone();
         coordinator.borrow_mut().record_pre_spawn_failure(
             id,

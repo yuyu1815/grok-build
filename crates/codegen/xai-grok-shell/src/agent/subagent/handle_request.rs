@@ -163,7 +163,15 @@ pub(crate) async fn handle_subagent_request(
     let Some(mut definition) = resolve_agent_definition(&request.subagent_type, &ctx)
     else {
         let msg = format!("Unknown subagent type: {}", request.subagent_type);
-        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+        let run_in_background = request.run_in_background;
+        send_pre_spawn_failure(
+            request,
+            &msg,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     };
     match gate_subagent_type(&request.subagent_type, &ctx) {
@@ -172,7 +180,15 @@ pub(crate) async fn handle_subagent_request(
                 "Subagent '{}' is disabled via [subagents.toggle] in config.toml",
                 request.subagent_type
             );
-            send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+            let run_in_background = request.run_in_background;
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         SubagentValidateTypeOutcome::NotAllowed { allowed } => {
@@ -180,7 +196,15 @@ pub(crate) async fn handle_subagent_request(
                 "agent can only spawn: {}; '{}' not allowed", allowed.join(", "), request
                 .subagent_type
             );
-            send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+            let run_in_background = request.run_in_background;
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         _ => {}
@@ -240,7 +264,14 @@ pub(crate) async fn handle_subagent_request(
             subagent_id = % request.id, error = err,
             "Persona resolution failed, aborting subagent spawn"
         );
-        send_pre_spawn_failure(request, err, coordinator, &ctx, gateway);
+        send_pre_spawn_failure(
+            request,
+            err,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     }
     if let Some(ref warn) = effective_runtime.role_prompt_warning {
@@ -256,16 +287,14 @@ pub(crate) async fn handle_subagent_request(
         request.cwd = sanitize_cwd_value(raw_cwd);
     }
     if request.cwd.is_some()
-        && request.runtime_overrides.isolation
-            == Some(xai_tool_types::SubagentIsolationMode::Worktree)
+        && effective_runtime.isolation == xai_tool_types::SubagentIsolationMode::Worktree
         && request.cwd.as_deref().is_some_and(|p| Path::new(p).is_dir())
     {
         let msg = "cwd and isolation=\"worktree\" are mutually exclusive. Use cwd to point the subagent at an existing directory, or isolation=\"worktree\" to create a new isolated worktree, but not both.";
-        send_pre_spawn_failure(request, msg, coordinator, &ctx, gateway);
+        send_pre_spawn_failure(request, msg, coordinator, &ctx, gateway, run_in_background);
         return;
     }
-    if request.runtime_overrides.isolation
-        == Some(xai_tool_types::SubagentIsolationMode::Worktree)
+    if effective_runtime.isolation == xai_tool_types::SubagentIsolationMode::Worktree
     {
         // A non-existent cwd is a model-emitted placeholder in this mode;
         // clear it so the isolated worktree remains authoritative.
@@ -330,7 +359,14 @@ pub(crate) async fn handle_subagent_request(
         &ctx.available_models,
         ctx.auth_manager.current_or_expired().is_some_and(|a| a.is_session_auth()),
     ) {
-        send_pre_spawn_failure(request, &error, coordinator, &ctx, gateway);
+        send_pre_spawn_failure(
+            request,
+            &error,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     }
     if let Some(cwd_path) = request.cwd.as_deref()
@@ -342,7 +378,7 @@ pub(crate) async fn handle_subagent_request(
         } else {
             format!("cwd \"{cwd_path}\" does not exist")
         };
-        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway, run_in_background);
         return;
     }
     // Resolve the model from the immutable spawn-context catalogue before any
@@ -384,7 +420,7 @@ pub(crate) async fn handle_subagent_request(
             "Cannot resume from subagent '{source_id}': source model '{source_model}' \
              is no longer available in the model catalogue.",
         );
-        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway, run_in_background);
         return;
     }
     if let Some(raw) = effective_runtime.reasoning_effort.as_deref()
@@ -406,7 +442,14 @@ pub(crate) async fn handle_subagent_request(
                     raw,
                     preflight_model_id,
                 );
-                send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+                send_pre_spawn_failure(
+                    request,
+                    &msg,
+                    coordinator,
+                    &ctx,
+                    gateway,
+                    run_in_background,
+                );
                 return;
             }
         }
@@ -445,8 +488,9 @@ pub(crate) async fn handle_subagent_request(
         match source.worktree_path.as_deref() {
             None => None,
             Some(dest) => {
+                let dir_existed_before = dest.is_dir();
                 match resume_worktree_action(
-                    dest.is_dir(),
+                    dir_existed_before,
                     source.snapshot_ref.as_deref(),
                 ) {
                     ResumeWorktreeAction::Reuse => Some(dest.to_path_buf()),
@@ -481,7 +525,8 @@ pub(crate) async fn handle_subagent_request(
                                 // restoring session state fails.  Do not leak
                                 // that partial materialization into a later
                                 // resume attempt.
-                                if dest.is_dir()
+                                if rehydrate_destination_cleanup_owned(dir_existed_before)
+                                    && dest.is_dir()
                                     && let Err(cleanup_error) =
                                         crate::session::worktree::remove_subagent_worktree(dest)
                                         .await
