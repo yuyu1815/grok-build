@@ -2100,8 +2100,8 @@ fn send_failure(request: SubagentRequest, error: &str) {
         ..Default::default()
     });
 }
-/// Fail BEFORE `insert_pending`. Sends via oneshot; for background-mode
-/// requests also records a synthetic `CompletedSubagent` + emits a
+/// Fail BEFORE `insert_pending`. Sends via oneshot; for the effective
+/// background mode also records a synthetic `CompletedSubagent` + emits a
 /// `SubagentFinished` notification (persisted + live).
 fn send_pre_spawn_failure(
     request: SubagentRequest,
