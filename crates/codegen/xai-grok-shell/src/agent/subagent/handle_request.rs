@@ -392,8 +392,6 @@ pub(crate) async fn handle_subagent_request(
             == ReasoningEffortOverrideProvenance::Tool
     {
         if let Ok(effort) = raw.parse::<xai_grok_sampling_types::ReasoningEffort>() {
-            // A resume pins the source model.  Validate against that model
-            // here, before reusing or rehydrating its worktree.
             let preflight_model_id = resume_source
                 .as_ref()
                 .and_then(|source| source.model_id.as_deref())
