@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1050" role="img" aria-labelledby="title desc">
   <title id="title">Verification と compatibility の全体像</title>
-  <desc id="desc">実行済みテスト、未実行の shell acceptance と baseline 29件、fmt と clippy の制約、wire 互換、Rust migration、PR 12 と Issue 11 を示す。</desc>
+  <desc id="desc">approved-3 の三段階 lifecycle、cleanup ownership、実行済み focused test、未実行 shell acceptance と baseline 29件、wire 互換を示す。</desc>
   <defs>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.12"/>
@@ -24,11 +24,11 @@
   <rect width="1600" height="1050" fill="#f8fafc"/>
   <rect width="1600" height="14" fill="#0369a1"/>
   <text class="title" x="55" y="72">Verification / Compatibility — 何が確認済みか</text>
-  <text class="subtitle" x="55" y="108">PASS と制約を分離し、未実行の shell acceptance を成功扱いしない</text>
+  <text class="subtitle" x="55" y="108">PASS と制約を分離し、三段階 lifecycle と cleanup seam の根拠を固定</text>
 
   <g transform="translate(1140 48)">
     <rect width="180" height="42" rx="21" fill="#dcfce7" stroke="#22c55e"/>
-    <text class="badge" x="27" y="27" fill="#15803d">approved-2 PASS</text>
+    <text class="badge" x="27" y="27" fill="#15803d">approved-3 PASS</text>
     <rect x="195" width="205" height="42" rx="21" fill="#e0f2fe" stroke="#38bdf8"/>
     <text class="badge" x="222" y="27" fill="#0369a1">independent verify</text>
   </g>
@@ -46,9 +46,9 @@
     <text class="small" x="75" y="133">constructor defaults / serde / schema を含む</text>
 
     <circle cx="42" cy="175" r="18" fill="#16a34a"/><text x="34" y="182" font-size="22" font-weight="900" fill="#ffffff">✓</text>
-    <text class="metric" x="75" y="181">273 passed</text>
+    <text class="metric" x="75" y="181">271 passed</text>
     <text class="body" x="235" y="181">xai-grok-tools task</text>
-    <text class="small" x="75" y="206">schema / transport / foreground / background / worktree / resume</text>
+    <text class="small" x="75" y="206">schema / transport / canonical max / background / worktree / resume</text>
 
     <circle cx="42" cy="248" r="18" fill="#16a34a"/><text x="34" y="255" font-size="22" font-weight="900" fill="#ffffff">✓</text>
     <text class="metric" x="75" y="254">98 passed</text>
@@ -60,6 +60,7 @@
     <text class="body" x="42" y="374">✓ cargo check -p xai-grok-shell --lib</text>
     <text class="body" x="42" y="406">✓ targeted package cargo fmt --check</text>
     <text class="body" x="42" y="438">✓ TaskToolInput exhaustive literal = 0 / git diff --check</text>
+    <text class="body" x="42" y="470">✓ catalog key/slug preflight + explicit cleanup ownership (production compile)</text>
   </g>
 
   <!-- constraints -->
@@ -73,7 +74,7 @@
     <text class="metric" x="48" y="122" fill="#c2410c">shell acceptance: 未実行</text>
     <text class="body" x="48" y="153">cargo check -p xai-grok-shell --tests</text>
     <text class="body" x="48" y="180">同じ既知 baseline 29 errors で compile 停止</text>
-    <text class="small" x="48" y="202">新規 handler/model tests は存在 / changed-path diagnostic なし</text>
+    <text class="small" x="48" y="202">新規 preflight tests は存在 / changed-path diagnostic なし</text>
 
     <rect x="28" y="234" width="664" height="92" rx="14" fill="#f8fafc" stroke="#94a3b8"/>
     <text class="section" x="48" y="268" font-size="19">clippy</text>
@@ -114,5 +115,5 @@
   <text class="metric" x="900" y="974">Issue #11</text>
   <text class="body" x="1125" y="974">Refs（自動 close なし）</text>
 
-  <text class="anchor" x="55" y="1028">Evidence: PR #12 approved-2 verification · CHANGELOG.md · task tests:1171,1187,2321 · model tests:2295,2319</text>
+  <text class="anchor" x="55" y="1028">Symbols: preflight · materialize · SpawnWorktreeGuard::cleanup/promote · coordinator.insert · TaskTool::run</text>
 </svg>

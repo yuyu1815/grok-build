@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1060" role="img" aria-labelledby="title desc">
   <title id="title">Public spawn schema と Rust API の before / after</title>
   <desc id="desc">reasoning_effort の optional enum、max の正規化、unknown 拒否、TaskToolInput の non_exhaustive 化、constructor、0.2.0 migration を示す。</desc>
   <defs>
@@ -24,10 +24,10 @@
     </style>
   </defs>
 
-  <rect width="1600" height="1000" fill="#fafafa"/>
+  <rect width="1600" height="1060" fill="#fafafa"/>
   <rect width="1600" height="14" fill="#7c3aed"/>
   <text class="title" x="55" y="72">Public spawn schema / Rust API — Before → After</text>
-  <text class="subtitle" x="55" y="108">Tool の wire 互換を保ちながら、per-spawn effort と将来拡張可能な Rust API を追加</text>
+  <text class="subtitle" x="55" y="108">wire 互換の public API と、三段階 spawn の境界を同じ図で固定</text>
 
   <g transform="translate(55 160)">
     <rect class="card" width="650" height="370" fill="#f8fafc"/>
@@ -86,7 +86,7 @@
     <text class="section" x="78" y="42">省略</text>
     <text class="body" x="28" y="82">role / persona / custom agent /</text>
     <text class="body" x="28" y="110">parent / model の既存 default へ</text>
-    <text class="small" x="28" y="136">wire behavior: backward compatible</text>
+    <text class="small" x="28" y="136">wire behavior: backward compatible / preflight only</text>
   </g>
 
   <g transform="translate(570 550)">
@@ -97,7 +97,7 @@
     <text class="code" x="28" y="86">public: max</text>
     <path d="M 170 80 L 250 80" stroke="#7c3aed" stroke-width="3" marker-end="url(#arrow)"/>
     <text class="code" x="270" y="86">sampling: xhigh</text>
-    <text class="small" x="28" y="136">schema には max を残す</text>
+    <text class="small" x="28" y="136">schema には max を残す; canonicalize once in TaskTool</text>
   </g>
 
   <g transform="translate(1085 550)">
@@ -107,7 +107,7 @@
     <text class="section" x="78" y="42">unknown token</text>
     <text class="code" x="28" y="84">"ultra" → deserialize error</text>
     <text class="body" x="28" y="112">SubagentRequest を作らない</text>
-    <text class="small" x="28" y="136">child side effect: なし</text>
+    <text class="small" x="28" y="136">preflight rejects before worktree / child side effect</text>
   </g>
 
   <!-- migration -->
@@ -119,6 +119,9 @@
   <text class="body" x="800" y="858">必要な override だけ field assignment</text>
   <text class="small" x="83" y="882">constructor defaults: subagent_type = general-purpose / background = true / optional fields = None</text>
 
-  <text class="anchor" x="55" y="950">Source anchors: xai-tool-types/src/task.rs:15,126,242,266 · xai-tool-types/Cargo.toml:4</text>
-  <text class="anchor" x="55" y="976">Migration: crates/common/xai-tool-types/CHANGELOG.md · Tool docs: xai-grok-pager/docs/user-guide/16-subagents.md:151</text>
+  <rect x="55" y="920" width="1490" height="48" rx="16" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text class="body" x="83" y="951">Lifecycle: pure preflight → materialize (SpawnWorktreeGuard) → run/promote (single catalog snapshot)</text>
+
+  <text class="anchor" x="55" y="988">Symbols: TaskToolInput · SubagentReasoningEffort · TaskToolInput::new · TaskTool::run · SpawnWorktreeGuard</text>
+  <text class="anchor" x="55" y="1008">Migration: xai-tool-types/CHANGELOG.md · Tool docs: xai-grok-pager/docs/user-guide/16-subagents.md</text>
 </svg>
