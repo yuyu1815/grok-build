@@ -37,7 +37,7 @@ impl SlashCommand for ModelCommand {
     }
 
     fn usage(&self) -> &str {
-        "/model <name> [effort]"
+        "/model [name] [effort]"
     }
 
     fn takes_args(&self) -> bool {
@@ -45,7 +45,7 @@ impl SlashCommand for ModelCommand {
     }
 
     fn args_required(&self) -> bool {
-        true
+        false
     }
 
     fn arg_placeholder(&self) -> Option<&str> {
@@ -67,15 +67,58 @@ impl SlashCommand for ModelCommand {
     fn run(&self, ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let trimmed = args.trim();
         if trimmed.is_empty() {
-            return CommandResult::Error("Usage: /model <name> [effort]".into());
+            return CommandResult::Action(Action::OpenModelPicker);
+        }
+
+        if matches!(trimmed, "help" | "-h" | "--help") {
+            return CommandResult::Message(
+                "Run /model to open the model selection menu, or /model [modelName] to set the model."
+                    .into(),
+            );
+        }
+
+        if matches!(
+            trimmed,
+            "list"
+                | "show"
+                | "display"
+                | "current"
+                | "view"
+                | "get"
+                | "check"
+                | "describe"
+                | "print"
+                | "version"
+                | "about"
+                | "status"
+                | "?"
+        ) {
+            let model = ctx
+                .models
+                .current_model_name()
+                .unwrap_or_else(|| "unknown".into());
+            let effort_suffix = ctx
+                .models
+                .reasoning_effort
+                .map(|effort| format!(" (effort: {effort})"))
+                .unwrap_or_default();
+            return CommandResult::Message(format!("Current model: {model}{effort_suffix}"));
+        }
+
+        if trimmed == "default" {
+            return CommandResult::Action(Action::ResetModelFromCommand);
         }
 
         // Prefer an exact full-string catalog match first. Model display names
         // often contain spaces ("Grok 4.5"); if we split on the last token
         // first, a shorter catalog entry ("Grok") would steal the prefix and
         // treat "4.5" as an effort level.
-        if let Some(id) = ctx.models.resolve_by_name_or_id(trimmed) {
-            return CommandResult::Action(Action::SetDefaultModel(id));
+        if let Some(id) = resolve_model(ctx.models, trimmed) {
+            return CommandResult::Action(Action::SetModelFromCommand {
+                model_id: id,
+                effort: None,
+                clear_default: false,
+            });
         }
 
         // Trailing effort token + reasoning model → session-scoped switch
@@ -92,9 +135,10 @@ impl SlashCommand for ModelCommand {
                 .unwrap_or(false)
         {
             return match ctx.models.resolve_effort_for_model(&id, token) {
-                Ok(effort) => CommandResult::Action(Action::SwitchModel {
+                Ok(effort) => CommandResult::Action(Action::SetModelFromCommand {
                     model_id: id,
                     effort: Some(effort),
+                    clear_default: false,
                 }),
                 Err(err) => CommandResult::Error(err.message()),
             };
@@ -106,7 +150,10 @@ impl SlashCommand for ModelCommand {
 
 /// Look up a model by case-insensitive display name OR model id match.
 fn resolve_model(models: &ModelState, name: &str) -> Option<acp::ModelId> {
-    models.resolve_by_name_or_id(name)
+    models.available.iter().find_map(|(id, info)| {
+        (info.name.eq_ignore_ascii_case(name) || id.0.as_ref().eq_ignore_ascii_case(name))
+            .then(|| id.clone())
+    })
 }
 
 fn supports_reasoning_effort(info: &acp::ModelInfo) -> bool {
@@ -369,11 +416,16 @@ mod tests {
         let mut ctx = dummy_exec_ctx(&state);
         let result = ModelCommand.run(&mut ctx, "Reasoning X xhigh");
         match result {
-            CommandResult::Action(Action::SwitchModel { model_id, effort }) => {
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                clear_default,
+            }) => {
                 assert_eq!(model_id.0.as_ref(), "reasoning-x");
                 assert_eq!(effort, Some(ReasoningEffort::Xhigh));
+                assert!(!clear_default);
             }
-            other => panic!("expected SwitchModel with effort, got {other:?}"),
+            other => panic!("expected SetModelFromCommand with effort, got {other:?}"),
         }
     }
 
@@ -422,10 +474,15 @@ mod tests {
         let mut ctx = dummy_exec_ctx(&state);
         let result = ModelCommand.run(&mut ctx, "Grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(resolved_id)) => {
-                assert_eq!(resolved_id, long_id);
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                clear_default,
+                ..
+            }) => {
+                assert_eq!(model_id, long_id);
+                assert!(!clear_default);
             }
-            other => panic!("expected SetDefaultModel(Grok 4.5), got {other:?}"),
+            other => panic!("expected SetModelFromCommand(Grok 4.5), got {other:?}"),
         }
     }
 
@@ -441,44 +498,130 @@ mod tests {
         assert!(matches!(result, CommandResult::Error(_)));
     }
 
-    /// The bare `/model <name>` form dispatches
-    /// `Action::SetDefaultModel(<ModelId>)` instead of the legacy
-    /// `Action::SwitchModel { effort: None }`. The dispatcher routes
-    /// the typed setter through both `Effect::SwitchModel`
-    /// (session-level mutation) AND `Effect::PersistSetting`
-    /// (next-session default).
+    /// The bare `/model <name>` form dispatches the typed command action.
+    /// Dispatch switches the active session first and persists only after the
+    /// ACP completion succeeds.
     ///
     /// The payload is the typed `acp::ModelId` (resolved at the slash
     /// boundary), not a String.
     #[test]
-    fn run_bare_model_name_dispatches_set_default_model() {
+    fn run_bare_model_name_dispatches_model_command() {
         let mut state = ModelState::default();
         let (id, info) = plain_model("grok-4.5", "Grok 4.5");
         state.available.insert(id.clone(), info);
         let mut ctx = dummy_exec_ctx(&state);
         let result = ModelCommand.run(&mut ctx, "Grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(resolved_id)) => {
-                assert_eq!(resolved_id, id);
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                clear_default,
+            }) => {
+                assert_eq!(model_id, id);
+                assert_eq!(effort, None);
+                assert!(!clear_default);
             }
-            other => panic!("expected Action::SetDefaultModel(<id>), got {other:?}"),
+            other => panic!("expected Action::SetModelFromCommand, got {other:?}"),
         }
     }
 
     /// Case-insensitive matching against the catalog: `/model grok 4.5`
     /// resolves to the same `ModelId` as `/model Grok 4.5`.
     #[test]
-    fn run_set_default_model_resolves_case_insensitively() {
+    fn run_model_command_resolves_case_insensitively() {
         let mut state = ModelState::default();
         let (id, info) = plain_model("grok-4.5", "Grok 4.5");
         state.available.insert(id.clone(), info);
         let mut ctx = dummy_exec_ctx(&state);
         let result = ModelCommand.run(&mut ctx, "grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(resolved_id)) => {
-                assert_eq!(resolved_id, id);
+            CommandResult::Action(Action::SetModelFromCommand { model_id, .. }) => {
+                assert_eq!(model_id, id);
             }
-            other => panic!("expected Action::SetDefaultModel(<id>), got {other:?}"),
+            other => panic!("expected Action::SetModelFromCommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn no_args_opens_picker() {
+        let state = ModelState::default();
+        let mut ctx = dummy_exec_ctx(&state);
+        assert!(matches!(
+            ModelCommand.run(&mut ctx, ""),
+            CommandResult::Action(Action::OpenModelPicker)
+        ));
+    }
+
+    #[test]
+    fn help_aliases_return_contract_message() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        state.available.insert(id.clone(), info);
+        state.current = Some(id);
+        let mut ctx = dummy_exec_ctx(&state);
+        for alias in ["help", "-h", "--help"] {
+            assert!(matches!(
+                ModelCommand.run(&mut ctx, alias),
+                CommandResult::Message(ref msg)
+                    if msg == "Run /model to open the model selection menu, or /model [modelName] to set the model."
+            ));
+        }
+    }
+
+    #[test]
+    fn current_aliases_omit_missing_effort_suffix() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        state.available.insert(id.clone(), info);
+        state.current = Some(id);
+        state.reasoning_effort = None;
+        let mut ctx = dummy_exec_ctx(&state);
+        for alias in [
+            "list", "show", "display", "current", "view", "get", "check", "describe", "print",
+            "version", "about", "status", "?",
+        ] {
+            assert!(
+                matches!(
+                    ModelCommand.run(&mut ctx, alias),
+                    CommandResult::Message(ref msg) if msg == "Current model: Grok 4.5"
+                ),
+                "alias {alias} must omit an undefined effort"
+            );
+        }
+    }
+
+    #[test]
+    fn current_aliases_include_explicit_effort_suffix() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("grok-4.5", "Grok 4.5");
+        state.available.insert(id.clone(), info);
+        state.current = Some(id);
+        state.reasoning_effort = Some(ReasoningEffort::High);
+        let mut ctx = dummy_exec_ctx(&state);
+        for alias in [
+            "list", "show", "display", "current", "view", "get", "check", "describe", "print",
+            "version", "about", "status", "?",
+        ] {
+            assert!(
+                matches!(
+                    ModelCommand.run(&mut ctx, alias),
+                    CommandResult::Message(ref msg)
+                        if msg == "Current model: Grok 4.5 (effort: high)"
+                ),
+                "alias {alias} must include an explicit effort"
+            );
+        }
+    }
+
+    #[test]
+    fn default_defers_to_canonical_resolver() {
+        let mut state = ModelState::default();
+        let (id, info) = plain_model("default-model", "Default Model");
+        state.available.insert(id, info);
+        let mut ctx = dummy_exec_ctx(&state);
+        assert!(matches!(
+            ModelCommand.run(&mut ctx, "default"),
+            CommandResult::Action(Action::ResetModelFromCommand)
+        ));
     }
 }

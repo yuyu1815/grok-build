@@ -203,28 +203,64 @@ impl AgentView {
                 // stay open (row's insert_text ends with space => chains).
                 KeyCode::Enter if key.modifiers.is_empty() => {
                     let snap = self.prompt.slash_snapshot();
-                    // Trailing space = "more input expected" (command takes
-                    // args, or arg row chains into a sub-menu).
-                    let chains = snap
-                        .selection()
-                        .is_some_and(|row| row.insert_text.ends_with(' '));
+                    // `/model` executes on Enter with an empty argument list.
+                    // This must win over the generic completion chaining rule,
+                    // otherwise the dedicated picker is unreachable. Do not
+                    // generalise this to every optional-argument command:
+                    // `/theme`, `/docs`, `/export`, `/compact`, `/fork`, etc.
+                    // retain their legacy Enter-to-complete behaviour. Tab
+                    // remains the text-only completion key.
+                    let text = self.prompt.text();
+                    let empty_model_command = crate::slash::parse_invocation(text)
+                        .filter(|invocation| invocation.args.trim().is_empty())
+                        .and_then(|invocation| {
+                            let command_name = if snap.cursor_in_command {
+                                snap.selection().map(|row| row.command_name())
+                            } else {
+                                Some(invocation.token)
+                            }?;
+                            self.prompt
+                                .slash_controller
+                                .registry()
+                                .get_for_dispatch(command_name)
+                        })
+                        .is_some_and(|command| command.name() == "model");
 
-                    // Commit any live preview before accepting.
-                    self.prompt.slash_commit_preview();
+                    if empty_model_command {
+                        // Command-phase accepts `/mo` -> `/model ` before send;
+                        // args-phase `/model ` deliberately does not accept the
+                        // highlighted model row.
+                        if snap.cursor_in_command {
+                            self.prompt.slash_commit_preview();
+                            self.prompt.accept_slash_completion(&self.session.models);
+                        }
+                        self.prompt.slash_close();
+                        slash_accepted_send = true;
+                        // Fall through to the normal SendPrompt action below.
+                    } else {
+                        // Trailing space = "more input expected" (command takes
+                        // args, or arg row chains into a sub-menu).
+                        let chains = snap
+                            .selection()
+                            .is_some_and(|row| row.insert_text.ends_with(' '));
 
-                    // Accept the selected completion (mutates text).
-                    self.prompt.accept_slash_completion(&self.session.models);
+                        // Commit any live preview before accepting.
+                        self.prompt.slash_commit_preview();
 
-                    if chains {
-                        // Stay open so refresh_slash renders the next phase.
-                        return InputOutcome::Changed;
+                        // Accept the selected completion (mutates text).
+                        self.prompt.accept_slash_completion(&self.session.models);
+
+                        if chains {
+                            // Stay open so refresh_slash renders the next phase.
+                            return InputOutcome::Changed;
+                        }
+
+                        // Terminal row: close dropdown and send the prompt.
+                        self.prompt.slash_close();
+                        slash_accepted_send = true;
+                        // Fall through — the action registry will pick up SendPrompt
+                        // below, which calls try_send() on the updated text.
                     }
-
-                    // Terminal row: close dropdown and send the prompt.
-                    self.prompt.slash_close();
-                    slash_accepted_send = true;
-                    // Fall through — the action registry will pick up SendPrompt
-                    // below, which calls try_send() on the updated text.
                 }
                 // Everything else: fall through to normal text editing
                 // (which calls refresh_slash via PromptEvent::Edited).
@@ -1644,5 +1680,94 @@ mod prompt_suggestion_key_tests {
             "the key event latches the impression before dismissing"
         );
         assert!(!agent.prompt.prompt_suggestion.has_suggestion());
+    }
+}
+
+#[cfg(test)]
+mod model_picker_slash_entry_tests {
+    use super::*;
+    use crate::app::app_view::InputOutcome;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::Arc;
+
+    fn agent_with_model() -> AgentView {
+        let mut agent = super::test_fixtures::make_agent();
+        let id = agent_client_protocol::ModelId::new(Arc::from("grok-4.5"));
+        let mut meta = serde_json::Map::new();
+        meta.insert("supportsReasoningEffort".into(), serde_json::json!(true));
+        meta.insert(
+            "reasoningEfforts".into(),
+            serde_json::json!(["low", "medium", "high"]),
+        );
+        agent.session.models.available.insert(
+            id.clone(),
+            agent_client_protocol::ModelInfo::new(id.clone(), "Grok 4.5").meta(Some(meta)),
+        );
+        agent.session.models.current = Some(id);
+        agent
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn tab() -> KeyEvent {
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)
+    }
+
+    fn set_slash(agent: &mut AgentView, text: &str) {
+        agent.prompt.set_text(text);
+        agent.prompt.refresh_slash(&agent.session.models);
+        assert!(
+            agent.prompt.slash_open(),
+            "precondition: slash dropdown open"
+        );
+    }
+
+    #[test]
+    fn model_command_enter_submits_empty_args_instead_of_chaining_autocomplete() {
+        for input in ["/model", "/mo", "/model ", "/m"] {
+            let mut agent = agent_with_model();
+            set_slash(&mut agent, input);
+
+            let outcome = agent.handle_prompt_key_for_test(&enter());
+
+            assert!(
+                matches!(&outcome, InputOutcome::Action(Action::SendPrompt(text)) if matches!(text.trim(), "/model" | "/m")),
+                "{input} must submit the model command, got {outcome:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_model_optional_commands_keep_completion_open_on_enter() {
+        for command in ["theme", "docs", "export", "compact", "fork"] {
+            let input = format!("/{command}");
+            let mut agent = agent_with_model();
+            set_slash(&mut agent, &input);
+
+            let outcome = agent.handle_prompt_key_for_test(&enter());
+
+            assert!(
+                matches!(&outcome, InputOutcome::Changed),
+                "/{command} must keep the legacy completion flow, got {outcome:?}"
+            );
+            assert!(
+                agent.prompt.slash_open(),
+                "/{command} dropdown must stay open"
+            );
+            assert_eq!(agent.prompt.text(), format!("/{command} "));
+        }
+    }
+
+    #[test]
+    fn tab_keeps_model_completion_as_text_only() {
+        let mut agent = agent_with_model();
+        set_slash(&mut agent, "/model ");
+
+        let outcome = agent.handle_prompt_key_for_test(&tab());
+
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert_eq!(agent.prompt.text().trim_end(), "/model Grok 4.5");
     }
 }

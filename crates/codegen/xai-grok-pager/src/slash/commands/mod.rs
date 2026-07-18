@@ -77,7 +77,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
         Arc::new(new::NewCommand),
-        
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
@@ -115,7 +114,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(mcps::McpsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
-        
         Arc::new(terminal_setup::TerminalSetupCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
@@ -369,20 +367,26 @@ mod tests {
         }
     }
     #[test]
-    fn model_empty_arg_returns_error() {
+    fn model_empty_arg_opens_picker() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "");
-        assert!(matches!(result, CommandResult::Error(_)));
+        assert!(matches!(
+            result,
+            CommandResult::Action(Action::OpenModelPicker)
+        ));
     }
     #[test]
-    fn model_whitespace_only_arg_returns_error() {
+    fn model_whitespace_only_arg_opens_picker() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "   ");
-        assert!(matches!(result, CommandResult::Error(_)));
+        assert!(matches!(
+            result,
+            CommandResult::Action(Action::OpenModelPicker)
+        ));
     }
     #[test]
     fn model_suggest_args_returns_available_models() {

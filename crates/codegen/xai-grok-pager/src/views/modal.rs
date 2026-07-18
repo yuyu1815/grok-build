@@ -203,6 +203,11 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// `/model` model + reasoning-effort picker.
+    ModelPicker {
+        state: crate::views::model_picker::ModelPickerState,
+        window: ModalWindowState,
+    },
     /// Session picker (opened from /resume command or command palette).
     SessionPicker {
         /// Unified picker state.
@@ -606,6 +611,7 @@ impl ActiveModal {
                 .collect(),
             ActiveModal::CommandPalette { .. }
             | ActiveModal::ArgPicker { .. }
+            | ActiveModal::ModelPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
             | ActiveModal::DocViewer { .. }
@@ -636,6 +642,7 @@ impl ActiveModal {
                 "theme" | "t" => "Pick theme",
                 _ => "Pick option",
             },
+            ActiveModal::ModelPicker { .. } => "Select model",
             ActiveModal::DocPicker { .. } => "How-to Guides",
             ActiveModal::DocViewer { title, .. } => title.as_str(),
             ActiveModal::ShortcutsHelp { .. } => "Keyboard Shortcuts",

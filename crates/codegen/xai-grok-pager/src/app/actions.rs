@@ -28,6 +28,13 @@ pub enum SwitchModelError {
     /// Any other failure (network, auth, server error, etc.).
     Other(String),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelSwitchIntent {
+    Existing,
+    ModelCommandSet,
+    ModelCommandClear,
+}
 /// Synchronous, side-effect-free user intent.
 ///
 /// Produced by [`super::input`] from key/mouse events.
@@ -380,6 +387,18 @@ pub enum Action {
     },
     /// Cycle to next model.
     NextModel,
+    /// Open the `/model` model + effort picker.
+    OpenModelPicker,
+    /// Resolve and activate the canonical default after clearing the saved
+    /// user override.
+    ResetModelFromCommand,
+    /// Commit a validated `/model` selection. Persistence follows a successful
+    /// ACP switch; `clear_default` implements `/model default`.
+    SetModelFromCommand {
+        model_id: acp::ModelId,
+        effort: Option<ReasoningEffort>,
+        clear_default: bool,
+    },
     /// Switch active model.
     SwitchModel {
         model_id: acp::ModelId,
@@ -1499,6 +1518,7 @@ pub enum Effect {
         /// (no optimistic update). Threaded through to
         /// `SwitchModelComplete` so `IncompatibleAgent` can roll back.
         prev_model_id: Option<acp::ModelId>,
+        intent: ModelSwitchIntent,
     },
     /// Fetch changelog from CDN (both markdown + structured JSON).
     /// Runs off the render path via `spawn_blocking`. Result is cached
@@ -1530,6 +1550,14 @@ pub enum Effect {
         model_id: acp::ModelId,
         reasoning_effort: Option<ReasoningEffort>,
     },
+    /// Persist a successful `/model` switch. Failure is warn-only and never
+    /// rolls the already-switched active session back.
+    PersistModelCommandPreference {
+        model_id: acp::ModelId,
+        reasoning_effort: Option<ReasoningEffort>,
+    },
+    /// Clear the persisted model override after `/model default` succeeds.
+    ClearModelCommandPreference,
     /// Persist the permission mode to config.toml and notify the agent
     /// via ACP. See [`PermissionModePersist`] for rollback semantics.
     PersistPermissionMode {
@@ -2229,6 +2257,9 @@ pub enum TaskResult {
     PreferredModelPersisted {
         result: Result<(), String>,
     },
+    ModelCommandPreferencePersisted {
+        result: Result<(), String>,
+    },
     /// Manual `/compact` command completed.
     CompactComplete {
         agent_id: AgentId,
@@ -2257,6 +2288,15 @@ pub enum TaskResult {
         /// Forwarded from `Effect::SwitchModel.prev_model_id` for
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
+    },
+    /// `/model` switch completion. Kept separate from the legacy completion so
+    /// existing session-only switch callers retain their presentation contract.
+    ModelCommandSwitchComplete {
+        agent_id: AgentId,
+        model_id: acp::ModelId,
+        effort: Option<ReasoningEffort>,
+        result: Result<(), SwitchModelError>,
+        clear_default: bool,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

@@ -982,6 +982,7 @@ pub(in crate::app::dispatch) fn handle_session_loaded(
                 model_id,
                 effort,
                 prev_model_id: None,
+                intent: crate::app::actions::ModelSwitchIntent::Existing,
             });
         }
         if std::mem::take(&mut agent.pending_extensions_fetch) && agent.extensions_modal.is_some() {

@@ -58,6 +58,8 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
         return false;
     };
 
+    app.remote_default_model.clone_from(&update.default_model);
+
     if let Some(v) = update.auto_permission_mode_enabled {
         // Keep the pager's auto-permission-mode gate live with the remote settings
         // remote tier (the leader caches it agent-side; the pager process needs
@@ -478,6 +480,8 @@ pub(super) fn pick_random_announcement(
 /// need.
 #[derive(serde::Deserialize)]
 pub(super) struct PagerSettingsUpdate {
+    #[serde(default)]
+    default_model: Option<String>,
     #[serde(default)]
     show_resolved_model: Option<bool>,
     #[serde(default)]

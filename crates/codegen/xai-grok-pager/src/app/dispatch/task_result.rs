@@ -429,6 +429,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             }
             vec![]
         }
+        TaskResult::ModelCommandPreferencePersisted { result } => {
+            let _ = result;
+            vec![]
+        }
         TaskResult::CancelComplete => {
             tracing::trace!("Cancel notification sent successfully");
             vec![]
@@ -458,7 +462,34 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             effort,
             result,
             prev_model_id,
-        } => handle_switch_model_complete(app, agent_id, model_id, effort, result, prev_model_id),
+        } => handle_switch_model_complete(
+            app,
+            agent_id,
+            model_id,
+            effort,
+            result,
+            prev_model_id,
+            crate::app::actions::ModelSwitchIntent::Existing,
+        ),
+        TaskResult::ModelCommandSwitchComplete {
+            agent_id,
+            model_id,
+            effort,
+            result,
+            clear_default,
+        } => handle_switch_model_complete(
+            app,
+            agent_id,
+            model_id,
+            effort,
+            result,
+            None,
+            if clear_default {
+                crate::app::actions::ModelSwitchIntent::ModelCommandClear
+            } else {
+                crate::app::actions::ModelSwitchIntent::ModelCommandSet
+            },
+        ),
         TaskResult::BgTaskKilled {
             session_id,
             task_id,

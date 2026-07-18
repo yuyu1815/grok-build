@@ -594,6 +594,9 @@ pub(crate) async fn run(
         .model
         .as_deref()
         .map(agent_client_protocol::ModelId::new);
+    app.remote_default_model = remote_settings
+        .as_ref()
+        .and_then(|settings| settings.default_model.clone());
     app.cli_effort_token = args.reasoning_effort.clone();
     app.auth_use_oauth = args.oauth;
     app.show_resolved_model = remote_settings
@@ -752,6 +755,27 @@ pub(crate) async fn run(
     let requirements = xai_grok_shell::config::load_merged_requirements();
     let user_config = xai_grok_shell::config::load_from_disk().ok();
     let managed_config = xai_grok_shell::config::load_managed_config().ok();
+
+    // Claude's picker distinguishes an explicit app-state effort from a
+    // catalog-derived model default. ACP exposes only the effective value, so
+    // retain provenance from the actual user layer (not the effective merged
+    // config) plus the session-scoped CLI source. A model default that merely
+    // appears as `Some` in model metadata must not be treated as explicit.
+    let user_effort_explicit = user_config
+        .as_ref()
+        .and_then(|root| root.get("models"))
+        .and_then(|models| models.get("default_reasoning_effort"))
+        .and_then(toml::Value::as_str)
+        .and_then(|raw| {
+            raw.parse::<xai_grok_shell::sampling::types::ReasoningEffort>()
+                .ok()
+        })
+        .is_some();
+    app.models.reasoning_effort_explicit = user_effort_explicit
+        || app
+            .cli_effort_token
+            .as_deref()
+            .is_some_and(|raw| !raw.trim().is_empty());
 
     // Full merge when every layer parses; partial merge below if any layer fails.
     let effective_config = match xai_grok_shell::config::load_effective_config() {

@@ -606,6 +606,133 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
 }
 
 #[test]
+fn model_command_success_applies_then_persists() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("model-command-target"));
+    let mut meta = serde_json::Map::new();
+    meta.insert("supportsReasoningEffort".into(), serde_json::json!(true));
+    meta.insert("reasoningEffort".into(), serde_json::json!("high"));
+    meta.insert(
+        "reasoningEfforts".into(),
+        serde_json::json!(["low", "high"]),
+    );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .available
+        .insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Model Command Target").meta(Some(meta)),
+        );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .model_switch_pending = true;
+    let before = app.agents[&id].scrollback.len();
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+            agent_id: id,
+            model_id: model_id.clone(),
+            effort: None,
+            result: Ok(()),
+            clear_default: false,
+        }),
+        &mut app,
+    );
+
+    assert_eq!(
+        app.agents[&id].session.models.current,
+        Some(model_id.clone())
+    );
+    assert_eq!(app.agents[&id].scrollback.len(), before + 1);
+    assert!(matches!(
+        &effects[0],
+        Effect::PersistModelCommandPreference {
+            model_id: mid,
+            reasoning_effort: None,
+        } if mid == &model_id
+    ));
+}
+
+#[test]
+fn model_command_failure_keeps_active_and_does_not_persist() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let old = app.agents[&id].session.models.current.clone();
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .model_switch_pending = true;
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+            agent_id: id,
+            model_id: acp::ModelId::new(std::sync::Arc::from("rejected")),
+            effort: None,
+            result: Err(SwitchModelError::Other("rejected".into())),
+            clear_default: false,
+        }),
+        &mut app,
+    );
+
+    assert!(effects.is_empty());
+    assert_eq!(app.agents[&id].session.models.current, old);
+}
+
+#[test]
+fn model_default_success_clears_persisted_override() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("default-model"));
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .available
+        .insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Default Model"),
+        );
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+            agent_id: id,
+            model_id,
+            effort: None,
+            result: Ok(()),
+            clear_default: true,
+        }),
+        &mut app,
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::ClearModelCommandPreference]
+    ));
+    assert!(app.agents[&id].session.user_model_preference.is_none());
+}
+
+#[test]
+fn preferred_model_persist_failure_has_no_ui_rollback_or_error() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let before = app.agents[&id].scrollback.len();
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ModelCommandPreferencePersisted {
+            result: Err("disk full".into()),
+        }),
+        &mut app,
+    );
+    assert!(effects.is_empty());
+    assert_eq!(app.agents[&id].scrollback.len(), before);
+}
+
+#[test]
 fn switch_model_complete_skips_message_and_persist_when_unchanged() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
@@ -852,6 +979,47 @@ fn switch_model_incompatible_agent_shows_question_modal() {
     ));
     // No error message pushed to scrollback.
     assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback);
+}
+
+#[test]
+fn model_command_incompatible_agent_reports_error_without_question_or_persistence() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let previous = app.agents[&id].session.models.current.clone();
+    let target = acp::ModelId::new(std::sync::Arc::from("cursor-model"));
+    let err = xai_grok_shell::agent::config::ModelSwitchIncompatibleAgentError {
+        code: "MODEL_SWITCH_INCOMPATIBLE_AGENT".into(),
+        active_agent_type: "grok-build".into(),
+        required_agent_type: "cursor".into(),
+        model_id: "cursor-model".into(),
+        suggestion: "start_new_session".into(),
+    };
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .model_switch_pending = true;
+    let initial_scrollback = app.agents[&id].scrollback.len();
+
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+            agent_id: id,
+            model_id: target,
+            effort: None,
+            result: Err(SwitchModelError::IncompatibleAgent {
+                error: err,
+                prev_model_id: previous.clone(),
+            }),
+            clear_default: false,
+        }),
+        &mut app,
+    );
+
+    assert!(effects.is_empty(), "failure must not persist");
+    assert!(app.agents[&id].question_view.is_none());
+    assert_eq!(app.agents[&id].session.models.current, previous);
+    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
+    assert!(!app.agents[&id].session.model_switch_pending);
 }
 
 #[test]

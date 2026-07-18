@@ -479,6 +479,35 @@ impl ModelsManager {
             .unwrap_or_default()
     }
 
+    /// Resolve the effort value at the API-application boundary. Claude keeps
+    /// picker state at `max` while focused on a max-incompatible model, then
+    /// downgrades the applied API value to `high`. Rust's canonical `max` is
+    /// [`ReasoningEffort::Xhigh`]. An empty server menu retains the legacy
+    /// capability set; only an explicit menu that omits Xhigh and offers High
+    /// proves the downgrade is required.
+    pub fn applied_reasoning_effort_for_model(
+        &self,
+        model_id: &str,
+        effort: ReasoningEffort,
+    ) -> ReasoningEffort {
+        if effort != ReasoningEffort::Xhigh {
+            return effort;
+        }
+        let options = self.model_reasoning_efforts(model_id);
+        if !options.is_empty()
+            && !options
+                .iter()
+                .any(|option| option.value == ReasoningEffort::Xhigh)
+            && options
+                .iter()
+                .any(|option| option.value == ReasoningEffort::High)
+        {
+            ReasoningEffort::High
+        } else {
+            effort
+        }
+    }
+
     pub fn model_supports_backend_search(&self, model_id: &str) -> bool {
         self.inner
             .models
@@ -1773,6 +1802,48 @@ pub(crate) fn resolve_default_model(
     }
 }
 
+/// Resolve the model that becomes effective after the user clears
+/// `models.default`, preserving the canonical CLI > env > config > remote >
+/// fallback precedence in [`resolve_default_model`]. `available` is the
+/// already auth/allowlist-filtered catalog visible to the pager.
+pub fn resolve_default_model_after_user_clear(
+    cli_override: Option<&str>,
+    remote_default: Option<&str>,
+    available: &IndexMap<acp::ModelId, acp::ModelInfo>,
+) -> Result<acp::ModelId, String> {
+    if available.is_empty() {
+        return Err("No available models".into());
+    }
+    let raw = crate::util::config::load_effective_config_after_models_default_clear()
+        .map_err(|e| format!("failed to load model configuration: {e}"))?;
+    let mut cfg = config::Config::new_from_toml_cfg(&raw)
+        .map_err(|e| format!("failed to parse model configuration: {e}"))?;
+    cfg.default_model_override = cli_override.map(str::to_owned);
+    cfg.remote_settings =
+        remote_default.map(|default_model| xai_grok_config_types::RemoteSettings {
+            default_model: Some(default_model.to_owned()),
+            ..Default::default()
+        });
+
+    let configured = resolve_model_catalog(&cfg, None);
+    let mut catalog = IndexMap::new();
+    for (id, info) in available {
+        let key = id.0.to_string();
+        let mut entry = configured
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| ModelEntry::fallback(&key, &cfg.endpoints));
+        entry.info.name = Some(info.name.clone());
+        entry.info.description.clone_from(&info.description);
+        entry.info.hidden = false;
+        entry.info.supported_in_api = true;
+        entry.info.user_selectable = true;
+        catalog.insert(key, entry);
+    }
+    let (key, _, _) = resolve_default_model(&cfg, &catalog, true);
+    Ok(acp::ModelId::new(key))
+}
+
 /// Filter hidden and auth-gated entries out of `catalog` and convert to ACP wire format.
 pub fn available_models(
     catalog: &IndexMap<String, ModelEntry>,
@@ -2456,6 +2527,62 @@ mod tests {
         assert_eq!(
             catalog["plain-model"].info.reasoning_effort, None,
             "non-reasoning model must NOT be stamped",
+        );
+    }
+
+    #[test]
+    fn applied_xhigh_downgrades_to_high_when_explicit_menu_omits_xhigh() {
+        let mgr = test_manager();
+        let mut entry = ModelEntry::fallback("no-xhigh", &config::EndpointsConfig::default());
+        entry.info.supports_reasoning_effort = true;
+        entry.info.reasoning_efforts = vec![
+            ReasoningEffortOption {
+                id: "low".into(),
+                value: ReasoningEffort::Low,
+                label: "Low".into(),
+                description: None,
+                default: false,
+            },
+            ReasoningEffortOption {
+                id: "high".into(),
+                value: ReasoningEffort::High,
+                label: "High".into(),
+                description: None,
+                default: true,
+            },
+        ];
+        mgr.insert_test_entry("no-xhigh", entry);
+
+        assert_eq!(
+            mgr.applied_reasoning_effort_for_model("no-xhigh", ReasoningEffort::Xhigh),
+            ReasoningEffort::High
+        );
+    }
+
+    #[test]
+    fn applied_xhigh_stays_xhigh_when_menu_offers_it_or_is_legacy_empty() {
+        let mgr = test_manager();
+        let mut max_entry = ModelEntry::fallback("with-xhigh", &config::EndpointsConfig::default());
+        max_entry.info.supports_reasoning_effort = true;
+        max_entry.info.reasoning_efforts = vec![ReasoningEffortOption {
+            id: "xhigh".into(),
+            value: ReasoningEffort::Xhigh,
+            label: "Xhigh".into(),
+            description: None,
+            default: true,
+        }];
+        mgr.insert_test_entry("with-xhigh", max_entry);
+        let mut legacy = ModelEntry::fallback("legacy", &config::EndpointsConfig::default());
+        legacy.info.supports_reasoning_effort = true;
+        mgr.insert_test_entry("legacy", legacy);
+
+        assert_eq!(
+            mgr.applied_reasoning_effort_for_model("with-xhigh", ReasoningEffort::Xhigh),
+            ReasoningEffort::Xhigh
+        );
+        assert_eq!(
+            mgr.applied_reasoning_effort_for_model("legacy", ReasoningEffort::Xhigh),
+            ReasoningEffort::Xhigh
         );
     }
 

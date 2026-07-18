@@ -52,6 +52,12 @@ pub struct ModelState {
     pub available: IndexMap<acp::ModelId, acp::ModelInfo>,
     pub current: Option<acp::ModelId>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Whether `reasoning_effort` originates from an explicit user/session
+    /// preference rather than the focused model's catalog default. The ACP
+    /// model payload exposes the effective value only, so the pager seeds this
+    /// provenance from its user config / CLI source and preserves it across
+    /// model changes that do not explicitly replace the effort.
+    pub reasoning_effort_explicit: bool,
     /// External override for the context window size (tokens).
     /// When set, `get_context_window()` returns this instead of
     /// reading from the current model's metadata. Used for subagent
@@ -160,6 +166,7 @@ impl ModelState {
                 .as_ref()
                 .and_then(|id| self.available.get(id))
                 .and_then(|info| parse_reasoning_effort_meta(info.meta.as_ref()));
+            self.reasoning_effort_explicit = false;
         }
     }
 
@@ -175,6 +182,7 @@ impl ModelState {
                 .get(&model_id)
                 .and_then(|info| parse_reasoning_effort_meta(info.meta.as_ref()))
         });
+        self.reasoning_effort_explicit = effort_override.is_some();
     }
 
     /// The reasoning-effort menu for the current model. Gate-first: an unset or
@@ -324,6 +332,7 @@ impl From<Option<acp::SessionModelState>> for ModelState {
                     available: models,
                     current: current_model,
                     reasoning_effort,
+                    reasoning_effort_explicit: false,
                     context_window_override: None,
                 }
             })

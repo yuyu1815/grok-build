@@ -21,6 +21,7 @@ pub mod mcps_modal;
 pub mod memory_modal;
 pub mod modal;
 pub mod modal_window;
+pub mod model_picker;
 pub mod new_worktree_dialog;
 pub mod overlay;
 pub mod permission_view;
