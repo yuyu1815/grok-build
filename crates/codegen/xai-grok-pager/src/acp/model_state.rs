@@ -160,7 +160,7 @@ impl ModelState {
         // The models/update broadcast carries each model's static default effort,
         // not this session's choice; only re-derive when the model changed so a
         // catalog refresh can't clobber a user-set effort.
-        if self.current != previous_current_model {
+        if self.current != previous_current_model || !self.reasoning_effort_explicit {
             self.reasoning_effort = self
                 .current
                 .as_ref()
@@ -445,6 +445,24 @@ mod tests {
 
         assert_eq!(state.current, Some(id_b));
         assert_eq!(state.reasoning_effort, Some(ReasoningEffort::Low));
+    }
+
+    #[test]
+    fn update_catalog_rederives_non_explicit_effort_when_current_is_unchanged() {
+        let id = acp::ModelId::new(Arc::from("model"));
+        let mut state = ModelState::default();
+        state
+            .available
+            .insert(id.clone(), model_with_effort("model", "Model", "high"));
+        state.set_current(id.clone(), None);
+        assert_eq!(state.reasoning_effort, Some(ReasoningEffort::High));
+
+        let mut refreshed = IndexMap::new();
+        refreshed.insert(id.clone(), model_with_effort("model", "Model", "low"));
+        state.update_catalog(refreshed, Some(id));
+
+        assert_eq!(state.reasoning_effort, Some(ReasoningEffort::Low));
+        assert!(!state.reasoning_effort_explicit);
     }
 
     fn state_with_meta(meta: Option<serde_json::Value>) -> ModelState {

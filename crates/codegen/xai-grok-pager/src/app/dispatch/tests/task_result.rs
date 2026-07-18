@@ -703,6 +703,17 @@ fn model_default_success_clears_persisted_override() {
             model_id.clone(),
             acp::ModelInfo::new(model_id.clone(), "Default Model"),
         );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .reasoning_effort_explicit = true;
+    app.models.available.insert(
+        model_id.clone(),
+        acp::ModelInfo::new(model_id.clone(), "Default Model"),
+    );
+    app.models.reasoning_effort_explicit = true;
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
@@ -719,6 +730,8 @@ fn model_default_success_clears_persisted_override() {
         [Effect::ClearModelCommandPreference]
     ));
     assert!(app.agents[&id].session.user_model_preference.is_none());
+    assert!(!app.agents[&id].session.models.reasoning_effort_explicit);
+    assert!(!app.models.reasoning_effort_explicit);
 }
 
 #[test]

@@ -58,7 +58,9 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
         return false;
     };
 
-    app.remote_default_model.clone_from(&update.default_model);
+    if let Some(default_model) = update.default_model {
+        app.remote_default_model = default_model;
+    }
 
     if let Some(v) = update.auto_permission_mode_enabled {
         // Keep the pager's auto-permission-mode gate live with the remote settings
@@ -480,8 +482,9 @@ pub(super) fn pick_random_announcement(
 /// need.
 #[derive(serde::Deserialize)]
 pub(super) struct PagerSettingsUpdate {
-    #[serde(default)]
-    default_model: Option<String>,
+    /// Presence-aware: omitted = preserve, null = clear, string = replace.
+    #[serde(default, deserialize_with = "deserialize_presence_aware_string")]
+    default_model: Option<Option<String>>,
     #[serde(default)]
     show_resolved_model: Option<bool>,
     #[serde(default)]

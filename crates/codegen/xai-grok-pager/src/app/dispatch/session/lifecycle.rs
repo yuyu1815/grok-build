@@ -1059,8 +1059,10 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     .unwrap_or_else(|| model_id.0.to_string());
                 let prev_model = agent.session.models.current.clone();
                 let prev_effort = agent.session.models.reasoning_effort;
-                let effort_explicit =
-                    effort.is_some() || agent.session.models.reasoning_effort_explicit;
+                let effort_explicit = match intent {
+                    ModelSwitchIntent::ModelCommandClear => false,
+                    _ => effort.is_some() || agent.session.models.reasoning_effort_explicit,
+                };
                 agent.session.models.set_current(model_id.clone(), effort);
                 agent.session.models.reasoning_effort_explicit = effort_explicit;
                 if app.models.available.contains_key(&model_id) {
@@ -1115,10 +1117,11 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                         "Couldn't switch model: {}",
                         error.user_message()
                     )));
-                    return vec![];
+                    vec![]
+                } else {
+                    let display_name = agent.session.models.display_name_for(&model_id);
+                    return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
                 }
-                let display_name = agent.session.models.display_name_for(&model_id);
-                return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
             }
             Err(SwitchModelError::Other(msg)) => {
                 agent

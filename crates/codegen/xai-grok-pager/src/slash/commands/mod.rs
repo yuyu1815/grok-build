@@ -309,7 +309,7 @@ mod tests {
             other => panic!("expected QueueCommand, got {other:?}"),
         }
     }
-    /// Bare `/model <name>` → `SetDefaultModel` (switch + persist).
+    /// Bare `/model <name>` → `SetModelFromCommand` (switch + persist).
     /// `/model <name> <effort>` → `SwitchModel` (session-scoped).
     #[test]
     fn model_resolves_by_display_name() {
@@ -318,10 +318,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "Grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.5");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]
@@ -331,10 +340,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "grok-4.3");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.3");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.3");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]
@@ -344,10 +362,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.5");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]

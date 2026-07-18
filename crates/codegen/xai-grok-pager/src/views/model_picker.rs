@@ -145,8 +145,8 @@ impl ModelPickerState {
         self.entries.get(self.picker.selected).map(|entry| {
             (
                 entry.id.clone(),
-                (self.effort_toggled && !entry.efforts.is_empty())
-                    .then_some(self.effort)
+                self.effort_toggled
+                    .then(|| display_effort_for_entry(entry, self.effort))
                     .flatten(),
             )
         })
@@ -193,8 +193,10 @@ fn display_effort_for_entry(
             .any(|option| option.value == ReasoningEffort::High)
     {
         Some(ReasoningEffort::High)
-    } else {
+    } else if entry.efforts.iter().any(|option| option.value == effort) {
         Some(effort)
+    } else {
+        None
     }
 }
 
@@ -520,7 +522,28 @@ mod tests {
         picker.effort_toggled = true;
         assert_eq!(
             picker.selected(),
-            Some((picker.entries[1].id.clone(), Some(ReasoningEffort::Xhigh)))
+            Some((picker.entries[1].id.clone(), Some(ReasoningEffort::High)))
         );
+    }
+
+    #[test]
+    fn carried_unsupported_effort_is_not_displayed_or_committed() {
+        let mut models = ModelState::default();
+        let (a, ai) = reasoning_info("a", "A", serde_json::json!(["low", "medium", "high"]));
+        let (b, bi) = reasoning_info("b", "B", serde_json::json!(["low", "high"]));
+        models.available.insert(a.clone(), ai);
+        models.available.insert(b, bi);
+        models.current = Some(a);
+        models.reasoning_effort = Some(ReasoningEffort::Low);
+
+        let mut picker = ModelPickerState::new(&models).unwrap();
+        picker.cycle_effort(1); // medium on model A
+        picker.move_selection(1); // model B does not offer medium
+
+        assert_eq!(
+            picker.effort_label(picker.picker.selected),
+            "Effort not supported"
+        );
+        assert_eq!(picker.selected().unwrap().1, None);
     }
 }

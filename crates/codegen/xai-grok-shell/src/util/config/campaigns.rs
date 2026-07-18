@@ -433,6 +433,8 @@ pub async fn persist_models_default(
         cfg.models.default = if s.is_empty() { None } else { Some(s) };
         if let Some(effort) = reasoning_effort {
             cfg.models.default_reasoning_effort = Some(effort);
+        } else if cfg.models.default.is_none() {
+            cfg.models.default_reasoning_effort = None;
         }
     })
     .await

@@ -1832,6 +1832,12 @@ pub fn resolve_default_model_after_user_clear(
         let mut entry = configured
             .get(&key)
             .cloned()
+            .or_else(|| {
+                configured
+                    .values()
+                    .find(|candidate| candidate.model == key)
+                    .cloned()
+            })
             .unwrap_or_else(|| ModelEntry::fallback(&key, &cfg.endpoints));
         entry.info.name = Some(info.name.clone());
         entry.info.description.clone_from(&info.description);

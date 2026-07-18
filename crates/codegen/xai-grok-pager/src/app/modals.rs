@@ -524,7 +524,7 @@ impl AgentView {
                     )));
                 InputOutcome::Changed
             }
-            _ => InputOutcome::Unchanged,
+            _ => InputOutcome::Changed,
         }
     }
 
@@ -2894,6 +2894,32 @@ mod model_picker_input_tests {
                 effort: Some(xai_grok_shell::sampling::types::ReasoningEffort::Medium),
                 intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
             }) if model_id == b
+        ));
+    }
+
+    #[test]
+    fn unsupported_key_is_consumed_by_model_picker() {
+        let mut agent = make_agent();
+        let model_id = agent_client_protocol::ModelId::new(std::sync::Arc::from("current"));
+        agent.session.models.available.insert(
+            model_id.clone(),
+            agent_client_protocol::ModelInfo::new(model_id.clone(), "Current"),
+        );
+        agent.session.models.current = Some(model_id);
+        let state = crate::views::model_picker::ModelPickerState::new(&agent.session.models)
+            .expect("fixture has a model catalog");
+        agent.active_modal = Some(ActiveModal::ModelPicker {
+            state,
+            window: crate::views::modal_window::ModalWindowState::new(),
+        });
+
+        let outcome =
+            agent.handle_modal_key(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(matches!(
+            agent.active_modal,
+            Some(ActiveModal::ModelPicker { .. })
         ));
     }
 }

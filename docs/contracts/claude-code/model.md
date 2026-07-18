@@ -21,7 +21,6 @@ active session の model / effort を切り替える
 | 移植元 Claude Code revision | `6f6f12b37f529488b10e53928dd5508bb93535c7` |
 | Rust base revision | `b189869b7755d2b482969acf6c92da3ecfeffd36` |
 
-`draft-1` は、調査結果とユーザーが承認した Rust 固有の適応を固定した契約である。2026-07-17 にユーザーが path と revision を明示承認した。`draft-2` は、ユーザーが追加で許可した「Issue #9 の既承認 scope 内の根拠追加・実装整合 revision の自動承認」に基づき、実在 path の訂正と実装記録だけを追加した。`draft-3` は、Claude source に存在する current 表示の effort 条件と plan-mode session override 分岐を追加調査し、ユーザーが承認した Rust 到達可能範囲の A 案を固定する。`draft-4` は、picker の effort が model ごとの記憶ではなく picker 全体の単一 state であることと、model support 差の遷移を追加する。各 revision は前 revision の意味を上書きせず変更履歴として分離する。
 `draft-1` は、調査結果とユーザーが承認した Rust 固有の適応を固定した契約である。2026-07-17 にユーザーが path と revision を明示承認した。`draft-2` は、ユーザーが追加で許可した「Issue #9 の既承認 scope 内の根拠追加・実装整合 revision の自動承認」に基づき、実在 path の訂正と実装記録だけを追加した。`draft-3` は、Claude source に存在する current 表示の effort 条件と plan-mode session override 分岐を追加調査し、ユーザーが承認した Rust 到達可能範囲の A 案を固定する。`draft-4` は、picker の effort が model ごとの記憶ではなく picker 全体の単一 state であることと、model support 差の遷移を追加する。`draft-5` は、source mismatch の再確認結果と、Rust で explicit effort を target model の API 境界まで保持する mapping を固定した。各 revision は前 revision の意味を上書きせず変更履歴として分離する。
 
 | Revision | 状態 | 変更 |
@@ -390,9 +389,9 @@ ActiveModal::ModelPicker
 
 これは内部実装の予定であり、外部契約は 4.2 から 5.5 までで固定する。既存型との整合上、同じ観測可能挙動を保つ機械的な型名変更が必要な場合は契約変更とは扱わない。
 
-## 6. 現在の Rust 実装との差分
+## 6. PR 前の Rust 実装との差分（履歴）
 
-現在は `PersistSetting` と `SwitchModel` を別 task として spawn し、`JoinSet::join_next` により完了順が非決定になる。
+PR #10 前の実装では `PersistSetting` と `SwitchModel` を別 task として spawn し、`JoinSet::join_next` により完了順が非決定だった。
 
 - `xai-grok-pager/src/app/event_loop.rs:process_effects`
 - `xai-grok-pager/src/app/dispatch/settings/ui.rs:apply_setting_rollback`
@@ -400,12 +399,12 @@ ActiveModal::ModelPicker
 また、保存失敗時の reverse `SwitchModel` と、switch 成功後の `PersistPreferredModel` があり、複合失敗時の状態が複雑である。
 
 ```text
-現在: switch と persist が競合 + rollback 経路
-                    ↓ 変更予定
+PR 前: switch と persist が競合 + rollback 経路
+                    ↓ PR #10 で解消
 契約: switch 成功後に persist + 保存失敗時 rollback なし
 ```
 
-これは approved 後に実装で解消すべき差分であり、移植元の不確実性ではない。
+これは移植元の不確実性ではなく、PR #10 で解消済みの履歴である。現在の実装状態は 12 節の実装記録を参照する。
 
 ## 7. 変更予定範囲
 
@@ -547,7 +546,7 @@ contract revision draft-1
 | --- | --- |
 | 実装日 | `2026-07-17`〜`2026-07-18` |
 | 実装状態 | 実装完了、独立 parity 検証待ち |
-| Git state | `codex/issue-9-model-picker` の未コミット diff |
+| Git state | `codex/issue-9-model-picker` の PR #10 review-fix changes |
 
 実装フローは次のとおり。
 
