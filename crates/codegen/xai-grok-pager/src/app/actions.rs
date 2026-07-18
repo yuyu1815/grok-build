@@ -393,11 +393,11 @@ pub enum Action {
     /// user override.
     ResetModelFromCommand,
     /// Commit a validated `/model` selection. Persistence follows a successful
-    /// ACP switch; `clear_default` implements `/model default`.
+    /// ACP switch; `intent` distinguishes setting from clearing the default.
     SetModelFromCommand {
         model_id: acp::ModelId,
         effort: Option<ReasoningEffort>,
-        clear_default: bool,
+        intent: ModelSwitchIntent,
     },
     /// Switch active model.
     SwitchModel {
@@ -2288,15 +2288,7 @@ pub enum TaskResult {
         /// Forwarded from `Effect::SwitchModel.prev_model_id` for
         /// rollback on `IncompatibleAgent`.
         prev_model_id: Option<acp::ModelId>,
-    },
-    /// `/model` switch completion. Kept separate from the legacy completion so
-    /// existing session-only switch callers retain their presentation contract.
-    ModelCommandSwitchComplete {
-        agent_id: AgentId,
-        model_id: acp::ModelId,
-        effort: Option<ReasoningEffort>,
-        result: Result<(), SwitchModelError>,
-        clear_default: bool,
+        intent: ModelSwitchIntent,
     },
     /// Changelog fetched from CDN (both formats).
     ChangelogFetched {

@@ -6,7 +6,7 @@ use agent_client_protocol as acp;
 use xai_grok_shell::sampling::types::supports_reasoning_effort_meta;
 
 use crate::acp::model_state::ModelState;
-use crate::app::actions::Action;
+use crate::app::actions::{Action, ModelSwitchIntent};
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
 
@@ -46,6 +46,10 @@ impl SlashCommand for ModelCommand {
 
     fn args_required(&self) -> bool {
         false
+    }
+
+    fn executes_empty_args_on_enter(&self) -> bool {
+        true
     }
 
     fn arg_placeholder(&self) -> Option<&str> {
@@ -117,7 +121,7 @@ impl SlashCommand for ModelCommand {
             return CommandResult::Action(Action::SetModelFromCommand {
                 model_id: id,
                 effort: None,
-                clear_default: false,
+                intent: ModelSwitchIntent::ModelCommandSet,
             });
         }
 
@@ -138,7 +142,7 @@ impl SlashCommand for ModelCommand {
                 Ok(effort) => CommandResult::Action(Action::SetModelFromCommand {
                     model_id: id,
                     effort: Some(effort),
-                    clear_default: false,
+                    intent: ModelSwitchIntent::ModelCommandSet,
                 }),
                 Err(err) => CommandResult::Error(err.message()),
             };
@@ -419,11 +423,11 @@ mod tests {
             CommandResult::Action(Action::SetModelFromCommand {
                 model_id,
                 effort,
-                clear_default,
+                intent,
             }) => {
                 assert_eq!(model_id.0.as_ref(), "reasoning-x");
                 assert_eq!(effort, Some(ReasoningEffort::Xhigh));
-                assert!(!clear_default);
+                assert_eq!(intent, ModelSwitchIntent::ModelCommandSet);
             }
             other => panic!("expected SetModelFromCommand with effort, got {other:?}"),
         }
@@ -475,12 +479,10 @@ mod tests {
         let result = ModelCommand.run(&mut ctx, "Grok 4.5");
         match result {
             CommandResult::Action(Action::SetModelFromCommand {
-                model_id,
-                clear_default,
-                ..
+                model_id, intent, ..
             }) => {
                 assert_eq!(model_id, long_id);
-                assert!(!clear_default);
+                assert_eq!(intent, ModelSwitchIntent::ModelCommandSet);
             }
             other => panic!("expected SetModelFromCommand(Grok 4.5), got {other:?}"),
         }
@@ -515,11 +517,11 @@ mod tests {
             CommandResult::Action(Action::SetModelFromCommand {
                 model_id,
                 effort,
-                clear_default,
+                intent,
             }) => {
                 assert_eq!(model_id, id);
                 assert_eq!(effort, None);
-                assert!(!clear_default);
+                assert_eq!(intent, ModelSwitchIntent::ModelCommandSet);
             }
             other => panic!("expected Action::SetModelFromCommand, got {other:?}"),
         }

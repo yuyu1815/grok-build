@@ -162,6 +162,13 @@ pub trait SlashCommand: Send + Sync {
         false
     }
 
+    /// Whether Enter should execute this command with empty arguments while
+    /// its argument completions are open, instead of accepting a completion.
+    /// Tab remains completion-only regardless of this setting.
+    fn executes_empty_args_on_enter(&self) -> bool {
+        false
+    }
+
     /// Generate argument suggestions. `args_query` is the raw typed
     /// args text; most impls ignore it and return a static list.
     #[allow(unused_variables)]

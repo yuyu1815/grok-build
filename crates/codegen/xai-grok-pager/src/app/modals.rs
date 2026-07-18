@@ -11,7 +11,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Widget;
 
-use super::actions::Action;
+use super::actions::{Action, ModelSwitchIntent};
 use super::agent_view::{AgentView, active_contexts_for_pane, apply_settings_outcome};
 use super::app_view::InputOutcome;
 
@@ -511,7 +511,7 @@ impl AgentView {
                     InputOutcome::Action(Action::SetModelFromCommand {
                         model_id,
                         effort,
-                        clear_default: false,
+                        intent: ModelSwitchIntent::ModelCommandSet,
                     })
                 })
             }
@@ -2851,7 +2851,7 @@ mod model_picker_input_tests {
             InputOutcome::Action(crate::app::actions::Action::SetModelFromCommand {
                 model_id,
                 effort: None,
-                clear_default: false,
+                intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
             }) if model_id == b
         ));
     }
@@ -2892,7 +2892,7 @@ mod model_picker_input_tests {
             InputOutcome::Action(crate::app::actions::Action::SetModelFromCommand {
                 model_id,
                 effort: Some(xai_grok_shell::sampling::types::ReasoningEffort::Medium),
-                clear_default: false,
+                intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
             }) if model_id == b
         ));
     }

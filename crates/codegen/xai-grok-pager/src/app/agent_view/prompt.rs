@@ -203,15 +203,11 @@ impl AgentView {
                 // stay open (row's insert_text ends with space => chains).
                 KeyCode::Enter if key.modifiers.is_empty() => {
                     let snap = self.prompt.slash_snapshot();
-                    // `/model` executes on Enter with an empty argument list.
-                    // This must win over the generic completion chaining rule,
-                    // otherwise the dedicated picker is unreachable. Do not
-                    // generalise this to every optional-argument command:
-                    // `/theme`, `/docs`, `/export`, `/compact`, `/fork`, etc.
-                    // retain their legacy Enter-to-complete behaviour. Tab
-                    // remains the text-only completion key.
+                    // A command may execute on Enter with an empty argument
+                    // list instead of accepting its highlighted argument row.
+                    // Tab remains the text-only completion key.
                     let text = self.prompt.text();
-                    let empty_model_command = crate::slash::parse_invocation(text)
+                    let executes_empty_args = crate::slash::parse_invocation(text)
                         .filter(|invocation| invocation.args.trim().is_empty())
                         .and_then(|invocation| {
                             let command_name = if snap.cursor_in_command {
@@ -224,12 +220,12 @@ impl AgentView {
                                 .registry()
                                 .get_for_dispatch(command_name)
                         })
-                        .is_some_and(|command| command.name() == "model");
+                        .is_some_and(|command| command.executes_empty_args_on_enter());
 
-                    if empty_model_command {
-                        // Command-phase accepts `/mo` -> `/model ` before send;
-                        // args-phase `/model ` deliberately does not accept the
-                        // highlighted model row.
+                    if executes_empty_args {
+                        // Command-phase accepts a partial command before send;
+                        // args-phase deliberately does not accept the
+                        // highlighted argument row.
                         if snap.cursor_in_command {
                             self.prompt.slash_commit_preview();
                             self.prompt.accept_slash_completion(&self.session.models);

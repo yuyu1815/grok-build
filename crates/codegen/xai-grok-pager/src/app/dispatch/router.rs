@@ -836,7 +836,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                     Action::SetModelFromCommand {
                         model_id,
                         effort: None,
-                        clear_default: true,
+                        intent: ModelSwitchIntent::ModelCommandClear,
                     },
                     app,
                 ),
@@ -853,7 +853,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SetModelFromCommand {
             model_id,
             effort,
-            clear_default,
+            intent,
         } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];
@@ -890,7 +890,8 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             // model (including its max/xhigh downgrade rule).  A catalog
             // default is not provenance: `reasoning_effort_explicit` must be
             // true, and unsupported targets remain `None`.
-            let effort = if !clear_default && effort.is_none() {
+            let effort = if matches!(intent, ModelSwitchIntent::ModelCommandSet) && effort.is_none()
+            {
                 let models = &agent.session.models;
                 models
                     .reasoning_effort_explicit
@@ -900,17 +901,12 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             } else {
                 effort
             };
-            let intent = if clear_default {
-                ModelSwitchIntent::ModelCommandClear
-            } else {
-                ModelSwitchIntent::ModelCommandSet
-            };
             let Some(session_id) = agent.session.session_id.clone() else {
                 // Preserve the existing pre-session `/model` behavior. There is
                 // no active session to order before persistence yet; stash the
                 // switch and persist the preference used to create the next one.
                 agent.session.deferred_model_switch = Some((model_id.clone(), effort));
-                return if clear_default {
+                return if matches!(intent, ModelSwitchIntent::ModelCommandClear) {
                     vec![Effect::ClearModelCommandPreference]
                 } else {
                     vec![Effect::PersistModelCommandPreference {

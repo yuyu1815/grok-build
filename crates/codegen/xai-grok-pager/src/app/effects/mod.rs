@@ -1642,34 +1642,13 @@ pub(crate) fn execute(
                                 SwitchModelError::Other(sanitize_user_error(&e.to_string()))
                             }
                         });
-                    match intent {
-                        crate::app::actions::ModelSwitchIntent::Existing => {
-                            TaskResult::SwitchModelComplete {
-                                agent_id,
-                                model_id,
-                                effort,
-                                result,
-                                prev_model_id,
-                            }
-                        }
-                        crate::app::actions::ModelSwitchIntent::ModelCommandSet => {
-                            TaskResult::ModelCommandSwitchComplete {
-                                agent_id,
-                                model_id,
-                                effort,
-                                result,
-                                clear_default: false,
-                            }
-                        }
-                        crate::app::actions::ModelSwitchIntent::ModelCommandClear => {
-                            TaskResult::ModelCommandSwitchComplete {
-                                agent_id,
-                                model_id,
-                                effort,
-                                result,
-                                clear_default: true,
-                            }
-                        }
+                    TaskResult::SwitchModelComplete {
+                        agent_id,
+                        model_id,
+                        effort,
+                        result,
+                        prev_model_id,
+                        intent,
                     }
                 });
         }

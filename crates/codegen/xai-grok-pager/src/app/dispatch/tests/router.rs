@@ -687,7 +687,7 @@ fn model_command_switches_before_persisting() {
         Action::SetModelFromCommand {
             model_id: model_id.clone(),
             effort: None,
-            clear_default: false,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         },
         &mut app,
     );
@@ -737,7 +737,7 @@ fn model_picker_preserves_explicit_effort_when_target_supports_effort() {
         Action::SetModelFromCommand {
             model_id: model_id.clone(),
             effort: None,
-            clear_default: false,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         },
         &mut app,
     );
@@ -760,7 +760,7 @@ fn model_command_rejects_id_outside_session_catalog() {
         Action::SetModelFromCommand {
             model_id: acp::ModelId::new(std::sync::Arc::from("not-allowlisted")),
             effort: None,
-            clear_default: false,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         },
         &mut app,
     );
@@ -780,7 +780,7 @@ fn model_command_accepts_current_id_outside_catalog_as_noop_success() {
         Action::SetModelFromCommand {
             model_id: legacy,
             effort: None,
-            clear_default: false,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         },
         &mut app,
     );

@@ -584,6 +584,7 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
             effort: None,
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -635,12 +636,13 @@ fn model_command_success_applies_then_persists() {
     let before = app.agents[&id].scrollback.len();
 
     let effects = dispatch(
-        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
             model_id: model_id.clone(),
             effort: None,
             result: Ok(()),
-            clear_default: false,
+            prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         }),
         &mut app,
     );
@@ -671,12 +673,13 @@ fn model_command_failure_keeps_active_and_does_not_persist() {
         .model_switch_pending = true;
 
     let effects = dispatch(
-        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
             model_id: acp::ModelId::new(std::sync::Arc::from("rejected")),
             effort: None,
             result: Err(SwitchModelError::Other("rejected".into())),
-            clear_default: false,
+            prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         }),
         &mut app,
     );
@@ -701,12 +704,13 @@ fn model_default_success_clears_persisted_override() {
             acp::ModelInfo::new(model_id.clone(), "Default Model"),
         );
     let effects = dispatch(
-        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
             model_id,
             effort: None,
             result: Ok(()),
-            clear_default: true,
+            prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandClear,
         }),
         &mut app,
     );
@@ -755,6 +759,7 @@ fn switch_model_complete_skips_message_and_persist_when_unchanged() {
             effort: None,
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -809,6 +814,7 @@ fn switch_model_complete_persists_resolved_effort_from_catalog_meta() {
             effort: None, // user typed `/model Blackbox 4.7` with no effort
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -875,6 +881,7 @@ fn switch_to_non_reasoning_model_clears_persisted_effort() {
             effort: None,
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -919,6 +926,7 @@ fn switch_model_complete_failure_pushes_error_and_clears_pending() {
             effort: None,
             result: Err(SwitchModelError::Other("model not found".into())),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -962,6 +970,7 @@ fn switch_model_incompatible_agent_shows_question_modal() {
                 prev_model_id: None,
             }),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -1002,7 +1011,7 @@ fn model_command_incompatible_agent_reports_error_without_question_or_persistenc
     let initial_scrollback = app.agents[&id].scrollback.len();
 
     let effects = dispatch(
-        Action::TaskComplete(TaskResult::ModelCommandSwitchComplete {
+        Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
             model_id: target,
             effort: None,
@@ -1010,7 +1019,8 @@ fn model_command_incompatible_agent_reports_error_without_question_or_persistenc
                 error: err,
                 prev_model_id: previous.clone(),
             }),
-            clear_default: false,
+            prev_model_id: previous.clone(),
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
         }),
         &mut app,
     );
@@ -1066,6 +1076,7 @@ fn incompatible_agent_rollback_restores_previous_model() {
                 prev_model_id: Some(prev_model.clone()),
             }),
             prev_model_id: Some(prev_model.clone()),
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -1112,6 +1123,7 @@ fn incompatible_agent_closes_active_modal() {
                 prev_model_id: None,
             }),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -1158,6 +1170,7 @@ fn same_agent_type_switch_no_modal() {
             effort: None,
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
@@ -1201,6 +1214,7 @@ fn switch_model_pending_lifecycle() {
             effort: None,
             result: Ok(()),
             prev_model_id: None,
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         }),
         &mut app,
     );
