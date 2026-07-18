@@ -85,6 +85,10 @@ fn task_reasoning_effort_override_error(
     )
 }
 
+fn effective_run_in_background(request: bool, definition: Option<bool>) -> bool {
+    request || definition.unwrap_or(false)
+}
+
 #[cfg(test)]
 mod preflight_tests {
     use super::*;
@@ -134,6 +138,13 @@ mod preflight_tests {
             "Task.reasoning_effort 'high' is not supported by model 'plain-model'. Omit `reasoning_effort` to inherit defaults."
         );
     }
+
+    #[test]
+    fn definition_background_is_used_for_preflight_notifications() {
+        assert!(effective_run_in_background(false, Some(true)));
+        assert!(effective_run_in_background(true, Some(false)));
+        assert!(!effective_run_in_background(false, None));
+    }
 }
 /// This is a free async function, NOT a method on MvpAgent. It receives
 /// a `SubagentSpawnContext` with everything it needs, and a mutable
@@ -156,10 +167,7 @@ pub(crate) async fn handle_subagent_request(
     gateway: &GatewaySender,
 ) {
     let start = std::time::Instant::now();
-    let mut parent_wait_guard = (!request.run_in_background)
-        .then(|| crate::tools::tool_context::BlockingWaitGuard::enter(
-            ctx.parent_blocking_wait_depth.clone(),
-        ));
+    let mut parent_wait_guard: Option<crate::tools::tool_context::BlockingWaitGuard>;
     let Some(mut definition) = resolve_agent_definition(&request.subagent_type, &ctx)
     else {
         let msg = format!("Unknown subagent type: {}", request.subagent_type);
@@ -174,13 +182,16 @@ pub(crate) async fn handle_subagent_request(
         );
         return;
     };
+    let run_in_background = effective_run_in_background(
+        request.run_in_background,
+        definition.background,
+    );
     match gate_subagent_type(&request.subagent_type, &ctx) {
         SubagentValidateTypeOutcome::Disabled => {
             let msg = format!(
                 "Subagent '{}' is disabled via [subagents.toggle] in config.toml",
                 request.subagent_type
             );
-            let run_in_background = request.run_in_background;
             send_pre_spawn_failure(
                 request,
                 &msg,
@@ -196,7 +207,6 @@ pub(crate) async fn handle_subagent_request(
                 "agent can only spawn: {}; '{}' not allowed", allowed.join(", "), request
                 .subagent_type
             );
-            let run_in_background = request.run_in_background;
             send_pre_spawn_failure(
                 request,
                 &msg,
@@ -209,8 +219,6 @@ pub(crate) async fn handle_subagent_request(
         }
         _ => {}
     }
-    let run_in_background = request.run_in_background
-        || definition.background.unwrap_or(false);
     resolve_subagent_toolset(
         &request.subagent_type,
         request.runtime_overrides.harness_agent_type.as_deref(),
@@ -454,6 +462,11 @@ pub(crate) async fn handle_subagent_request(
             }
         }
     }
+    parent_wait_guard = (!run_in_background).then(|| {
+        crate::tools::tool_context::BlockingWaitGuard::enter(
+            ctx.parent_blocking_wait_depth.clone(),
+        )
+    });
     let cancel_token = CancellationToken::new();
     coordinator
         .borrow_mut()
