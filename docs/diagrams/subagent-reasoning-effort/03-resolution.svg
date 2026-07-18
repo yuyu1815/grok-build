@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" role="img" aria-labelledby="title desc">
+  <title id="title">Reasoning effort の解決・model capability 判定</title>
+  <desc id="desc">spawn、role、persona、custom agent、parent の優先順位、public enum adapter、model key または slug の atomic lookup、Tool strict と Harness best-effort の分岐を示す。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#dc2626"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #172033; }
+      .title { font-size: 40px; font-weight: 750; }
+      .subtitle { font-size: 19px; fill: #526078; }
+      .section { font-size: 22px; font-weight: 780; }
+      .body { font-size: 16px; fill: #46546c; }
+      .small { font-size: 14px; fill: #526078; }
+      .code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 15px; fill: #25324a; }
+      .rank { font-size: 15px; font-weight: 800; fill: #ffffff; }
+      .badge { font-size: 14px; font-weight: 800; }
+      .anchor { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; fill: #64748b; }
+      .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .flow { stroke: #0f766e; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .reject { stroke: #dc2626; stroke-width: 4; fill: none; marker-end: url(#arrow-red); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1100" fill="#f8fafc"/>
+  <rect width="1600" height="14" fill="#0f766e"/>
+  <text class="title" x="55" y="72">Resolution: 優先順位 → atomic catalog lookup → 適用 / 拒否</text>
+  <text class="subtitle" x="55" y="108">Tool の明示指定だけを strict にし、既存 config / fallback の best-effort を維持</text>
+
+  <!-- precedence -->
+  <text class="section" x="55" y="158">1. 最初に存在する値が勝つ</text>
+  <g transform="translate(55 182)">
+    <g>
+      <rect class="card" width="260" height="100" fill="#dcfce7" stroke="#22c55e"/>
+      <circle cx="30" cy="30" r="20" fill="#16a34a"/><text class="rank" x="25" y="36">1</text>
+      <text class="section" x="62" y="34" font-size="18">spawn explicit</text>
+      <text class="code" x="20" y="68">TaskToolInput.</text>
+      <text class="code" x="20" y="88">reasoning_effort</text>
+    </g>
+    <path class="flow" d="M 266 50 L 291 50"/>
+    <g transform="translate(300 0)">
+      <rect class="card" width="220" height="100"/>
+      <circle cx="30" cy="30" r="20" fill="#0f766e"/><text class="rank" x="25" y="36">2</text>
+      <text class="section" x="62" y="36" font-size="18">role</text>
+      <text class="body" x="20" y="70">role default</text>
+    </g>
+    <path class="flow" d="M 526 50 L 551 50"/>
+    <g transform="translate(560 0)">
+      <rect class="card" width="220" height="100"/>
+      <circle cx="30" cy="30" r="20" fill="#0f766e"/><text class="rank" x="25" y="36">3</text>
+      <text class="section" x="62" y="36" font-size="18">persona</text>
+      <text class="body" x="20" y="70">persona default</text>
+    </g>
+    <path class="flow" d="M 786 50 L 811 50"/>
+    <g transform="translate(820 0)">
+      <rect class="card" width="260" height="100"/>
+      <circle cx="30" cy="30" r="20" fill="#0f766e"/><text class="rank" x="25" y="36">4</text>
+      <text class="section" x="62" y="36" font-size="18">custom agent</text>
+      <text class="code" x="20" y="70">AgentDefinition.effort</text>
+    </g>
+    <path class="flow" d="M 1086 50 L 1111 50"/>
+    <g transform="translate(1120 0)">
+      <rect class="card" width="350" height="100"/>
+      <circle cx="30" cy="30" r="20" fill="#0f766e"/><text class="rank" x="25" y="36">5</text>
+      <text class="section" x="62" y="36" font-size="18">parent / model</text>
+      <text class="body" x="20" y="70">effective model default または</text>
+      <text class="body" x="20" y="91">parent sampling config</text>
+    </g>
+  </g>
+
+  <path class="flow" d="M 800 300 L 800 325 L 400 325 L 400 350"/>
+
+  <!-- adapter and lookup -->
+  <g transform="translate(140 360)">
+    <rect class="card" width="520" height="150" fill="#ecfeff" stroke="#14b8a6"/>
+    <rect x="22" y="20" width="88" height="30" rx="15" fill="#ccfbf1"/>
+    <text class="badge" x="39" y="40" fill="#0f766e">ADAPTER</text>
+    <text class="section" x="22" y="82">public enum → sampling enum</text>
+    <text class="code" x="22" y="112">none|minimal|low|medium|high|xhigh|max</text>
+    <text class="body" x="22" y="138">max → Xhigh / unknown → parse error + warning</text>
+  </g>
+
+  <path class="flow" d="M 670 435 L 755 435"/>
+
+  <g transform="translate(770 340)">
+    <rect class="card" width="690" height="190" fill="#ffffff" stroke="#14b8a6"/>
+    <rect x="22" y="20" width="190" height="30" rx="15" fill="#ccfbf1"/>
+    <text class="badge" x="39" y="40" fill="#0f766e">ONE READ GUARD</text>
+    <text class="section" x="22" y="82">ModelsManager atomic lookup</text>
+    <text class="code" x="22" y="112">find_model_by_id(models, effective_model_id)</text>
+    <text class="body" x="22" y="140">① catalog key を検索　→　② entry.info.model slug を検索</text>
+    <rect x="22" y="155" width="640" height="26" rx="13" fill="#f0fdfa"/>
+    <text class="code" x="35" y="174">1 snapshot → { ModelEntry, supports, offers(requested) }</text>
+  </g>
+
+  <path class="flow" d="M 1115 538 L 1115 586"/>
+
+  <!-- provenance branches -->
+  <text class="section" x="55" y="620">2. provenance によって strictness を分ける</text>
+  <g transform="translate(55 650)">
+    <rect class="card" width="700" height="245" fill="#fff7ed" stroke="#f97316"/>
+    <rect x="22" y="20" width="170" height="32" rx="16" fill="#ffedd5"/>
+    <text class="badge" x="38" y="41" fill="#c2410c">PROVENANCE = TOOL</text>
+    <text class="section" x="22" y="88">明示した level を model が offer するか?</text>
+    <g transform="translate(22 112)">
+      <rect width="250" height="90" rx="14" fill="#dcfce7" stroke="#22c55e"/>
+      <text class="badge" x="18" y="28" fill="#15803d">YES</text>
+      <text class="body" x="18" y="57">sampling config へ適用</text>
+      <text class="code" x="18" y="79">reasoning_effort = eff</text>
+      <text class="small" x="286" y="51">or</text>
+      <rect x="330" width="320" height="90" rx="14" fill="#fee2e2" stroke="#ef4444"/>
+      <text class="badge" x="348" y="28" fill="#b91c1c">NO</text>
+      <text class="code" x="348" y="57">invalid_arguments</text>
+      <text class="body" x="348" y="79">child turn / 成功 completion なし</text>
+    </g>
+    <text class="small" x="22" y="228">error: requested effort + effective model + omit guidance</text>
+  </g>
+
+  <g transform="translate(845 650)">
+    <rect class="card" width="700" height="245" fill="#eff6ff" stroke="#3b82f6"/>
+    <rect x="22" y="20" width="255" height="32" rx="16" fill="#dbeafe"/>
+    <text class="badge" x="38" y="41" fill="#1d4ed8">PROVENANCE = HARNESS / CONFIG</text>
+    <text class="section" x="22" y="88">model が reasoning effort を support するか?</text>
+    <g transform="translate(22 112)">
+      <rect width="250" height="90" rx="14" fill="#dcfce7" stroke="#22c55e"/>
+      <text class="badge" x="18" y="28" fill="#15803d">YES</text>
+      <text class="body" x="18" y="57">sampling config へ適用</text>
+      <text class="code" x="18" y="79">reasoning_effort = eff</text>
+      <text class="small" x="286" y="51">or</text>
+      <rect x="330" width="320" height="90" rx="14" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text class="badge" x="348" y="28" fill="#475569">NO</text>
+      <text class="body" x="348" y="57">override を適用せず継続</text>
+      <text class="body" x="348" y="79">既存 best-effort を維持</text>
+    </g>
+    <text class="small" x="22" y="228">role / persona / agent definition の互換性を壊さない</text>
+  </g>
+
+  <!-- invariant notes -->
+  <rect x="55" y="930" width="1490" height="90" rx="18" fill="#f0fdfa" stroke="#5eead4" stroke-width="2"/>
+  <text class="section" x="82" y="965">Resume / spawn variants の不変条件</text>
+  <text class="body" x="82" y="994">resume: source model を pin → 今回の explicit effort をその model に検証・適用</text>
+  <text class="body" x="850" y="994">foreground / background / worktree: 同じ runtime_overrides を保持</text>
+
+  <text class="anchor" x="55" y="1055">Source anchors: overrides.rs:41 · models.rs:112,484 · handle_request.rs:47,513 · task/types.rs:123</text>
+  <text class="anchor" x="55" y="1080">Behavioral contract: explicit Tool unsupported → invalid_arguments / internal defaults → best-effort</text>
+</svg>
