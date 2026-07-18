@@ -93,24 +93,6 @@ pub enum ReasoningEffortOverrideProvenance {
     Tool,
 }
 
-/// Return the public Task error for an explicit effort the effective model
-/// cannot provide. Internal harness/config defaults remain best-effort.
-pub fn task_reasoning_effort_override_error(
-    requested: Option<&str>,
-    provenance: ReasoningEffortOverrideProvenance,
-    effective_model_id: &str,
-    model_offers_requested: bool,
-) -> Option<String> {
-    if provenance != ReasoningEffortOverrideProvenance::Tool || model_offers_requested {
-        return None;
-    }
-    let requested = requested?;
-    Some(format!(
-        "Task.reasoning_effort '{requested}' is not supported by model \
-         '{effective_model_id}'. Omit `reasoning_effort` to inherit defaults."
-    ))
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct SubagentRuntimeOverrides {
     /// Override the model (e.g. "test-model").
@@ -1384,44 +1366,5 @@ mod tests {
                 },
             ))
             .unwrap();
-    }
-
-    #[test]
-    fn tool_reasoning_effort_rejects_unsupported_effective_model() {
-        assert_eq!(
-            super::task_reasoning_effort_override_error(
-                Some("high"),
-                super::ReasoningEffortOverrideProvenance::Tool,
-                "plain-model",
-                false,
-            )
-            .as_deref(),
-            Some(
-                "Task.reasoning_effort 'high' is not supported by model 'plain-model'. \
-                 Omit `reasoning_effort` to inherit defaults."
-            )
-        );
-    }
-
-    #[test]
-    fn internal_reasoning_effort_keeps_best_effort_behavior() {
-        assert!(
-            super::task_reasoning_effort_override_error(
-                Some("high"),
-                super::ReasoningEffortOverrideProvenance::Harness,
-                "plain-model",
-                false,
-            )
-            .is_none()
-        );
-        assert!(
-            super::task_reasoning_effort_override_error(
-                Some("high"),
-                super::ReasoningEffortOverrideProvenance::Tool,
-                "reasoning-model",
-                true,
-            )
-            .is_none()
-        );
     }
 }

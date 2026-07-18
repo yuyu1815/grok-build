@@ -2100,8 +2100,8 @@ async fn handle_subagent_request_rejects_unsupported_explicit_tool_effort() {
     use xai_grok_tools::implementations::grok_build::task::types::ReasoningEffortOverrideProvenance;
 
     let mut ctx = ctx_with_toggle(HashMap::new());
-    ctx.models_manager.insert_test_entry(
-        "test",
+    ctx.available_models.insert(
+        "test".to_string(),
         ModelEntry {
             info: ModelInfo::fallback("test"),
             api_key: None,
@@ -3117,6 +3117,32 @@ fn record_pre_spawn_failure_clears_stale_pending_entry() {
         "sub-z"), "outstanding_for_prompt must not still list a recorded-failed id",
     );
 }
+
+#[tokio::test]
+async fn spawn_worktree_guard_error_cleanup_releases_owned_path() {
+    let missing = std::env::temp_dir().join(format!(
+        "grok-subagent-guard-missing-{}",
+        uuid::Uuid::now_v7()
+    ));
+    let mut guard = SpawnWorktreeGuard::new(Some(missing), true);
+    guard.cleanup().await;
+    assert!(!guard.owned, "failed materialization must release ownership");
+    assert!(guard.path.is_none(), "cleanup consumes the owned path");
+}
+
+#[tokio::test]
+async fn spawn_worktree_guard_promote_transfers_cleanup_ownership() {
+    let path = std::env::temp_dir().join(format!(
+        "grok-subagent-guard-promoted-{}",
+        uuid::Uuid::now_v7()
+    ));
+    let mut guard = SpawnWorktreeGuard::new(Some(path.clone()), true);
+    guard.promote();
+    guard.cleanup().await;
+    assert!(!guard.owned, "promotion must disarm pre-promote cleanup");
+    assert_eq!(guard.path.as_deref(), Some(path.as_path()));
+}
+
 fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
     crate::agent::config::ModelEntry {
         info: crate::agent::config::ModelInfo {

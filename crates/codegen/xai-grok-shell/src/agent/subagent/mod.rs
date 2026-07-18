@@ -1471,6 +1471,44 @@ impl Drop for PendingGuard<'_> {
         }
     }
 }
+
+/// Owns a freshly materialized subagent worktree until the child session is
+/// promoted to the active coordinator map.  Cleanup is deliberately explicit:
+/// `Drop` cannot await and must not spawn detached filesystem work.  The
+/// owner calls [`Self::cleanup`] on every pre-promote failure, or
+/// [`Self::promote`] once the active tracker takes responsibility.
+struct SpawnWorktreeGuard {
+    path: Option<PathBuf>,
+    owned: bool,
+}
+
+impl SpawnWorktreeGuard {
+    fn new(path: Option<PathBuf>, owned: bool) -> Self {
+        Self { path, owned }
+    }
+
+    fn promote(&mut self) {
+        self.owned = false;
+    }
+
+    async fn cleanup(&mut self) {
+        if !self.owned {
+            return;
+        }
+        let Some(path) = self.path.take() else {
+            self.owned = false;
+            return;
+        };
+        if let Err(error) = crate::session::worktree::remove_subagent_worktree(&path).await {
+            tracing::warn!(
+                worktree_path = %path.display(),
+                error = %error,
+                "failed to clean up subagent worktree before promotion"
+            );
+        }
+        self.owned = false;
+    }
+}
 /// Resolve the effective working directory for a child session.
 ///
 /// Precedence: worktree path > `override_cwd` (non-empty) > parent cwd. The
