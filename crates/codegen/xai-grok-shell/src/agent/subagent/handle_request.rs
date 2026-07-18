@@ -42,6 +42,47 @@ pub(super) fn task_model_override_error(
         is_session_auth,
     )
 }
+/// Convert the public spawn-tool enum into the sampling enum without creating
+/// a dependency cycle between `xai-tool-types` and sampling types.
+fn subagent_reasoning_effort_to_sampling(
+    raw: &str,
+) -> Result<xai_grok_sampling_types::ReasoningEffort, String> {
+    use xai_grok_sampling_types::ReasoningEffort;
+    use xai_tool_types::SubagentReasoningEffort;
+
+    let public = raw.parse::<SubagentReasoningEffort>()?;
+    Ok(match public {
+        SubagentReasoningEffort::None => ReasoningEffort::None,
+        SubagentReasoningEffort::Minimal => ReasoningEffort::Minimal,
+        SubagentReasoningEffort::Low => ReasoningEffort::Low,
+        SubagentReasoningEffort::Medium => ReasoningEffort::Medium,
+        SubagentReasoningEffort::High => ReasoningEffort::High,
+        SubagentReasoningEffort::Xhigh | SubagentReasoningEffort::Max => ReasoningEffort::Xhigh,
+    })
+}
+#[cfg(test)]
+mod reasoning_effort_adapter_tests {
+    use super::subagent_reasoning_effort_to_sampling;
+    use xai_grok_sampling_types::ReasoningEffort;
+    use xai_tool_types::SubagentReasoningEffort;
+
+    #[test]
+    fn public_values_stay_synchronized_with_sampling_values() {
+        for (public, token, expected) in [
+            (SubagentReasoningEffort::None, "none", ReasoningEffort::None),
+            (SubagentReasoningEffort::Minimal, "minimal", ReasoningEffort::Minimal),
+            (SubagentReasoningEffort::Low, "low", ReasoningEffort::Low),
+            (SubagentReasoningEffort::Medium, "medium", ReasoningEffort::Medium),
+            (SubagentReasoningEffort::High, "high", ReasoningEffort::High),
+            (SubagentReasoningEffort::Xhigh, "xhigh", ReasoningEffort::Xhigh),
+            (SubagentReasoningEffort::Max, "max", ReasoningEffort::Xhigh),
+        ] {
+            assert_eq!(serde_json::to_value(public).unwrap(), token);
+            assert_eq!(subagent_reasoning_effort_to_sampling(token).unwrap(), expected);
+        }
+        assert!(subagent_reasoning_effort_to_sampling("ultra").is_err());
+    }
+}
 /// This is a free async function, NOT a method on MvpAgent. It receives
 /// a `SubagentSpawnContext` with everything it needs, and a mutable
 /// reference to the coordinator for tracking.
@@ -469,14 +510,31 @@ pub(crate) async fn handle_subagent_request(
             return;
         }
     }
-    if let Some(raw) = effective_runtime.reasoning_effort.as_deref()
-        && ctx
-            .models_manager
-            .model_supports_reasoning_effort(effective_model_id.0.as_ref())
-    {
-        use xai_grok_sampling_types::ReasoningEffort;
-        match raw.parse::<ReasoningEffort>() {
-            Ok(eff) => effective_sampling_config.reasoning_effort = Some(eff),
+    if let Some(raw) = effective_runtime.reasoning_effort.as_deref() {
+        match subagent_reasoning_effort_to_sampling(raw) {
+            Ok(eff) => {
+                let model_id = effective_model_id.0.as_ref();
+                let lookup = ctx
+                    .models_manager
+                    .lookup_model_reasoning_effort(model_id, eff);
+                if let Some(msg) = task_reasoning_effort_override_error(
+                    request.runtime_overrides.reasoning_effort.as_deref(),
+                    request
+                        .runtime_overrides
+                        .reasoning_effort_override_provenance,
+                    model_id,
+                    lookup
+                        .as_ref()
+                        .is_some_and(|result| result.offers_requested_effort),
+                ) {
+                    pending_guard.set_error(msg.clone());
+                    send_failure(request, &msg);
+                    return;
+                }
+                if lookup.is_some_and(|result| result.supports_reasoning_effort) {
+                    effective_sampling_config.reasoning_effort = Some(eff);
+                }
+            }
             Err(err) => {
                 tracing::warn!(
                     value = raw, error = % err,

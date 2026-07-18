@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input for the `task` tool — launches a subagent to handle a task
 /// autonomously.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskToolInput {
     /// The full task prompt for the subagent to execute.
@@ -103,10 +104,40 @@ pub struct TaskToolInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
+    /// Optional reasoning effort for this subagent spawn.
+    #[schemars(
+        description = "Optional reasoning effort for this agent: \"none\", \"minimal\", \
+            \"low\", \"medium\", \"high\", \"xhigh\", or \"max\". The \"max\" value \
+            is an alias for \"xhigh\". If omitted, the subagent inherits its role, persona, \
+            agent definition, model, or parent default."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<SubagentReasoningEffort>,
+
     /// Server-injected before execution. Becomes the subagent's session ID.
     #[schemars(skip)]
     #[serde(default)]
     pub task_id: Option<String>,
+}
+
+impl TaskToolInput {
+    /// Construct a task input with the same defaults used when optional JSON
+    /// fields are omitted.
+    pub fn new(prompt: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            description: description.into(),
+            subagent_type: default_subagent_type(),
+            run_in_background: true,
+            capability_mode: None,
+            isolation: None,
+            resume_from: None,
+            cwd: None,
+            model: None,
+            reasoning_effort: None,
+            task_id: None,
+        }
+    }
 }
 
 /// Default `subagent_type` for [`TaskToolInput`] when the caller omits it.
@@ -197,6 +228,56 @@ impl SubagentIsolationMode {
         match self {
             Self::None => "none",
             Self::Worktree => "worktree",
+        }
+    }
+}
+
+/// Reasoning effort requested for one subagent spawn.
+///
+/// Kept in the canonical tool-types crate so the public Task schema does not
+/// depend on the downstream sampling-types crate. `Max` remains visible in the
+/// JSON schema but normalizes to the sampling layer's canonical `xhigh` token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl SubagentReasoningEffort {
+    /// Canonical sampling-layer string. `max` is the CLI/UX alias of `xhigh`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh | Self::Max => "xhigh",
+        }
+    }
+}
+
+impl std::str::FromStr for SubagentReasoningEffort {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "minimal" => Ok(Self::Minimal),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::Xhigh),
+            "max" => Ok(Self::Max),
+            _ => Err(format!(
+                "invalid subagent reasoning effort: {value:?} (expected one of: none, minimal, low, medium, high, xhigh, max)"
+            )),
         }
     }
 }
@@ -1093,10 +1174,16 @@ mod tests {
     fn task_tool_input_defaults_background_true() {
         let input: TaskToolInput =
             serde_json::from_str(r#"{"description": "test", "prompt": "do it"}"#).unwrap();
+        let constructed = TaskToolInput::new("do it", "test");
         assert_eq!(input.subagent_type, "general-purpose");
         assert!(
             input.run_in_background,
             "run_in_background should default to true"
+        );
+        assert_eq!(
+            serde_json::to_value(&constructed).unwrap(),
+            serde_json::to_value(&input).unwrap(),
+            "constructor defaults must match serde omission defaults"
         );
 
         let foreground: TaskToolInput = serde_json::from_str(
@@ -1123,18 +1210,8 @@ mod tests {
 
     #[test]
     fn task_tool_input_model_none_skips_serialize() {
-        let input = TaskToolInput {
-            prompt: "p".into(),
-            description: "d".into(),
-            subagent_type: default_subagent_type(),
-            run_in_background: false,
-            capability_mode: None,
-            isolation: None,
-            resume_from: None,
-            cwd: None,
-            model: None,
-            task_id: None,
-        };
+        let mut input = TaskToolInput::new("p", "d");
+        input.run_in_background = false;
         let value = serde_json::to_value(&input).unwrap();
         assert!(value.get("model").is_none());
     }

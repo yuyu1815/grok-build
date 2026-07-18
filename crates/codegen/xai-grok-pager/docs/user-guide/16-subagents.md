@@ -148,10 +148,16 @@ The main agent calls the `spawn_subagent` tool. Its parameters:
 | `description`     | A short label for the task (3-5 words).                          |
 | `subagent_type`   | The agent type to launch. Defaults to `general-purpose`.         |
 | `background`       | Run the subagent in the background and return immediately with a subagent ID. Defaults to `false`. |
+| `reasoning_effort` | Override the child's reasoning effort for this spawn: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` (`max` is equivalent to `xhigh`). |
 | `capability_mode` | Restrict the subagent's tools: `read-only`, `read-write`, `execute`, or `all`. |
 | `isolation`       | `none` (shared workspace, the default) or `worktree` (isolated git worktree). |
 | `resume_from`     | Continue a completed subagent's conversation. Pass its subagent ID. |
 | `cwd`             | Working directory for the subagent. Mutually exclusive with `isolation: worktree`; ignored when `resume_from` is set (the resumed child inherits its source's directory). |
+
+If the effective child model does not offer an explicitly requested
+`reasoning_effort`, the spawn fails with an `invalid_arguments` error. Omit the
+parameter to inherit the existing role, persona, custom-agent, and parent/model
+defaults.
 
 When you run a subagent in the background, retrieve its result later with `get_command_or_subagent_output`.
 
@@ -181,7 +187,7 @@ The `resume_from` parameter lets a new subagent continue where a completed subag
 1. Spawn a research subagent to investigate a problem.
 2. Spawn a second subagent with `resume_from` set to the first subagent's ID, so it picks up with the full research context.
 
-The new subagent inherits the source's transcript, tool state, and model; its system prompt and tools are re-rendered from the current agent definition. The source must be completed (not running), belong to the current session, and use the same agent type.
+The new subagent inherits the source's transcript, tool state, and model; its system prompt and tools are re-rendered from the current agent definition. An explicit `reasoning_effort` on the new spawn is applied to that inherited model. The source must be completed (not running), belong to the current session, and use the same agent type.
 
 ---
 

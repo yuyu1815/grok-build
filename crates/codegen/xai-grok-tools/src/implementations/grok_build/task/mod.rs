@@ -16,7 +16,7 @@ pub mod backend;
 pub mod types;
 
 use self::backend::SubagentBackendResource;
-use self::types::CurrentPromptIdResource;
+use self::types::{CurrentPromptIdResource, ReasoningEffortOverrideProvenance};
 
 use self::types::*;
 use crate::types::output::ToolOutput;
@@ -305,7 +305,10 @@ impl xai_tool_runtime::Tool for TaskTool {
             runtime_overrides: SubagentRuntimeOverrides {
                 model,
                 model_override_provenance: ModelOverrideProvenance::Tool,
-                reasoning_effort: None,
+                reasoning_effort: input
+                    .reasoning_effort
+                    .map(|effort| effort.as_str().to_string()),
+                reasoning_effort_override_provenance: ReasoningEffortOverrideProvenance::Tool,
                 persona: None,
                 capability_mode: input.capability_mode,
                 isolation: input.isolation,
@@ -436,7 +439,7 @@ mod tests {
     use crate::types::tool_metadata::test_ctx;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use xai_tool_types::SubagentCapabilityMode;
+    use xai_tool_types::{SubagentCapabilityMode, SubagentReasoningEffort};
 
     /// Backend whose `ValidateType` events are auto-acked with `Ok`.
     fn make_backend() -> (
@@ -505,22 +508,19 @@ mod tests {
         resources.insert(CurrentPromptIdResource("prompt-123".to_string()));
 
         let tool = TaskTool;
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test task".into(),
-                prompt: "do something".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), {
+            let mut input = TaskToolInput::new("do something", "test task");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         assert!(result.is_err());
@@ -537,22 +537,19 @@ mod tests {
         resources.insert(SessionIdResource("child-session".to_string()));
         resources.insert(CurrentPromptIdResource("prompt-456".to_string()));
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "nested spawn".into(),
-                prompt: "should be rejected".into(),
-                subagent_type: "explore".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(resources.into_shared()), {
+            let mut input = TaskToolInput::new("should be rejected", "nested spawn");
+            input.subagent_type = "explore".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         assert!(result.is_err());
@@ -568,22 +565,19 @@ mod tests {
         let resources = Resources::new();
 
         let tool = TaskTool;
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test task".into(),
-                prompt: "do something".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), {
+            let mut input = TaskToolInput::new("do something", "test task");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         assert!(result.is_err());
@@ -627,22 +621,22 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "Find auth middleware".into(),
-                prompt: "Search for authentication middleware files".into(),
-                subagent_type: "explore".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), {
+            let mut input = TaskToolInput::new(
+                "Search for authentication middleware files",
+                "Find auth middleware",
+            );
+            input.subagent_type = "explore".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap();
 
@@ -684,22 +678,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test task".into(),
-                prompt: "do something".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("do something", "test task");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -727,22 +718,19 @@ mod tests {
             drop(request.result_tx);
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &tool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test task".into(),
-                prompt: "do something".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("do something", "test task");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -814,17 +802,18 @@ mod tests {
     }
 
     fn task_input(subagent_type: &str, background: bool) -> TaskToolInput {
-        TaskToolInput {
-            description: "test".into(),
-            prompt: "do it".into(),
-            subagent_type: subagent_type.into(),
-            run_in_background: background,
-            capability_mode: None,
-            isolation: None,
-            resume_from: None,
-            cwd: None,
-            model: None,
-            task_id: None,
+        {
+            let mut input = TaskToolInput::new("do it", "test");
+            input.subagent_type = subagent_type.into();
+            input.run_in_background = background;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
         }
     }
 
@@ -1163,6 +1152,7 @@ mod tests {
         .unwrap();
         assert_eq!(input.capability_mode, Some(SubagentCapabilityMode::Execute));
         assert!(input.model.is_none());
+        assert!(input.reasoning_effort.is_none());
     }
 
     #[test]
@@ -1178,27 +1168,79 @@ mod tests {
     }
 
     #[test]
+    fn task_tool_input_schema_includes_reasoning_effort_enum() {
+        let schema = serde_json::to_value(schemars::schema_for!(TaskToolInput)).unwrap();
+        assert_eq!(
+            schema["$defs"]["SubagentReasoningEffort"]["enum"],
+            serde_json::json!(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+        );
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name == "reasoning_effort")
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_values_roundtrip_and_max_normalizes() {
+        for (token, expected, canonical) in [
+            ("none", SubagentReasoningEffort::None, "none"),
+            ("minimal", SubagentReasoningEffort::Minimal, "minimal"),
+            ("low", SubagentReasoningEffort::Low, "low"),
+            ("medium", SubagentReasoningEffort::Medium, "medium"),
+            ("high", SubagentReasoningEffort::High, "high"),
+            ("xhigh", SubagentReasoningEffort::Xhigh, "xhigh"),
+            ("max", SubagentReasoningEffort::Max, "xhigh"),
+        ] {
+            let input: TaskToolInput = serde_json::from_value(serde_json::json!({
+                "description": "d",
+                "prompt": "p",
+                "reasoning_effort": token,
+            }))
+            .unwrap();
+            assert_eq!(input.reasoning_effort, Some(expected));
+            assert_eq!(expected.as_str(), canonical);
+            assert_eq!(serde_json::to_value(expected).unwrap(), token);
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_rejects_unknown_value() {
+        let result = serde_json::from_str::<TaskToolInput>(
+            r#"{"description":"d","prompt":"p","reasoning_effort":"ultra"}"#,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn runtime_overrides_struct_default_is_all_none() {
         let overrides = SubagentRuntimeOverrides::default();
         assert!(overrides.model.is_none());
         assert!(overrides.reasoning_effort.is_none());
+        assert_eq!(
+            overrides.reasoning_effort_override_provenance,
+            ReasoningEffortOverrideProvenance::Harness
+        );
         assert!(overrides.persona.is_none());
         assert!(overrides.capability_mode.is_none());
     }
 
     #[test]
     fn task_input_roundtrips_through_json() {
-        let input = TaskToolInput {
-            description: "find bugs".into(),
-            prompt: "search for bugs".into(),
-            subagent_type: "explore".into(),
-            run_in_background: true,
-            capability_mode: Some(SubagentCapabilityMode::ReadOnly),
-            isolation: Some(SubagentIsolationMode::Worktree),
-            resume_from: None,
-            cwd: None,
-            model: Some("test-model".into()),
-            task_id: Some("task-123".into()),
+        let input = {
+            let mut input = TaskToolInput::new("search for bugs", "find bugs");
+            input.subagent_type = "explore".into();
+            input.run_in_background = true;
+            input.capability_mode = Some(SubagentCapabilityMode::ReadOnly);
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = Some("test-model".into());
+            input.reasoning_effort = Some(SubagentReasoningEffort::High);
+            input.task_id = Some("task-123".into());
+            input
         };
         let json = serde_json::to_string(&input).unwrap();
         let parsed: TaskToolInput = serde_json::from_str(&json).unwrap();
@@ -1208,6 +1250,7 @@ mod tests {
             Some(SubagentCapabilityMode::ReadOnly)
         );
         assert_eq!(parsed.model.as_deref(), Some("test-model"));
+        assert_eq!(parsed.reasoning_effort, Some(SubagentReasoningEffort::High));
     }
 
     #[test]
@@ -1458,17 +1501,18 @@ mod tests {
             !schema_json.contains("fork_context"),
             "TaskToolInput JSON schema must not expose fork_context"
         );
-        let serialized = serde_json::to_string(&TaskToolInput {
-            description: "d".into(),
-            prompt: "p".into(),
-            subagent_type: "general-purpose".into(),
-            run_in_background: false,
-            capability_mode: None,
-            isolation: None,
-            resume_from: None,
-            cwd: None,
-            model: None,
-            task_id: None,
+        let serialized = serde_json::to_string(&{
+            let mut input = TaskToolInput::new("p", "d");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
         })
         .unwrap();
         assert!(
@@ -1505,22 +1549,19 @@ mod tests {
                 .unwrap();
         });
 
-        let _ = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "d".into(),
-                prompt: "p".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let _ = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("p", "d");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap();
         handle.await.unwrap();
@@ -1544,17 +1585,18 @@ mod tests {
 
     #[test]
     fn resume_from_not_serialized_when_none() {
-        let input = TaskToolInput {
-            description: "d".into(),
-            prompt: "p".into(),
-            subagent_type: "general-purpose".into(),
-            run_in_background: false,
-            capability_mode: None,
-            isolation: None,
-            resume_from: None,
-            cwd: None,
-            model: None,
-            task_id: None,
+        let input = {
+            let mut input = TaskToolInput::new("p", "d");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
         };
         let json = serde_json::to_string(&input).unwrap();
         assert!(
@@ -1588,22 +1630,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "resume".into(),
-                prompt: "continue".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: Some("prev-id".into()),
-                cwd: None,
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("continue", "resume");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = Some("prev-id".into());
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap();
 
@@ -1655,22 +1694,19 @@ mod tests {
                     .unwrap();
             });
 
-            let result = xai_tool_runtime::Tool::run(
-                &TaskTool,
-                test_ctx(shared),
-                TaskToolInput {
-                    description: "test sentinel".into(),
-                    prompt: "work".into(),
-                    subagent_type: "general-purpose".into(),
-                    run_in_background: false,
-                    capability_mode: None,
-                    isolation: None,
-                    resume_from: Some(sentinel.into()),
-                    cwd: None,
-                    model: None,
-                    task_id: None,
-                },
-            )
+            let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+                let mut input = TaskToolInput::new("work", "test sentinel");
+                input.subagent_type = "general-purpose".into();
+                input.run_in_background = false;
+                input.capability_mode = None;
+                input.isolation = None;
+                input.resume_from = Some(sentinel.into());
+                input.cwd = None;
+                input.model = None;
+                input.reasoning_effort = None;
+                input.task_id = None;
+                input
+            })
             .await
             .unwrap_or_else(|e| panic!("sentinel {sentinel:?} should not fail: {e}"));
 
@@ -1704,17 +1740,18 @@ mod tests {
 
     #[test]
     fn cwd_not_serialized_when_none() {
-        let input = TaskToolInput {
-            description: "d".into(),
-            prompt: "p".into(),
-            subagent_type: "general-purpose".into(),
-            run_in_background: false,
-            capability_mode: None,
-            isolation: None,
-            resume_from: None,
-            cwd: None,
-            model: None,
-            task_id: None,
+        let input = {
+            let mut input = TaskToolInput::new("p", "d");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = None;
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
         };
         let json = serde_json::to_string(&input).unwrap();
         assert!(!json.contains("cwd"), "None cwd should be skipped: {json}");
@@ -1729,22 +1766,19 @@ mod tests {
         resources.insert(SessionIdResource("parent".to_string()));
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test cwd conflict".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("/tmp".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(resources.into_shared()), {
+            let mut input = TaskToolInput::new("work", "test cwd conflict");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = Some("/tmp".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         assert!(result.is_err());
@@ -1784,22 +1818,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test empty cwd".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "test empty cwd");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = Some("".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -1835,22 +1866,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test null cwd".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("null".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "test null cwd");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = Some("null".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -1886,22 +1914,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test whitespace cwd".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("  ".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "test whitespace cwd");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = Some("  ".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -1940,22 +1965,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "test nonexistent cwd".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::Worktree),
-                resume_from: None,
-                cwd: Some("/nonexistent/path/that/does/not/exist".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "test nonexistent cwd");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::Worktree);
+            input.resume_from = None;
+            input.cwd = Some("/nonexistent/path/that/does/not/exist".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -1974,22 +1996,19 @@ mod tests {
         resources.insert(SessionIdResource("parent".to_string()));
         resources.insert(CurrentPromptIdResource("prompt-1".to_string()));
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(resources.into_shared()),
-            TaskToolInput {
-                description: "test nonexistent cwd no worktree".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: Some("/nonexistent/path/that/does/not/exist".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(resources.into_shared()), {
+            let mut input = TaskToolInput::new("work", "test nonexistent cwd no worktree");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = Some("/nonexistent/path/that/does/not/exist".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         assert!(result.is_err());
@@ -2030,22 +2049,19 @@ mod tests {
                     .unwrap();
             });
 
-            let result = xai_tool_runtime::Tool::run(
-                &TaskTool,
-                test_ctx(shared.clone()),
-                TaskToolInput {
-                    description: "test sentinel cwd".into(),
-                    prompt: "work".into(),
-                    subagent_type: "general-purpose".into(),
-                    run_in_background: false,
-                    capability_mode: None,
-                    isolation: None,
-                    resume_from: None,
-                    cwd: Some(sentinel.into()),
-                    model: None,
-                    task_id: None,
-                },
-            )
+            let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared.clone()), {
+                let mut input = TaskToolInput::new("work", "test sentinel cwd");
+                input.subagent_type = "general-purpose".into();
+                input.run_in_background = false;
+                input.capability_mode = None;
+                input.isolation = None;
+                input.resume_from = None;
+                input.cwd = Some(sentinel.into());
+                input.model = None;
+                input.reasoning_effort = None;
+                input.task_id = None;
+                input
+            })
             .await
             .unwrap_or_else(|e| panic!("sentinel {sentinel:?} should not fail: {e}"));
 
@@ -2084,22 +2100,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "cwd test".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: Some("/tmp".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "cwd test");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = Some("/tmp".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap();
 
@@ -2142,22 +2155,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "stray quote cwd".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: None,
-                cwd: Some("\"/tmp".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "stray quote cwd");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = None;
+            input.cwd = Some("\"/tmp".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap_or_else(|e| panic!("sanitized cwd should succeed: {e}"));
 
@@ -2195,22 +2205,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "cwd with none".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: Some(SubagentIsolationMode::None),
-                resume_from: None,
-                cwd: Some("/tmp".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "cwd with none");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = Some(SubagentIsolationMode::None);
+            input.resume_from = None;
+            input.cwd = Some("/tmp".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await;
 
         handle.await.unwrap();
@@ -2244,22 +2251,19 @@ mod tests {
                 .unwrap();
         });
 
-        let result = xai_tool_runtime::Tool::run(
-            &TaskTool,
-            test_ctx(shared),
-            TaskToolInput {
-                description: "cwd + resume".into(),
-                prompt: "work".into(),
-                subagent_type: "general-purpose".into(),
-                run_in_background: false,
-                capability_mode: None,
-                isolation: None,
-                resume_from: Some("prev-id".into()),
-                cwd: Some("/tmp/some-dir".into()),
-                model: None,
-                task_id: None,
-            },
-        )
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), {
+            let mut input = TaskToolInput::new("work", "cwd + resume");
+            input.subagent_type = "general-purpose".into();
+            input.run_in_background = false;
+            input.capability_mode = None;
+            input.isolation = None;
+            input.resume_from = Some("prev-id".into());
+            input.cwd = Some("/tmp/some-dir".into());
+            input.model = None;
+            input.reasoning_effort = None;
+            input.task_id = None;
+            input
+        })
         .await
         .unwrap();
 
@@ -2270,6 +2274,82 @@ mod tests {
             }
             other => panic!("Expected SubagentCompleted, got {:?}", other),
         }
+    }
+
+    // ── reasoning-effort override tests ─────────────────────────
+
+    #[tokio::test]
+    async fn reasoning_effort_threads_to_runtime_overrides() {
+        let (backend, mut rx) = make_backend();
+        let resources = resources_for_task(backend);
+        let shared = resources.into_shared();
+
+        let handle = tokio::spawn(async move {
+            let request = unwrap_spawn(rx.recv().await.unwrap());
+            assert_eq!(
+                request.runtime_overrides.reasoning_effort.as_deref(),
+                Some("high")
+            );
+            assert_eq!(
+                request
+                    .runtime_overrides
+                    .reasoning_effort_override_provenance,
+                ReasoningEffortOverrideProvenance::Tool
+            );
+            request
+                .result_tx
+                .send(SubagentResult {
+                    success: true,
+                    output: "ok".into(),
+                    subagent_id: request.id.clone(),
+                    child_session_id: request.id.clone(),
+                    ..Default::default()
+                })
+                .unwrap();
+        });
+
+        let mut input = task_input("general-purpose", false);
+        input.reasoning_effort = Some(SubagentReasoningEffort::High);
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), input)
+            .await
+            .unwrap();
+        handle.await.unwrap();
+        assert!(matches!(result, ToolOutput::SubagentCompleted(_)));
+    }
+
+    #[tokio::test]
+    async fn background_worktree_spawn_preserves_normalized_effort() {
+        let (backend, mut rx) = make_backend();
+        let resources = resources_for_task(backend);
+        let shared = resources.into_shared();
+
+        let mut input = task_input("general-purpose", true);
+        input.isolation = Some(SubagentIsolationMode::Worktree);
+        input.reasoning_effort = Some(SubagentReasoningEffort::Max);
+        let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), input)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Text(_)));
+
+        let request = unwrap_spawn(rx.recv().await.unwrap());
+        assert_eq!(
+            request.runtime_overrides.reasoning_effort.as_deref(),
+            Some("xhigh")
+        );
+        assert_eq!(
+            request.runtime_overrides.isolation,
+            Some(SubagentIsolationMode::Worktree)
+        );
+        request
+            .result_tx
+            .send(SubagentResult {
+                success: true,
+                output: "ok".into(),
+                subagent_id: request.id.clone(),
+                child_session_id: request.id.clone(),
+                ..Default::default()
+            })
+            .unwrap();
     }
 
     // ── model override tests ─────────────────────────────────────
@@ -2457,7 +2537,17 @@ mod tests {
                 request.runtime_overrides.model_override_provenance,
                 ModelOverrideProvenance::Tool,
             );
-            assert!(request.runtime_overrides.reasoning_effort.is_none());
+            assert_eq!(
+                request.runtime_overrides.reasoning_effort.as_deref(),
+                Some("high"),
+                "resume pins the source model but keeps this spawn's explicit effort"
+            );
+            assert_eq!(
+                request
+                    .runtime_overrides
+                    .reasoning_effort_override_provenance,
+                ReasoningEffortOverrideProvenance::Tool,
+            );
             assert!(request.runtime_overrides.persona.is_none());
             request
                 .result_tx
@@ -2474,6 +2564,7 @@ mod tests {
         let mut input = task_input("general-purpose", false);
         input.resume_from = Some("prev-id".into());
         input.model = Some("test-model".into());
+        input.reasoning_effort = Some(SubagentReasoningEffort::High);
         let result = xai_tool_runtime::Tool::run(&TaskTool, test_ctx(shared), input)
             .await
             .unwrap();

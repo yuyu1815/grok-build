@@ -2095,6 +2095,43 @@ async fn handle_subagent_request_rejects_disabled_agent() {
     );
 }
 #[tokio::test]
+async fn handle_subagent_request_rejects_unsupported_explicit_tool_effort() {
+    use crate::agent::config::{ModelEntry, ModelInfo};
+    use xai_grok_tools::implementations::grok_build::task::types::ReasoningEffortOverrideProvenance;
+
+    let mut ctx = ctx_with_toggle(HashMap::new());
+    ctx.models_manager.insert_test_entry(
+        "test",
+        ModelEntry {
+            info: ModelInfo::fallback("test"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        },
+    );
+    let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());
+    let gateway = test_gateway();
+    let (mut request, result_rx) = make_request("explore");
+    request.runtime_overrides.reasoning_effort = Some("high".into());
+    request
+        .runtime_overrides
+        .reasoning_effort_override_provenance = ReasoningEffortOverrideProvenance::Tool;
+
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            Box::pin(handle_subagent_request(request, ctx, &coordinator, &gateway)).await;
+        })
+        .await;
+
+    let result = result_rx.await.expect("handler must return a failed spawn result");
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("Task.reasoning_effort 'high'"), "{error}");
+    assert!(error.contains("model 'test'"), "{error}");
+    assert!(error.contains("Omit `reasoning_effort`"), "{error}");
+}
+#[tokio::test]
 async fn handle_subagent_request_allows_when_absent_from_toggle() {
     let ctx = ctx_with_toggle(HashMap::new());
     let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());

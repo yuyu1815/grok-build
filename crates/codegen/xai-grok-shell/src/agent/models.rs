@@ -103,6 +103,18 @@ pub struct ModelsManager {
     inner: Arc<Inner>,
 }
 
+/// One-catalog-snapshot answer for a model's reasoning-effort capability.
+///
+/// The resolved entry and both capability decisions are derived while the
+/// same catalog read guard is held, so callers cannot mix answers from two
+/// refresh generations.
+#[derive(Debug, Clone)]
+pub(crate) struct ModelReasoningEffortLookup {
+    pub(crate) entry: ModelEntry,
+    pub(crate) supports_reasoning_effort: bool,
+    pub(crate) offers_requested_effort: bool,
+}
+
 struct Inner {
     prefetched: RwLock<Option<IndexMap<String, ModelEntry>>>,
     models: RwLock<IndexMap<String, ModelEntry>>,
@@ -452,6 +464,34 @@ impl ModelsManager {
             .get(model_id)
             .map(|e| e.info().supports_reasoning_effort)
             .unwrap_or(false)
+    }
+
+    /// Whether `model_id` advertises this exact reasoning-effort value.
+    ///
+    /// Uses the server-provided menu when present, otherwise the same legacy
+    /// low/medium/high/xhigh fallback used by the session effort picker.
+    pub fn model_offers_reasoning_effort(&self, model_id: &str, effort: ReasoningEffort) -> bool {
+        self.inner
+            .models
+            .read()
+            .get(model_id)
+            .map(|entry| model_offers_reasoning_effort(&entry.info, effort))
+            .unwrap_or(false)
+    }
+
+    /// Resolve `model_id` by catalog key first and provider slug second, then
+    /// derive all reasoning-effort decisions from that one catalog snapshot.
+    pub(crate) fn lookup_model_reasoning_effort(
+        &self,
+        model_id: &str,
+        requested: ReasoningEffort,
+    ) -> Option<ModelReasoningEffortLookup> {
+        let models = self.inner.models.read();
+        config::find_model_by_id(&models, model_id).map(|entry| ModelReasoningEffortLookup {
+            entry: entry.clone(),
+            supports_reasoning_effort: entry.info.supports_reasoning_effort,
+            offers_requested_effort: model_offers_reasoning_effort(&entry.info, requested),
+        })
     }
 
     /// The catalog default reasoning effort for `model_id`, if the catalog
@@ -2229,6 +2269,74 @@ mod tests {
 
         mgr.set_current_reasoning_effort(None);
         assert_eq!(mgr.current_reasoning_effort(), None);
+    }
+
+    fn reasoning_effort_lookup_manager() -> ModelsManager {
+        let mgr = test_manager();
+        let mut entry = ModelEntry {
+            info: config::ModelInfo::fallback("provider-slug"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        entry.info.supports_reasoning_effort = true;
+        entry.info.reasoning_efforts = vec![ReasoningEffortOption {
+            id: "deep".to_string(),
+            value: ReasoningEffort::High,
+            label: "Deep".to_string(),
+            description: None,
+            default: true,
+        }];
+        mgr.insert_test_entry("catalog-key", entry);
+        mgr
+    }
+
+    #[test]
+    fn reasoning_effort_lookup_resolves_catalog_key_and_provider_slug() {
+        let mgr = reasoning_effort_lookup_manager();
+
+        for requested_id in ["catalog-key", "provider-slug"] {
+            let result = mgr
+                .lookup_model_reasoning_effort(requested_id, ReasoningEffort::High)
+                .expect("key and provider slug must resolve through find_model_by_id");
+            assert_eq!(result.entry.info.model, "provider-slug");
+            assert!(result.supports_reasoning_effort);
+            assert!(result.offers_requested_effort);
+        }
+
+        let unavailable = mgr
+            .lookup_model_reasoning_effort("provider-slug", ReasoningEffort::Low)
+            .unwrap();
+        assert!(unavailable.supports_reasoning_effort);
+        assert!(!unavailable.offers_requested_effort);
+        assert!(
+            mgr.lookup_model_reasoning_effort("missing", ReasoningEffort::High)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_lookup_returns_one_owned_catalog_snapshot() {
+        let mgr = reasoning_effort_lookup_manager();
+        let snapshot = mgr
+            .lookup_model_reasoning_effort("catalog-key", ReasoningEffort::High)
+            .unwrap();
+
+        {
+            let mut models = mgr.inner.models.write();
+            let entry = models.get_mut("catalog-key").unwrap();
+            entry.info.supports_reasoning_effort = false;
+            entry.info.reasoning_efforts.clear();
+        }
+
+        assert!(snapshot.entry.info.supports_reasoning_effort);
+        assert!(snapshot.supports_reasoning_effort);
+        assert!(snapshot.offers_requested_effort);
+        let refreshed = mgr
+            .lookup_model_reasoning_effort("catalog-key", ReasoningEffort::High)
+            .unwrap();
+        assert!(!refreshed.supports_reasoning_effort);
+        assert!(!refreshed.offers_requested_effort);
     }
 
     #[test]
