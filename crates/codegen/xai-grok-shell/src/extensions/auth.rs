@@ -125,13 +125,17 @@ async fn handle_logout(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let params: LogoutParams = serde_json::from_str(args.params.get())
         .map_err(|e| acp::Error::invalid_params().data(format!("invalid params: {e}")))?;
 
-    let result = crate::auth::perform_logout(&agent.auth_manager, params.scope.as_deref())
+    let provider = crate::provider::GrokProvider::new(
+        agent.auth_manager.clone(),
+        agent.models_manager.clone(),
+    );
+    let result = provider
+        .logout_and_reload(params.scope.as_deref())
+        .await
         .map_err(|e| acp::Error::internal_error().data(format!("failed to logout: {e}")))?;
     // `auth.lifecycle` (not `auth`) avoids colliding with the pre-existing
     // per-request `AuthManager::auth()` `#[instrument]` span.
     tracing::info_span!("auth.lifecycle", action = "logout", success = true).in_scope(|| {});
-
-    agent.models_manager.on_auth_changed().await;
 
     to_raw_response(&serde_json::json!({
         "ok": true,

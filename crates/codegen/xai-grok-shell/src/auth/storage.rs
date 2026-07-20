@@ -4,7 +4,57 @@ use std::path::{Path, PathBuf};
 
 use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
-/// RAII guard for an exclusive advisory lock on `auth.json.lock`.
+/// The resolved auth files for one Grok home.
+///
+/// Reads prefer the canonical provider file, then the legacy file for the
+/// migration window. Writes always target `write_path`, which is canonical for
+/// the default layout even when the initial read came from the legacy file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthStoragePaths {
+    pub(crate) read_path: PathBuf,
+    pub(crate) write_path: PathBuf,
+}
+
+/// Resolve the provider auth files without reading credential contents.
+///
+/// `GROK_AUTH_PATH` is an explicit read/write override. Otherwise the
+/// canonical provider file wins whenever it exists; the legacy `auth.json`
+/// file is only a read fallback and is never removed by migration.
+pub(crate) fn auth_storage_paths(grok_home: &Path) -> AuthStoragePaths {
+    if let Ok(path) = std::env::var("GROK_AUTH_PATH") {
+        let path = PathBuf::from(path);
+        return AuthStoragePaths {
+            read_path: path.clone(),
+            write_path: path,
+        };
+    }
+
+    let canonical = grok_home.join("auth").join("grok.json");
+    let legacy = grok_home.join("auth.json");
+    let read_path = if canonical.exists() {
+        canonical.clone()
+    } else if legacy.exists() {
+        legacy
+    } else {
+        canonical.clone()
+    };
+
+    AuthStoragePaths {
+        read_path,
+        write_path: canonical,
+    }
+}
+
+/// Return the advisory lock path next to an auth file.
+pub(crate) fn auth_lock_path(auth_file: &Path) -> PathBuf {
+    let file_name = auth_file
+        .file_name()
+        .map(|name| format!("{}.lock", name.to_string_lossy()))
+        .unwrap_or_else(|| "auth.json.lock".to_owned());
+    auth_file.with_file_name(file_name)
+}
+
+/// RAII guard for an exclusive advisory lock on the auth file's sibling lock.
 /// The lock is released when the inner `File` is dropped (closing the FD).
 pub(crate) struct AuthFileLock {
     pub(super) _file: File,
@@ -32,7 +82,7 @@ impl AuthFileLock {
     #[cfg(unix)]
     pub(crate) fn still_live(&self, auth_json_path: &Path) -> bool {
         use std::os::unix::fs::MetadataExt;
-        let lock_path = auth_json_path.with_file_name("auth.json.lock");
+        let lock_path = auth_lock_path(auth_json_path);
         let (Ok(fd_meta), Ok(path_meta)) = (self._file.metadata(), std::fs::metadata(&lock_path))
         else {
             // Lock file gone or unreadable → we no longer hold the live lock.
@@ -324,32 +374,61 @@ fn restore_prior_bytes(auth_file: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Read a single auth token from `auth.json` by scope key.
-/// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key
-/// when the requested scope is not found (devbox auth.json migration).
+fn inline_auth_json() -> Option<String> {
+    std::env::var("GROK_AUTH").ok()
+}
+
+/// Read a single auth token from the resolved auth source by scope key.
+/// Inline `GROK_AUTH` is intentionally read-only and has highest priority.
+/// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key when the
+/// requested scope is not found.
 pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<String> {
-    let path = grok_home.join("auth.json");
-    let store =
-        read_auth_json(&path).map_err(|_| anyhow::anyhow!("Not logged in. Run `grok login`."))?;
+    if let Some(json) = inline_auth_json() {
+        if let Ok(auth) = serde_json::from_str::<GrokAuth>(&json) {
+            return Ok(auth.key);
+        }
+        if let Ok(store) = serde_json::from_str::<AuthStore>(&json) {
+            return lookup_auth(&store, scope)
+                .map(|a| a.key)
+                .ok_or_else(|| anyhow::anyhow!("Your auth token is invalid."));
+        }
+        return Err(anyhow::anyhow!("GROK_AUTH is invalid JSON."));
+    }
+    let paths = auth_storage_paths(grok_home);
+    let store = read_auth_json(&paths.read_path)
+        .map_err(|_| anyhow::anyhow!("Not logged in. Run `grok login`."))?;
     lookup_auth(&store, scope).map(|a| a.key).ok_or_else(|| {
         anyhow::anyhow!("Your auth token is invalid. Run `grok login` to re-authenticate.")
     })
 }
 
-/// Read the API key from the `xai::api_key` scope in auth.json.
+/// Read the API key from the `xai::api_key` scope in the resolved auth source.
 pub fn read_api_key(grok_home: &Path) -> Option<String> {
-    let path = grok_home.join("auth.json");
-    let map = read_auth_json(&path).ok()?;
+    if let Some(json) = inline_auth_json() {
+        if let Ok(auth) = serde_json::from_str::<GrokAuth>(&json) {
+            return (auth.auth_mode == AuthMode::ApiKey).then_some(auth.key);
+        }
+        return serde_json::from_str::<AuthStore>(&json)
+            .ok()
+            .and_then(|map| map.get(API_KEY_SCOPE).map(|a| a.key.clone()));
+    }
+    let paths = auth_storage_paths(grok_home);
+    let map = read_auth_json(&paths.read_path).ok()?;
     map.get(API_KEY_SCOPE).map(|a| a.key.clone())
 }
 
-/// Store a plain API key in auth.json under the `xai::api_key` scope.
-///
-/// Uses the corrupt-recovery reader so a malformed auth.json (e.g. from a
-/// previous crash) can be healed when the user sets an API key.
+/// Store a plain API key in the resolved auth file under the `xai::api_key`
+/// scope. Legacy reads are migrated by writing the merged store to the
+/// canonical provider path; the legacy file remains untouched.
 pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
-    let path = grok_home.join("auth.json");
-    let mut map = read_auth_json_or_empty_recovering_corrupt(&path)?;
+    if inline_auth_json().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "GROK_AUTH is a read-only credential override",
+        ));
+    }
+    let paths = auth_storage_paths(grok_home);
+    let mut map = read_auth_json_or_empty_recovering_corrupt(&paths.read_path)?;
     map.insert(
         API_KEY_SCOPE.to_owned(),
         GrokAuth {
@@ -358,18 +437,26 @@ pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
             ..Default::default()
         },
     );
-    write_auth_json(&path, &map)
+    write_auth_json(&paths.write_path, &map)
 }
 
-/// Remove the `xai::api_key` scope from auth.json.
+/// Remove the `xai::api_key` scope from the resolved auth file.
 pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
-    let path = grok_home.join("auth.json");
-    if let Ok(mut map) = read_auth_json(&path) {
+    if inline_auth_json().is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "GROK_AUTH is a read-only credential override",
+        ));
+    }
+    let paths = auth_storage_paths(grok_home);
+    if let Ok(mut map) = read_auth_json(&paths.read_path) {
         map.remove(API_KEY_SCOPE);
-        if map.is_empty() {
-            let _ = std::fs::remove_file(&path);
+        if map.is_empty() && paths.read_path == paths.write_path {
+            let _ = std::fs::remove_file(&paths.write_path);
         } else {
-            write_auth_json(&path, &map)?;
+            // Preserve an empty canonical file when the read source was the
+            // legacy path, so clearing a key cannot resurrect legacy state.
+            write_auth_json(&paths.write_path, &map)?;
         }
     }
     Ok(())
@@ -508,5 +595,35 @@ mod write_fallback_tests {
         let _ = write_auth_json_in_place_with(&path, &sample_store(), fake_truncate_then_fail);
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "restored file must stay 0o600");
+    }
+
+    #[test]
+    fn resolver_prefers_canonical_over_legacy_and_keeps_canonical_write_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("auth.json");
+        let canonical = dir.path().join("auth").join("grok.json");
+        std::fs::write(&legacy, b"{}").unwrap();
+
+        let paths = auth_storage_paths(dir.path());
+        assert_eq!(paths.read_path, legacy);
+        assert_eq!(paths.write_path, canonical);
+
+        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        std::fs::write(&canonical, b"{}").unwrap();
+        let paths = auth_storage_paths(dir.path());
+        assert_eq!(paths.read_path, canonical);
+        assert_eq!(paths.write_path, canonical);
+    }
+
+    #[test]
+    fn lock_path_is_a_sibling_of_the_auth_file() {
+        assert_eq!(
+            auth_lock_path(Path::new("/tmp/auth/grok.json")),
+            PathBuf::from("/tmp/auth/grok.json.lock")
+        );
+        assert_eq!(
+            auth_lock_path(Path::new("/tmp/auth.json")),
+            PathBuf::from("/tmp/auth.json.lock")
+        );
     }
 }

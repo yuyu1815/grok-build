@@ -1,5 +1,6 @@
 use crate::agent::auth_method::ModelByok;
 use crate::auth::{AuthManager, GrokComConfig, OidcAuthConfig};
+use crate::provider::ProviderId;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use crate::{config::StorageMode, sampling::ApiBackend, tools::config::ShellToolsetConfig};
 use agent_client_protocol as acp;
@@ -3695,6 +3696,8 @@ pub struct ModelInfo {
     /// Falls back to `model` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub provider: ProviderId,
     /// The routing slug sent in API requests.
     pub model: String,
     /// The base URL of the model (session endpoint). e.g. "https://cli-chat-proxy.grok.com/v1"
@@ -3765,6 +3768,7 @@ impl ModelInfo {
         ModelInfo {
             user_selectable: true,
             id: None,
+            provider: ProviderId::Xai,
             model: slug.to_owned(),
             base_url: String::new(),
             name: None,
@@ -3800,6 +3804,7 @@ impl ModelInfo {
         ModelInfo {
             user_selectable: true,
             id: entry.id.clone(),
+            provider: ProviderId::Xai,
             model: entry.model.clone(),
             base_url: entry.base_url.clone(),
             name: entry.name.clone(),
@@ -4278,24 +4283,33 @@ pub(crate) fn first_own_credential(
 /// When `env_key` lists multiple names, the first set non-empty value is used.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
+    let allow_xai_credentials = info.provider == ProviderId::Xai;
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
         (
             Some(key),
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
         )
-    } else if let Some(key) = session_key {
-        (
-            Some(key.to_owned()),
-            info.base_url.clone(),
-            xai_chat_state::AuthType::SessionToken,
-        )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
-        (Some(key), url, xai_chat_state::AuthType::ApiKey)
+    } else if allow_xai_credentials {
+        if let Some(key) = session_key {
+            (
+                Some(key.to_owned()),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::SessionToken,
+            )
+        } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+            let url = model
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| info.base_url.clone());
+            (Some(key), url, xai_chat_state::AuthType::ApiKey)
+        } else {
+            (
+                None,
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+            )
+        }
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()
@@ -4478,6 +4492,7 @@ pub fn resolve_aux_model_sampling_config(
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider: ProviderId::Xai,
                 model: catalog_entry
                     .map(|e| e.info.model)
                     .unwrap_or_else(|| model_id.to_owned()),
@@ -4602,11 +4617,13 @@ pub fn sampling_config_for_model(
     let temperature = info.temperature;
     let top_p = info.top_p;
     let mut extra_headers = info.extra_headers.clone();
-    inject_url_derived_headers(
-        &mut extra_headers,
-        alpha_test_key.as_deref(),
-        &credentials.base_url,
-    );
+    if info.provider == ProviderId::Xai {
+        inject_url_derived_headers(
+            &mut extra_headers,
+            alpha_test_key.as_deref(),
+            &credentials.base_url,
+        );
+    }
     let api_backend = info.api_backend.clone();
     SamplerConfig {
         api_key: credentials.api_key,
@@ -4702,6 +4719,7 @@ fn resolve_hidden_default_web_search_sampling_config(
     let entry = ModelEntry {
         info: ModelInfo {
             id: None,
+            provider: ProviderId::Xai,
             model: model_id.to_owned(),
             base_url: endpoints.resolve_inference_base_url(),
             name: None,
@@ -5358,6 +5376,7 @@ reasoning_effort = "low"
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider: ProviderId::Xai,
                 model: model.to_string(),
                 base_url: base_url.to_string(),
                 name: None,
@@ -10553,6 +10572,7 @@ default = "grok-4.5"
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider: ProviderId::Xai,
                 model: slug.to_owned(),
                 base_url: "https://test.example.com/v1".to_owned(),
                 name: Some(slug.to_owned()),
