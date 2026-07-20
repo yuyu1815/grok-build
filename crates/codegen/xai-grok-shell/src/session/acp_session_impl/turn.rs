@@ -402,6 +402,43 @@ impl SessionActor {
                 original_blocks
             }
         };
+        let auth_manager = self
+            .auth_manager
+            .clone()
+            .unwrap_or_else(|| self.models_manager.auth_manager());
+        let provider =
+            crate::provider::GrokProvider::new(auth_manager, self.models_manager.clone());
+        match provider.chat_gate() {
+            crate::provider::ProviderChatGate::Ready => {}
+            crate::provider::ProviderChatGate::LoginRequired => {
+                self.send_slash_command_output(
+                    "Grok authentication is required before chatting. Run /login grok.",
+                )
+                .await;
+                return ok_end_turn(0, None);
+            }
+            crate::provider::ProviderChatGate::NoAvailableModels => {
+                self.send_slash_command_output(
+                    "Grok has no available models. Authenticate with /login grok or configure a model.",
+                )
+                .await;
+                return ok_end_turn(0, None);
+            }
+            crate::provider::ProviderChatGate::ModelFetchFailed => {
+                self.send_slash_command_output(
+                    "Grok model fetch failed and no usable model cache is available. Try again after checking authentication.",
+                )
+                .await;
+                return ok_end_turn(0, None);
+            }
+            crate::provider::ProviderChatGate::AllowlistExcludesAll => {
+                self.send_slash_command_output(
+                    "None of your models are allowed by allowed_models. Broaden it or remove it from your config, then restart.",
+                )
+                .await;
+                return ok_end_turn(0, None);
+            }
+        }
         self.events.begin_turn();
         let model_id = self.current_model_id().await;
         let turn_number = self.chat_state_handle.get_prompt_index().await as u64;

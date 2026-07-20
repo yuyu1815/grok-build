@@ -80,6 +80,77 @@ impl SessionActor {
                 ok_end_turn(0, None)
             }
             BuiltinAction::ContextInfo => ok_end_turn(0, None),
+            BuiltinAction::AuthStatus => {
+                let auth_manager = self
+                    .auth_manager
+                    .clone()
+                    .unwrap_or_else(|| self.models_manager.auth_manager());
+                let provider =
+                    crate::provider::GrokProvider::new(auth_manager, self.models_manager.clone());
+                let status = provider.auth_status();
+                let mut text = format!(
+                    "Provider: {}\\nAuthenticated: {}",
+                    status.provider.display_name(),
+                    if status.authenticated { "yes" } else { "no" },
+                );
+                if let Some(method) = status.auth_method {
+                    text.push_str(&format!("\\nAuth method: {method}"));
+                }
+                if let Some(email) = status.email {
+                    text.push_str(&format!("\\nAccount: {email}"));
+                }
+                if let Some(team_id) = status.team_id {
+                    text.push_str(&format!("\\nTeam: {team_id}"));
+                }
+                self.send_slash_command_output(&text).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::Providers => {
+                let auth_manager = self
+                    .auth_manager
+                    .clone()
+                    .unwrap_or_else(|| self.models_manager.auth_manager());
+                let provider =
+                    crate::provider::GrokProvider::new(auth_manager, self.models_manager.clone());
+                let status = provider.auth_status();
+                let state = provider.model_state();
+                let models = if state.selectable_real_models == 0 {
+                    "no available models".to_string()
+                } else {
+                    format!("{} available models", state.selectable_real_models)
+                };
+                let text = format!(
+                    "{}\\n  authenticated: {}\\n  {}",
+                    status.provider.display_name(),
+                    if status.authenticated { "yes" } else { "no" },
+                    models,
+                );
+                self.send_slash_command_output(&text).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::Models => {
+                let names = self.models_manager.real_available_model_names();
+                let current = self.models_manager.current_model_id();
+                let text = if names.is_empty() {
+                    format!("Current model: {}\\n利用可能モデルなし", current.0)
+                } else {
+                    format!(
+                        "Current model: {}\\nAvailable models:\\n{}",
+                        current.0,
+                        names
+                            .into_iter()
+                            .map(|name| format!("- {name}"))
+                            .collect::<Vec<_>>()
+                            .join("\\n")
+                    )
+                };
+                self.send_slash_command_output(&text).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::UsageError { message } => {
+                self.send_slash_command_output(message).await;
+                ok_end_turn(0, None)
+            }
             BuiltinAction::HooksTrust => {
                 let msg = match Self::do_hooks_trust_project(&self.session_info.cwd) {
                     Ok(root) => {

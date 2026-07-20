@@ -182,9 +182,9 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = self.grok_home.join("auth.json");
+                        let path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
                         xai_grok_telemetry::unified_log::error(
-                            "auth reload: auth.json unreadable, keeping previous credentials",
+                            "auth reload: auth file unreadable, keeping previous credentials",
                             None,
                             Some(serde_json::json!({
                                 "error": e.to_string(),
@@ -274,7 +274,7 @@ impl ConfigReloader {
     }
 
     fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = self.grok_home.join("auth.json");
+        let auth_path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
         let store = read_auth_json(&auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {

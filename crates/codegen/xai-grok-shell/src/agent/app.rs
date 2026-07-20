@@ -1402,7 +1402,7 @@ pub async fn run_leader(
             // Gated on user_grok_home() so a cwd-relative .grok/auth.json is never
             // read as the user auth store when no home resolves.
             let initial_auth_key_hash = xai_grok_config::user_grok_home()
-                .map(|g| g.join("auth.json"))
+                .map(|g| crate::auth::auth_storage_paths(&g).read_path)
                 .and_then(|auth_path| crate::auth::read_auth_json(&auth_path).ok())
                 .and_then(|store| {
                     crate::auth::lookup_auth(&store, &auth_scope)

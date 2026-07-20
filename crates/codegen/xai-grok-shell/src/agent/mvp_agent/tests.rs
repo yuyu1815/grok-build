@@ -2083,6 +2083,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
         info: config::ModelInfo {
             user_selectable: true,
             id: None,
+            provider: crate::provider::ProviderId::Xai,
             model: model.to_string(),
             base_url: String::new(),
             name: None,
