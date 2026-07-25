@@ -802,19 +802,10 @@ mod tests {
     }
 
     fn task_input(subagent_type: &str, background: bool) -> TaskToolInput {
-        {
-            let mut input = TaskToolInput::new("do it", "test");
-            input.subagent_type = subagent_type.into();
-            input.run_in_background = background;
-            input.capability_mode = None;
-            input.isolation = None;
-            input.resume_from = None;
-            input.cwd = None;
-            input.model = None;
-            input.reasoning_effort = None;
-            input.task_id = None;
-            input
-        }
+        let mut input = TaskToolInput::new("do it", "test");
+        input.subagent_type = subagent_type.into();
+        input.run_in_background = background;
+        input
     }
 
     fn resources_for_task(backend: SubagentBackendResource) -> Resources {
