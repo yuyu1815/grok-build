@@ -63,16 +63,16 @@ impl BlockContent for CreditLimitBlock {
         let muted = theme.muted();
         let body = match self.action {
             CreditLimitCardAction::IncreasePaygLimit => {
-                "You can continue by increasing your spending limit."
+                crate::i18n::text("You can continue by increasing your spending limit.")
             }
             CreditLimitCardAction::EnablePayg => {
-                "You can continue by enabling pay-as-you-go usage."
+                crate::i18n::text("You can continue by enabling pay-as-you-go usage.")
             }
             CreditLimitCardAction::PurchaseCredits => {
-                "You can continue by purchasing more credits."
+                crate::i18n::text("You can continue by purchasing more credits.")
             }
         };
-        let body_line = Line::from(Span::styled(body.to_string(), muted));
+        let body_line = Line::from(Span::styled(body.into_owned(), muted));
 
         // Clickable link styled as a button.
         let link_style = theme.link_style();

@@ -174,9 +174,9 @@ fn goal_phase_label(goal: &GoalDisplayState) -> String {
         | GoalDisplayStatus::BackOffPaused
         | GoalDisplayStatus::NoProgressPaused
         | GoalDisplayStatus::InfraPaused
-        | GoalDisplayStatus::Blocked => goal.status.pause_label().into(),
-        GoalDisplayStatus::BudgetLimited => "Budget".into(),
-        GoalDisplayStatus::Complete => "Done".into(),
+        | GoalDisplayStatus::Blocked => crate::i18n::text(goal.status.pause_label()).into_owned(),
+        GoalDisplayStatus::BudgetLimited => crate::i18n::text("Budget").into_owned(),
+        GoalDisplayStatus::Complete => crate::i18n::text("Done").into_owned(),
         GoalDisplayStatus::Active => active_phase_label(goal),
     }
 }
@@ -191,19 +191,20 @@ pub fn active_phase_label(goal: &GoalDisplayState) -> String {
         // Omit the "(n/m)" suffix until the first counter arrives so the
         // chip reads "Verifying" instead of a confusing "Verifying (0/0)".
         return if attempts.is_empty() {
-            "Verifying".into()
+            crate::i18n::text("Verifying").into_owned()
         } else {
-            format!("Verifying ({attempts})")
+            crate::i18n::format("Verifying ({attempts})", &[("attempts", attempts)])
         };
     }
     if goal.planning {
-        return "Planning".into();
+        return crate::i18n::text("Planning").into_owned();
     }
-    match goal.phase {
-        GoalDisplayPhase::Idle => "Idle".into(),
-        GoalDisplayPhase::Planning => "Planning".into(),
-        GoalDisplayPhase::Executing => "Executing".into(),
-    }
+    crate::i18n::text(match goal.phase {
+        GoalDisplayPhase::Idle => "Idle",
+        GoalDisplayPhase::Planning => "Planning",
+        GoalDisplayPhase::Executing => "Executing",
+    })
+    .into_owned()
 }
 
 /// Format the classifier "attempts: n/m" counter for both the
@@ -241,10 +242,14 @@ pub fn goal_status_line(
     let tokens_str =
         format_tokens_compact(goal.live_tokens_used(context_used, active_subagent_tokens));
     let tokens_display = match goal.token_budget {
-        Some(budget) if budget > 0 => {
-            format!("{}/{} tokens", tokens_str, format_tokens_compact(budget))
-        }
-        _ => format!("{} tokens", tokens_str),
+        Some(budget) if budget > 0 => crate::i18n::format(
+            "{used}/{budget} tokens",
+            &[
+                ("used", tokens_str.clone()),
+                ("budget", format_tokens_compact(budget)),
+            ],
+        ),
+        _ => crate::i18n::format("{tokens} tokens", &[("tokens", tokens_str)]),
     };
 
     let elapsed_str = format_elapsed_compact(goal.live_elapsed_ms());
@@ -269,9 +274,12 @@ pub fn goal_status_line(
     let goal_text = if is_active {
         let frames = crate::glyphs::dot_spinner_frames();
         let frame = frames[(tick / 4) % frames.len()];
-        format!("{frame} Goal: {label}")
+        crate::i18n::format(
+            "{frame} Goal: {label}",
+            &[("frame", frame.to_string()), ("label", label)],
+        )
     } else {
-        format!("Goal: {label}")
+        crate::i18n::format("Goal: {label}", &[("label", label)])
     };
 
     Line::from(vec![

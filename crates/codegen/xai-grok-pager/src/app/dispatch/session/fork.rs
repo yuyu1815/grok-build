@@ -46,7 +46,7 @@ pub(in crate::app::dispatch) fn dispatch_fork(
     args: crate::slash::commands::fork::ForkArgs,
 ) -> Vec<Effect> {
     let ActiveView::Agent(parent_id) = app.active_view else {
-        app.show_toast("/fork only works inside a session");
+        app.show_toast(crate::i18n::text("/fork only works inside a session").as_ref());
         return vec![];
     };
     let (has_session, in_git_repo) = app
@@ -55,12 +55,14 @@ pub(in crate::app::dispatch) fn dispatch_fork(
         .map(|a| (a.session.session_id.is_some(), a.current_branch.is_some()))
         .unwrap_or((false, false));
     if !has_session {
-        app.show_toast("Cannot fork: session is still being created");
+        app.show_toast(crate::i18n::text("Cannot fork: session is still being created").as_ref());
         return vec![];
     }
     match args.worktree_override {
         Some(true) if !in_git_repo => {
-            app.show_toast("Cannot create worktree: not in a git repository");
+            app.show_toast(
+                crate::i18n::text("Cannot create worktree: not in a git repository").as_ref(),
+            );
             vec![]
         }
         Some(worktree) => dispatch_fork_resolved(app, worktree, args.directive),
@@ -127,7 +129,7 @@ fn open_fork_question(app: &mut AppView, directive: Option<String>) -> Vec<Effec
         return vec![];
     };
     if agent.question_view.is_some() {
-        app.show_toast("Finish answering the current question first");
+        app.show_toast(crate::i18n::text("Finish answering the current question first").as_ref());
         return vec![];
     }
     let mut options = vec![
@@ -183,7 +185,7 @@ pub(in crate::app::dispatch) fn dispatch_fork_resolved(
         return vec![];
     };
     let Some(parent_session_id) = parent.session.session_id.clone() else {
-        app.show_toast("Cannot fork: session not yet created");
+        app.show_toast(crate::i18n::text("Cannot fork: session not yet created").as_ref());
         return vec![];
     };
     let parent_cwd = parent.session.cwd.clone();
@@ -229,9 +231,9 @@ pub(in crate::app::dispatch) fn dispatch_fork_resolved(
             worktree,
         });
         if worktree {
-            agent
-                .scrollback
-                .push_block(RenderBlock::system("Creating worktree\u{2026}".to_string()));
+            agent.scrollback.push_block(RenderBlock::system(
+                crate::i18n::text("Creating worktree\u{2026}").into_owned(),
+            ));
         }
         agent.pending_first_prompt = directive;
     }
@@ -321,13 +323,18 @@ pub(in crate::app::dispatch) fn dispatch_project_selected(
     let mut effects = Vec::new();
     if disable_picker {
         app.project_picker_disabled = true;
-        app.show_toast("Won't ask about project directory again (reset in config.toml)");
+        app.show_toast(
+            crate::i18n::text("Won't ask about project directory again (reset in config.toml)")
+                .as_ref(),
+        );
         effects.push(Effect::PersistProjectPickerDisabled { disabled: true });
     }
     let path = if path.is_dir() {
         path
     } else {
-        app.show_toast("Directory not found, continuing in current directory");
+        app.show_toast(
+            crate::i18n::text("Directory not found, continuing in current directory").as_ref(),
+        );
         app.cwd.clone()
     };
     app.cwd = path.clone();

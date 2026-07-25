@@ -52,7 +52,7 @@ fn no_login_method_error(app: &AppView) -> String {
     if app.auth_methods.is_empty() {
         xai_grok_shell::agent::auth_method::PREFERRED_API_KEY_UNAVAILABLE.to_string()
     } else {
-        "No login method available".to_string()
+        crate::i18n::text("No login method available").into_owned()
     }
 }
 
@@ -311,7 +311,7 @@ pub(super) fn handle_auth_complete(
                 // auth detour, so a plain front-enqueue + drain is safe.
                 if let Some(prompt) = agent.reauth_stashed_prompt.take() {
                     agent.scrollback.push_block(RenderBlock::system(
-                        "Re-authenticated. Retrying\u{2026}".to_string(),
+                        crate::i18n::text("Re-authenticated. Retrying…").into_owned(),
                     ));
                     agent.session.enqueue_in_flight_prompt_front(prompt);
                     retry_effects.extend(maybe_drain_queue(agent));
@@ -413,9 +413,12 @@ pub(super) fn handle_mcp_auth_trigger_done(
             let msg = if e.starts_with("To authenticate") {
                 format!("{server_name}: {e}")
             } else if e.contains(&server_name) {
-                format!("Auth failed: {e}")
+                crate::i18n::format("Auth failed: {error}", &[("error", e.clone())])
             } else {
-                format!("{server_name} auth failed: {e}")
+                crate::i18n::format(
+                    "{server} auth failed: {error}",
+                    &[("server", server_name.clone()), ("error", e.clone())],
+                )
             };
             modal.modal_message = Some(crate::views::extensions_modal::ModalMessage::Error(msg));
             return vec![];

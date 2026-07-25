@@ -356,7 +356,7 @@ pub fn render_memory_modal(
     let shortcuts = build_shortcuts(&state.mode, state.memory_enabled, state.fullscreen);
 
     let modal_config = ModalWindowConfig {
-        title: "Memory",
+        title: crate::i18n::static_text("Memory"),
         tabs: None,
         shortcuts: &shortcuts,
         sizing: if state.fullscreen {

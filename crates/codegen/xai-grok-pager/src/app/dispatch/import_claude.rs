@@ -24,7 +24,7 @@ pub(super) fn dispatch_import_claude(app: &mut AppView) -> Vec<Effect> {
             .retain(|w| !w.message.contains("Claude settings"));
         app.startup_warnings.push(crate::startup::StartupWarning {
             severity: crate::startup::WarningSeverity::Info,
-            message: "No Claude settings found to import.".into(),
+            message: crate::i18n::text("No Claude settings found to import.").into_owned(),
             action: None,
         });
         return vec![];
@@ -46,7 +46,7 @@ pub(super) fn dispatch_import_claude_confirm(app: &mut AppView) -> Vec<Effect> {
     let selected_count = filtered.global_items.len() + filtered.project_items.len();
 
     let mut summary = if selected_count == 0 {
-        "No items selected.".to_string()
+        crate::i18n::text("No items selected.").into_owned()
     } else {
         filtered.summary(&cwd).trim_end().to_string()
     };
@@ -54,19 +54,27 @@ pub(super) fn dispatch_import_claude_confirm(app: &mut AppView) -> Vec<Effect> {
     if selected_count > 0 {
         match xai_grok_shell::claude_import::apply_import(&filtered, &cwd) {
             Ok(result) => {
-                summary.push_str(&format!(
-                    "\nImported {} of {} setting(s).",
-                    result.total(),
-                    total_in_modal
+                summary.push_str(&crate::i18n::format(
+                    "\nImported {selected} of {total} setting(s).",
+                    &[
+                        ("selected", result.total().to_string()),
+                        ("total", total_in_modal.to_string()),
+                    ],
                 ));
                 for path in &result.modified_files {
-                    summary.push_str(&format!("\n  Updated: {}", path));
+                    summary.push_str(&crate::i18n::format(
+                        "\n  Updated: {path}",
+                        &[("path", path.to_string())],
+                    ));
                 }
             }
             Err(e) => {
                 app.startup_warnings.push(crate::startup::StartupWarning {
                     severity: crate::startup::WarningSeverity::Warning,
-                    message: format!("Failed to import Claude settings: {}", e),
+                    message: crate::i18n::format(
+                        "Failed to import Claude settings: {error}",
+                        &[("error", e.to_string())],
+                    ),
                     action: None,
                 });
                 return vec![];

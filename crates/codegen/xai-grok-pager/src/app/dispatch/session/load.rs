@@ -328,10 +328,10 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
         if focus_if_session_already_open(app, &session_id, false).is_some() {
             return vec![];
         }
-        app.show_toast("Restoring session from remote...");
+        app.show_toast(crate::i18n::text("Restoring session from remote...").as_ref());
         dispatch_load_session_with_restore(app, session_id, cwd)
     } else {
-        app.show_toast("Session not found locally");
+        app.show_toast(crate::i18n::text("Session not found locally").as_ref());
         vec![]
     }
 }
@@ -359,7 +359,9 @@ pub(in crate::app::dispatch) fn dispatch_pick_session_in_worktree(
         })
         .is_some_and(|entry| crate::app::foreign_sessions::is_foreign_picker_source(&entry.source));
     if is_foreign {
-        app.show_toast("External sessions can't be resumed in a worktree");
+        app.show_toast(
+            crate::i18n::text("External sessions can't be resumed in a worktree").as_ref(),
+        );
         return vec![];
     }
     let mut picker_dismissed = false;
@@ -405,7 +407,9 @@ pub(in crate::app::dispatch) fn dispatch_pick_session_in_worktree(
         }
     };
     if source == "conversation" {
-        app.show_toast("Chat conversations can't be resumed in a worktree");
+        app.show_toast(
+            crate::i18n::text("Chat conversations can't be resumed in a worktree").as_ref(),
+        );
         return vec![];
     }
     dispatch_new_worktree_session(app, Some(session_id), None, None, None, None, None)
@@ -762,7 +766,7 @@ pub(in crate::app::dispatch) fn dispatch_pick_content_session(
     if focus_if_session_already_open(app, &session_id, false).is_some() {
         return vec![];
     }
-    app.show_toast("Restoring session from remote...");
+    app.show_toast(crate::i18n::text("Restoring session from remote...").as_ref());
     dispatch_load_session_with_restore(app, session_id, cwd)
 }
 /// Create a placeholder agent and restore a remote session before loading.
@@ -1240,7 +1244,9 @@ pub(in crate::app::dispatch) fn dispatch_pick_content_session_in_worktree(
         return vec![];
     }
     if session_picker_entry_is_conversation(app, &session_id) {
-        app.show_toast("Chat conversations can't be resumed in a worktree");
+        app.show_toast(
+            crate::i18n::text("Chat conversations can't be resumed in a worktree").as_ref(),
+        );
         return vec![];
     }
     app.session_picker_entries = None;

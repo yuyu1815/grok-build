@@ -11,6 +11,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::tool::HookRunEntry;
+use crate::i18n::{format as tr_format, text};
 use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -144,34 +145,37 @@ impl SessionEvent {
         match self {
             SessionEvent::TurnCompleted {
                 elapsed: Some(elapsed),
-            } => {
-                format!("Worked for {}.", format_duration(*elapsed))
-            }
-            SessionEvent::TurnCompleted { elapsed: None } => "Turn completed.".to_string(),
-            SessionEvent::TurnCancelled { elapsed } => {
-                format!("Turn cancelled by user in {}.", format_duration(*elapsed))
-            }
-            SessionEvent::TurnHalted { elapsed } => {
-                format!(
-                    "Agent was unable to make progress \u{2014} turn ended in {}.",
-                    format_duration(*elapsed)
-                )
-            }
+            } => tr_format(
+                "Worked for {elapsed}.",
+                &[("elapsed", format_duration(*elapsed))],
+            ),
+            SessionEvent::TurnCompleted { elapsed: None } => text("Turn completed.").into_owned(),
+            SessionEvent::TurnCancelled { elapsed } => tr_format(
+                "Turn cancelled by user in {elapsed}.",
+                &[("elapsed", format_duration(*elapsed))],
+            ),
+            SessionEvent::TurnHalted { elapsed } => tr_format(
+                "Agent was unable to make progress — turn ended in {elapsed}.",
+                &[("elapsed", format_duration(*elapsed))],
+            ),
             SessionEvent::TurnFailed {
                 error,
                 elapsed: Some(elapsed),
-            } => {
-                format!("Turn failed in {}: {error}", format_duration(*elapsed))
-            }
+            } => tr_format(
+                "Turn failed in {elapsed}: {error}",
+                &[
+                    ("elapsed", format_duration(*elapsed)),
+                    ("error", error.clone()),
+                ],
+            ),
             SessionEvent::TurnFailed {
                 error,
                 elapsed: None,
-            } => {
-                format!("Turn failed: {error}")
-            }
-            SessionEvent::CompactionStarted { percentage } => {
-                format!("Context {percentage}% full. Compacting…")
-            }
+            } => tr_format("Turn failed: {error}", &[("error", error.clone())]),
+            SessionEvent::CompactionStarted { percentage } => tr_format(
+                "Context {percentage}% full. Compacting…",
+                &[("percentage", percentage.to_string())],
+            ),
             SessionEvent::CompactionCompleted {
                 tokens_before,
                 tokens_after,
@@ -180,13 +184,14 @@ impl SessionEvent {
                 let after = format_tokens(*tokens_after);
                 // Older shells don't send tokens_before — keep the legacy format.
                 let body = match tokens_before {
-                    Some(before) if *before > 0 => {
-                        format!(
-                            "Context compacted: {} → {after} tokens",
-                            format_tokens(*before)
-                        )
-                    }
-                    _ => format!("Context compacted → {after} tokens"),
+                    Some(before) if *before > 0 => tr_format(
+                        "Context compacted: {before} → {after} tokens",
+                        &[("before", format_tokens(*before)), ("after", after.clone())],
+                    ),
+                    _ => tr_format(
+                        "Context compacted → {after} tokens",
+                        &[("after", after.clone())],
+                    ),
                 };
                 if let Some(ms) = elapsed_ms {
                     let secs = *ms as f64 / 1000.0;
@@ -197,19 +202,19 @@ impl SessionEvent {
             }
             SessionEvent::CompactionFailed { error } => {
                 if error.trim().is_empty() {
-                    "Compaction failed.".to_string()
+                    text("Compaction failed.").into_owned()
                 } else {
-                    format!("Compaction failed: {error}")
+                    tr_format("Compaction failed: {error}", &[("error", error.clone())])
                 }
             }
-            SessionEvent::CompactionCancelled => "Compaction cancelled.".to_string(),
+            SessionEvent::CompactionCancelled => text("Compaction cancelled.").into_owned(),
             SessionEvent::RetryFailed { error, error_type } => {
                 if error_type.as_deref() == Some("encrypted_content_mismatch") {
                     "This session's conversation history is incompatible with the \
                      current model. Please start a new session."
                         .to_string()
                 } else {
-                    format!("Retry failed: {error}")
+                    tr_format("Retry failed: {error}", &[("error", error.clone())])
                 }
             }
             SessionEvent::ReAuthRequired => {
@@ -223,9 +228,10 @@ impl SessionEvent {
                  Use /new to start a new session."
                     .to_string()
             }
-            SessionEvent::CompactCompleted { elapsed } => {
-                format!("Compaction completed in {}.", format_duration(*elapsed))
-            }
+            SessionEvent::CompactCompleted { elapsed } => tr_format(
+                "Compaction completed in {elapsed}.",
+                &[("elapsed", format_duration(*elapsed))],
+            ),
             SessionEvent::HookAnnotation { message } => message.clone(),
             SessionEvent::ModelUnavailable {
                 new_model_id,
@@ -235,22 +241,29 @@ impl SessionEvent {
                 if new_model_id.is_empty() {
                     reason.clone()
                 } else {
-                    format!("{reason} Switched to \"{new_model_id}\".")
+                    tr_format(
+                        "{reason} Switched to \"{model}\".",
+                        &[("reason", reason.clone()), ("model", new_model_id.clone())],
+                    )
                 }
             }
             SessionEvent::MemorySaved { path, trigger } => {
                 let short_path = crate::util::abbreviate_path(path);
-                format!("Memory saved ({trigger}) \u{2192} {short_path}  \u{00b7}  /memory to view")
-            }
-            SessionEvent::GoalCompleted { elapsed } => {
-                format!(
-                    "Goal complete \u{2014} {} end-to-end.",
-                    format_duration(*elapsed)
+                tr_format(
+                    "Memory saved ({trigger}) → {path}  ·  /memory to view",
+                    &[
+                        ("trigger", trigger.clone()),
+                        ("path", short_path.into_owned()),
+                    ],
                 )
             }
+            SessionEvent::GoalCompleted { elapsed } => tr_format(
+                "Goal complete — {elapsed} end-to-end.",
+                &[("elapsed", format_duration(*elapsed))],
+            ),
             SessionEvent::Recap { summary, auto: _ } => {
                 // Always "Recap —" (manual `/recap` and auto return-from-away).
-                format!("Recap \u{2014} {summary}")
+                tr_format("Recap — {summary}", &[("summary", summary.clone())])
             }
         }
     }
@@ -327,17 +340,17 @@ impl EndWork {
     /// period, never an ellipsis: the marker states a settled fact, not a
     /// progress spinner.
     pub fn still_running_text(&self) -> Option<String> {
-        let count = |n: usize, noun: &str| -> Option<String> {
+        let count = |n: usize, singular: &str, plural: &str| -> Option<String> {
             match n {
                 0 => None,
-                1 => Some(format!("1 {noun}")),
-                n => Some(format!("{n} {noun}s")),
+                1 => Some(text(singular).into_owned()),
+                n => Some(tr_format(plural, &[("count", n.to_string())])),
             }
         };
         let parts: Vec<String> = [
-            count(self.running_commands, "command"),
-            count(self.running_monitors, "monitor"),
-            count(self.running_subagents, "subagent"),
+            count(self.running_commands, "1 command", "{count} commands"),
+            count(self.running_monitors, "1 monitor", "{count} monitors"),
+            count(self.running_subagents, "1 subagent", "{count} subagents"),
         ]
         .into_iter()
         .flatten()
@@ -346,9 +359,12 @@ impl EndWork {
         let joined = if head.is_empty() {
             last.clone()
         } else {
-            format!("{} and {last}", head.join(", "))
+            tr_format(
+                "{head} and {last}",
+                &[("head", head.join(", ")), ("last", last.clone())],
+            )
         };
-        Some(format!("{joined} still running."))
+        Some(tr_format("{work} still running.", &[("work", joined)]))
     }
 }
 
@@ -539,8 +555,12 @@ impl SessionEventBlock {
         };
         let header_style = header_text_style.add_modifier(Modifier::BOLD);
         // Non-selectable chrome (same as Thinking / tool label prefixes).
-        let header_line =
-            || BlockLine::separator(Line::from(Span::styled("Recap".to_string(), header_style)));
+        let header_line = || {
+            BlockLine::separator(Line::from(Span::styled(
+                text("Recap").into_owned(),
+                header_style,
+            )))
+        };
 
         // Loading: header only; the animated gray sidebar is the feedback.
         if ctx.is_running {
@@ -551,7 +571,7 @@ impl SessionEventBlock {
 
         match ctx.mode {
             DisplayMode::Collapsed => {
-                let mut spans = vec![Span::styled("Recap".to_string(), header_style)];
+                let mut spans = vec![Span::styled(text("Recap").into_owned(), header_style)];
                 let preview = summary.lines().next().unwrap_or(summary).trim();
                 if !preview.is_empty() {
                     spans.push(Span::styled(format!("  {preview}"), theme.muted()));

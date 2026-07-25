@@ -32,10 +32,10 @@ impl AgentsTab {
     pub const ALL: &[Self] = &[Self::Agents, Self::Personas];
     /// Display label for the tab bar.
     pub fn label(self) -> &'static str {
-        match self {
+        crate::i18n::static_text(match self {
             Self::Agents => "Agents",
             Self::Personas => "Personas",
-        }
+        })
     }
     /// Next tab (wraps around).
     pub fn next(self) -> Self {
@@ -684,17 +684,26 @@ pub fn toggle_agent(name: &str, enabled: bool) -> Result<(), String> {
 pub fn format_agent_detail(entry: &AgentListEntry) -> Vec<String> {
     let def = &entry.definition;
     let mut lines = Vec::new();
-    lines.push(format!("  Model: {}", def.model));
+    lines.push(crate::i18n::format(
+        "  Model: {model}",
+        &[("model", def.model.to_string())],
+    ));
     let mode_label = match def.prompt_mode {
         xai_grok_agent::config::PromptMode::Extend => "extend",
         xai_grok_agent::config::PromptMode::Full => "full",
     };
-    lines.push(format!("  Prompt mode: {mode_label}"));
+    lines.push(crate::i18n::format(
+        "  Prompt mode: {mode}",
+        &[("mode", mode_label.to_string())],
+    ));
     let tools = &def.tool_config.tools;
     if tools.is_empty() {
-        lines.push("  Tools: (none)".to_string());
+        lines.push(crate::i18n::text("  Tools: (none)").into_owned());
     } else {
-        lines.push(format!("  Tools ({}): ", tools.len()));
+        lines.push(crate::i18n::format(
+            "  Tools ({count}): ",
+            &[("count", tools.len().to_string())],
+        ));
         for tool in tools {
             let name = tool.name_override.as_deref().unwrap_or_else(|| {
                 tool.id
@@ -705,26 +714,41 @@ pub fn format_agent_detail(entry: &AgentListEntry) -> Vec<String> {
         }
     }
     if !def.skills.is_empty() {
-        lines.push(format!("  Skills: {}", def.skills.join(", ")));
+        lines.push(crate::i18n::format(
+            "  Skills: {skills}",
+            &[("skills", def.skills.join(", "))],
+        ));
     }
     if let Some(ref path) = entry.source_path {
-        lines.push(format!("  Source: {}", path.display()));
+        lines.push(crate::i18n::format(
+            "  Source: {path}",
+            &[("path", path.display().to_string())],
+        ));
     }
-    lines.push(format!("  Scope: {}", entry.scope.label()));
+    lines.push(crate::i18n::format(
+        "  Scope: {scope}",
+        &[("scope", entry.scope.label().to_string())],
+    ));
     if let Some(ref body) = def.prompt_body {
         let rendered = render_prompt_body(body, &def.tool_config);
         let char_count = rendered.chars().count();
         let truncated: String = rendered.chars().take(120).collect::<String>();
         if char_count > 120 {
-            lines.push(format!("  Prompt extension: {truncated}..."));
-            lines.push("  (Enter to view full)".to_string());
+            lines.push(crate::i18n::format(
+                "  Prompt extension: {prompt}...",
+                &[("prompt", truncated)],
+            ));
+            lines.push(crate::i18n::text("  (Enter to view full)").into_owned());
         } else {
-            lines.push(format!("  Prompt extension: {truncated}"));
+            lines.push(crate::i18n::format(
+                "  Prompt extension: {prompt}",
+                &[("prompt", truncated)],
+            ));
         }
     } else if entry.source_path.is_some() {
-        lines.push("  Prompt extension: (in file — Enter to view)".to_string());
+        lines.push(crate::i18n::text("  Prompt extension: (in file — Enter to view)").into_owned());
     } else {
-        lines.push("  Prompt extension: (none)".to_string());
+        lines.push(crate::i18n::text("  Prompt extension: (none)").into_owned());
     }
     lines
 }
@@ -930,7 +954,7 @@ pub fn render_agents_modal(
         AgentsTab::Personas => build_personas_tab_shortcuts(state),
     };
     let config = ModalWindowConfig {
-        title: "Agents",
+        title: crate::i18n::static_text("Agents"),
         tabs: Some(&tab_labels),
         shortcuts: &shortcuts,
         sizing: modal_sizing(compact),
@@ -1122,12 +1146,12 @@ fn render_agents_tab(
     }
     let filtered = state.filtered_indices();
     if filtered.is_empty() {
-        let msg = if state.search_query.is_empty() {
+        let msg = crate::i18n::text(if state.search_query.is_empty() {
             "No agents found"
         } else {
             "No matching agents"
-        };
-        buf.set_string(content_area.x, y, msg, Style::default().fg(theme.gray_dim));
+        });
+        buf.set_string(content_area.x, y, &msg, Style::default().fg(theme.gray_dim));
         return;
     }
     let visible_width = content_area.width as usize;
@@ -1191,12 +1215,12 @@ fn render_agents_tab(
         }
         match &rows[ri] {
             FlatRow::ScopeHeader(scope) => {
-                let label = match scope {
-                    AgentScope::BuiltIn => "\u{2500}\u{2500} Built-in \u{2500}\u{2500}",
-                    AgentScope::Project => "\u{2500}\u{2500} Project \u{2500}\u{2500}",
-                    AgentScope::User => "\u{2500}\u{2500} User \u{2500}\u{2500}",
-                    AgentScope::Bundled => "\u{2500}\u{2500} Bundled \u{2500}\u{2500}",
-                };
+                let label = crate::i18n::text(match scope {
+                    AgentScope::BuiltIn => "── Built-in ──",
+                    AgentScope::Project => "── Project ──",
+                    AgentScope::User => "── User ──",
+                    AgentScope::Bundled => "── Bundled ──",
+                });
                 let style = Style::default()
                     .fg(theme.gray_dim)
                     .add_modifier(Modifier::BOLD);
@@ -1267,7 +1291,7 @@ fn render_agents_tab(
                     .as_deref()
                     .is_some_and(|a| a == entry.name);
                 if is_active {
-                    let active_label = " active";
+                    let active_label = crate::i18n::text(" active");
                     let active_remaining =
                         (content_area.x + content_area.width).saturating_sub(x) as usize;
                     if active_remaining >= active_label.width() {
@@ -1277,13 +1301,13 @@ fn render_agents_tab(
                         if let Some(bg_color) = bg {
                             active_style = active_style.bg(bg_color);
                         }
-                        buf.set_string(x, row_y, active_label, active_style);
+                        buf.set_string(x, row_y, &active_label, active_style);
                         x += active_label.width() as u16;
                     }
                 }
                 let is_default = entry.name == state.default_agent;
                 if is_default {
-                    let default_label = " default";
+                    let default_label = crate::i18n::text(" default");
                     let default_remaining =
                         (content_area.x + content_area.width).saturating_sub(x) as usize;
                     if default_remaining >= default_label.width() {
@@ -1293,12 +1317,12 @@ fn render_agents_tab(
                         if let Some(bg_color) = bg {
                             default_style = default_style.bg(bg_color);
                         }
-                        buf.set_string(x, row_y, default_label, default_style);
+                        buf.set_string(x, row_y, &default_label, default_style);
                         x += default_label.width() as u16;
                     }
                 }
                 if !entry.enabled {
-                    let off_label = " [off]";
+                    let off_label = crate::i18n::text(" [off]");
                     let off_remaining =
                         (content_area.x + content_area.width).saturating_sub(x) as usize;
                     if off_remaining >= off_label.len() {
@@ -1306,7 +1330,7 @@ fn render_agents_tab(
                         if let Some(bg_color) = bg {
                             off_style = off_style.bg(bg_color);
                         }
-                        buf.set_string(x, row_y, off_label, off_style);
+                        buf.set_string(x, row_y, &off_label, off_style);
                         x += off_label.len() as u16;
                     }
                 }
@@ -1374,12 +1398,16 @@ fn render_personas_tab(
     if let Some(ref msg) = state.message {
         y = render_modal_message_line(buf, content_area.x, y, w, msg, theme);
     }
-    let blurb = "Personas shape subagent behavior via the persona parameter on spawn_subagent.";
+    let blurb = crate::i18n::text(
+        "Personas shape subagent behavior via the persona parameter on spawn_subagent.",
+    );
     let blurb_style = Style::default().fg(theme.gray_dim);
-    buf.set_string(content_area.x, y, blurb, blurb_style);
+    buf.set_string(content_area.x, y, &blurb, blurb_style);
     y += 1;
-    let blurb2 = "Used by skills (e.g. /implement) and by the model when spawning subagents.";
-    buf.set_string(content_area.x, y, blurb2, blurb_style);
+    let blurb2 = crate::i18n::text(
+        "Used by skills (e.g. /implement) and by the model when spawning subagents.",
+    );
+    buf.set_string(content_area.x, y, &blurb2, blurb_style);
     y += 2;
     if state.search_active || !state.search_query.is_empty() {
         let prompt_str = format!("/ {}", state.search_query);
@@ -1402,12 +1430,12 @@ fn render_personas_tab(
     }
     let filtered = state.filtered_persona_indices();
     if filtered.is_empty() {
-        let msg = if state.personas.is_empty() {
+        let msg = crate::i18n::text(if state.personas.is_empty() {
             "No personas available"
         } else {
             "No matching personas"
-        };
-        buf.set_string(content_area.x, y, msg, Style::default().fg(theme.gray_dim));
+        });
+        buf.set_string(content_area.x, y, &msg, Style::default().fg(theme.gray_dim));
         return;
     }
     let mut rows: Vec<PersonaFlatRow> = Vec::new();
@@ -1430,16 +1458,16 @@ fn render_personas_tab(
             if persona.has_inputs || persona.has_outputs {
                 let mut tags = Vec::new();
                 if persona.has_inputs {
-                    tags.push("accepts structured inputs");
+                    tags.push(crate::i18n::text("accepts structured inputs").into_owned());
                 }
                 if persona.has_outputs {
-                    tags.push("produces structured outputs");
+                    tags.push(crate::i18n::text("produces structured outputs").into_owned());
                 }
                 rows.push(PersonaFlatRow::Tags(idx, tags.join(" \u{00b7} ")));
             }
             rows.push(PersonaFlatRow::Hint(
                 idx,
-                "Enter to view full definition".to_string(),
+                crate::i18n::text("Enter to view full definition").into_owned(),
             ));
         }
     }
@@ -1683,11 +1711,11 @@ fn render_persona_create_form(
 ) {
     let mut y = content_area.y;
     let w = content_area.width as usize;
-    let title = "Create New Persona";
+    let title = crate::i18n::text("Create New Persona");
     let title_style = Style::default()
         .fg(theme.text_primary)
         .add_modifier(Modifier::BOLD);
-    buf.set_string(content_area.x, y, title, title_style);
+    buf.set_string(content_area.x, y, &title, title_style);
     y += 2;
     if let Some(msg) = message {
         buf.set_string(
@@ -1703,7 +1731,7 @@ fn render_persona_create_form(
         content_area,
         y,
         w,
-        "Name: ",
+        crate::i18n::text("Name: ").as_ref(),
         &input.name,
         input.name_cursor,
         input.active_field == CreateField::Name,
@@ -1714,7 +1742,7 @@ fn render_persona_create_form(
         content_area,
         y,
         w,
-        "Description: ",
+        crate::i18n::text("Description: ").as_ref(),
         &input.description,
         input.desc_cursor,
         input.active_field == CreateField::Description,
@@ -1725,20 +1753,20 @@ fn render_persona_create_form(
         content_area,
         y,
         w,
-        "Instructions: ",
+        crate::i18n::text("Instructions: ").as_ref(),
         &input.instructions,
         input.instructions_cursor,
         input.active_field == CreateField::Instructions,
         theme,
     );
-    let scope_label = "Scope: ";
+    let scope_label = crate::i18n::text("Scope: ");
     let scope_active = input.active_field == CreateField::Scope;
     let label_style = if scope_active {
         Style::default().fg(theme.accent_user)
     } else {
         Style::default().fg(theme.gray)
     };
-    buf.set_string(content_area.x, y, scope_label, label_style);
+    buf.set_string(content_area.x, y, &scope_label, label_style);
     let scope_text = format!("[{}]", input.scope.label());
     buf.set_string(
         content_area.x + scope_label.len() as u16,
@@ -1747,8 +1775,15 @@ fn render_persona_create_form(
         Style::default().fg(theme.text_primary),
     );
     y += 2;
-    let hint = "Tab/↑↓: field | Space/←→ on scope: user/project | Enter: create | Esc: cancel";
-    buf.set_string(content_area.x, y, hint, Style::default().fg(theme.gray_dim));
+    let hint = crate::i18n::text(
+        "Tab/↑↓: field | Space/←→ on scope: user/project | Enter: create | Esc: cancel",
+    );
+    buf.set_string(
+        content_area.x,
+        y,
+        &hint,
+        Style::default().fg(theme.gray_dim),
+    );
 }
 /// Render the confirm-delete persona dialog.
 fn render_persona_confirm_dialog(
@@ -1759,13 +1794,13 @@ fn render_persona_confirm_dialog(
 ) {
     let PersonaConfirmAction::Delete { name, path } = confirm;
     let mut y = content_area.y;
-    let title = "Delete Persona";
+    let title = crate::i18n::text("Delete Persona");
     let title_style = Style::default()
         .fg(theme.accent_error)
         .add_modifier(Modifier::BOLD);
-    buf.set_string(content_area.x, y, title, title_style);
+    buf.set_string(content_area.x, y, &title, title_style);
     y += 2;
-    let msg = format!("Delete persona '{name}'?");
+    let msg = crate::i18n::format("Delete persona '{name}'?", &[("name", name.to_string())]);
     buf.set_string(
         content_area.x,
         y,
@@ -1781,8 +1816,13 @@ fn render_persona_confirm_dialog(
         Style::default().fg(theme.gray),
     );
     y += 2;
-    let hint = "y: confirm | n/Esc: cancel";
-    buf.set_string(content_area.x, y, hint, Style::default().fg(theme.gray_dim));
+    let hint = crate::i18n::text("y: confirm | n/Esc: cancel");
+    buf.set_string(
+        content_area.x,
+        y,
+        &hint,
+        Style::default().fg(theme.gray_dim),
+    );
 }
 enum FlatRow {
     ScopeHeader(AgentScope),
@@ -1908,7 +1948,7 @@ pub fn handle_agents_key(state: &mut AgentsModalState, key: &KeyEvent) -> Agents
     }
     let tab_labels: Vec<&str> = AgentsTab::ALL.iter().map(|t| t.label()).collect();
     let config = ModalWindowConfig {
-        title: "Agents",
+        title: crate::i18n::static_text("Agents"),
         tabs: Some(&tab_labels),
         shortcuts: &[],
         sizing: modal_sizing(false),

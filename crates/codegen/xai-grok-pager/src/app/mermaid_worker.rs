@@ -1096,7 +1096,7 @@ impl AgentView {
                 self.session.session_id.as_ref().map(|s| s.0.as_ref()),
                 Some(serde_json::json!({ "action": action.log_label() })),
             );
-            self.show_toast("Diagram not ready yet");
+            self.show_toast(crate::i18n::text("Diagram not ready yet").as_ref());
             return;
         };
 
@@ -1109,7 +1109,7 @@ impl AgentView {
             .as_ref()
             .is_some_and(|rt| rt.has_pending(&key, action))
         {
-            self.show_toast("Rendering diagram\u{2026}");
+            self.show_toast(crate::i18n::text("Rendering diagram\u{2026}").as_ref());
             return;
         }
 
@@ -1147,7 +1147,7 @@ impl AgentView {
             if let Some(rt) = self.mermaid.as_mut() {
                 rt.pending.push(PendingMermaidAction { key, action });
             }
-            self.show_toast("Rendering diagram\u{2026}");
+            self.show_toast(crate::i18n::text("Rendering diagram\u{2026}").as_ref());
         } else {
             tracing::warn!(
                 target: MERMAID_TRACING_TARGET,
@@ -1158,7 +1158,7 @@ impl AgentView {
                 self.session.session_id.as_ref().map(|s| s.0.as_ref()),
                 Some(serde_json::json!({ "action": action.log_label() })),
             );
-            self.show_toast("Could not render diagram");
+            self.show_toast(crate::i18n::text("Could not render diagram").as_ref());
         }
     }
 
@@ -1194,7 +1194,7 @@ impl AgentView {
                             self.session.session_id.as_ref().map(|s| s.0.as_ref()),
                             Some(serde_json::json!({ "action": action.log_label() })),
                         );
-                        self.show_toast("Could not render diagram");
+                        self.show_toast(crate::i18n::text("Could not render diagram").as_ref());
                     }
                 }
             }

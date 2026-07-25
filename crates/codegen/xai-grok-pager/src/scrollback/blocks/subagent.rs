@@ -185,9 +185,11 @@ impl BlockContent for SubagentBlock {
         let muted = theme.muted();
         let w = ctx.width as usize;
 
+        let subagent_label = format!("{} ", crate::i18n::text("Subagent"));
         let line = match (&self.kind, self.is_background) {
             (SubagentBlockKind::Started, bg) => {
                 let verb = if bg { "started: " } else { "running: " };
+                let verb = crate::i18n::text(verb).into_owned();
                 let activity_suffix: String = self
                     .activity_label
                     .as_deref()
@@ -203,7 +205,7 @@ impl BlockContent for SubagentBlock {
                 let overhead = 18 + meta.width() + activity_suffix.width();
                 let desc = quoted_desc(&self.description, w.saturating_sub(overhead));
                 let mut spans = vec![
-                    Span::styled("Subagent ", bold),
+                    Span::styled(subagent_label.clone(), bold),
                     Span::styled(verb, muted),
                     Span::styled(desc, muted),
                 ];
@@ -220,8 +222,11 @@ impl BlockContent for SubagentBlock {
                 let prefix_len = 26 + time_str.len();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("completed in {time_str}: "), muted),
+                    Span::styled(subagent_label.clone(), bold),
+                    Span::styled(
+                        crate::i18n::format("completed in {elapsed}: ", &[("elapsed", time_str)]),
+                        muted,
+                    ),
                     Span::styled(desc, muted),
                 ])
             }
@@ -235,8 +240,14 @@ impl BlockContent for SubagentBlock {
                 let prefix_len = 21 + time_str.len() + detail.len();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("failed in {time_str}{detail}: "), muted),
+                    Span::styled(subagent_label.clone(), bold),
+                    Span::styled(
+                        crate::i18n::format(
+                            "failed in {elapsed}{detail}: ",
+                            &[("elapsed", time_str), ("detail", detail)],
+                        ),
+                        muted,
+                    ),
                     Span::styled(desc, muted),
                 ])
             }
@@ -247,8 +258,11 @@ impl BlockContent for SubagentBlock {
                 let prefix_len = 26 + time_str.len();
                 let desc = quoted_desc(&self.description, w.saturating_sub(prefix_len));
                 Line::from(vec![
-                    Span::styled("Subagent ", bold),
-                    Span::styled(format!("cancelled in {time_str}: "), muted),
+                    Span::styled(subagent_label.clone(), bold),
+                    Span::styled(
+                        crate::i18n::format("cancelled in {elapsed}: ", &[("elapsed", time_str)]),
+                        muted,
+                    ),
                     Span::styled(desc, muted),
                 ])
             }
