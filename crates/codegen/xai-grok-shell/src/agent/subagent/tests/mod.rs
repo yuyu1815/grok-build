@@ -2627,6 +2627,50 @@ async fn background_not_allowed_type_records_failure_completion() {
         )
         .await;
 }
+#[tokio::test]
+async fn definition_background_resume_preflight_failure_records_completion() {
+    use crate::test_support::lsp_runtime::{
+        ctx_with_toggle_and_cmd_tx, test_gateway_with_receiver,
+    };
+    use xai_grok_agent::config::AgentDefinition;
+    let mut definition = AgentDefinition::general_purpose();
+    definition.name = "forced-background".into();
+    definition.background = Some(true);
+    let mut config = crate::agent::config::Config::default();
+    config.cli_agents = vec![definition];
+    let (mut ctx, mut cmd_rx) = ctx_with_toggle_and_cmd_tx(HashMap::new());
+    ctx.agent_config = Some(config);
+    let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());
+    let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+    let (mut request, result_rx) = make_request("forced-background");
+    let subagent_id = request.id.clone();
+    request.resume_from = Some("missing-source".into());
+    assert_background_pre_spawn_failure(
+            ctx,
+            &coordinator,
+            &gateway,
+            request,
+            result_rx,
+            "not found",
+        )
+        .await;
+    assert!(cmd_rx.try_iter().any(|cmd| matches!(
+        cmd,
+        SessionCommand::XaiSessionNotification { notification }
+            if matches!(
+                notification.update,
+                SessionUpdate::SubagentFinished { subagent_id: id, .. }
+                    if id == subagent_id
+            )
+    )));
+    assert!(gateway_rx.try_iter().any(|msg| match msg {
+        xai_acp_lib::AcpClientMessage::ExtNotification(args) => {
+            let body = args.request.params.get();
+            body.contains("subagent_finished") && body.contains(&subagent_id)
+        }
+        _ => false,
+    }));
+}
 async fn assert_blocking_pre_spawn_does_not_push_summary(
     ctx: SubagentSpawnContext,
     coordinator: &std::cell::RefCell<SubagentCoordinator>,

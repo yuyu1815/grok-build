@@ -320,7 +320,14 @@ pub(crate) async fn handle_subagent_request(
                  Wait for it to complete before resuming."
             );
             drop(coord);
-            send_failure(request, &msg);
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         match coord
@@ -336,7 +343,14 @@ pub(crate) async fn handle_subagent_request(
                      The subagent may have been evicted or the ID is invalid."
                 );
                 drop(coord);
-                send_failure(request, &msg);
+                send_pre_spawn_failure(
+                    request,
+                    &msg,
+                    coordinator,
+                    &ctx,
+                    gateway,
+                    run_in_background,
+                );
                 return;
             }
         }
@@ -356,7 +370,14 @@ pub(crate) async fn handle_subagent_request(
             request.runtime_overrides.persona.as_deref(),
             source,
         ) {
-            send_failure(request, &e.to_string());
+            send_pre_spawn_failure(
+                request,
+                &e.to_string(),
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
     }
