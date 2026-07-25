@@ -14,7 +14,7 @@ use crate::render::wrapping::word_wrap_lines;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{AccentStyle, BlockContext, BlockLine, BlockOutput};
 use crate::theme::{Theme, quantize};
-use xai_grok_shell::session::{ContextInfo, count_detail};
+use xai_grok_shell::session::ContextInfo;
 
 /// Block that renders a `/context` snapshot in scrollback.
 ///
@@ -140,6 +140,56 @@ struct RowLayout {
     count_width: usize,
 }
 
+fn localized_category(label: &str, detail: Option<&str>) -> (String, Option<String>) {
+    let known = match label {
+        "Skills" => Some(("Skills", "skill", "skills")),
+        "MCP servers" => Some(("MCP servers", "server", "servers")),
+        _ => None,
+    };
+    let Some((label_key, singular_key, plural_key)) = known else {
+        return (label.to_owned(), detail.map(str::to_owned));
+    };
+
+    let localized_detail = detail.map(|value| {
+        let Some((count, noun)) = value.split_once(' ') else {
+            return value.to_owned();
+        };
+        let expected_noun = if count == "1" {
+            singular_key
+        } else {
+            plural_key
+        };
+        if noun != expected_noun || count.parse::<u64>().is_err() {
+            return value.to_owned();
+        }
+        let template = if count == "1" {
+            match singular_key {
+                "skill" => "{count} skill",
+                "server" => "{count} server",
+                _ => unreachable!(),
+            }
+        } else {
+            match plural_key {
+                "skills" => "{count} skills",
+                "servers" => "{count} servers",
+                _ => unreachable!(),
+            }
+        };
+        crate::i18n::format(template, &[("count", count.to_owned())])
+    });
+
+    (crate::i18n::text(label_key).into_owned(), localized_detail)
+}
+
+fn localized_tool_count(count: u64) -> String {
+    let template = if count == 1 {
+        "{count} tool"
+    } else {
+        "{count} tools"
+    };
+    crate::i18n::format(template, &[("count", count.to_string())])
+}
+
 impl RowLayout {
     /// Measure column widths over every row that will render. Widths are
     /// in codepoints, not bytes.
@@ -176,12 +226,22 @@ impl RowLayout {
 
     /// The row's numeric cells: tokens and percent, each right-aligned.
     fn cells(&self, tokens: u64, total: u64) -> String {
-        format!(
-            "{:>tokens_width$} tokens   {:>percent_width$}",
-            fmt_tok(tokens),
-            Self::percent(tokens, total),
-            tokens_width = self.tokens_width,
-            percent_width = self.percent_width,
+        crate::i18n::format(
+            "{tokens} tokens   {percent}",
+            &[
+                (
+                    "tokens",
+                    format!("{:>width$}", fmt_tok(tokens), width = self.tokens_width),
+                ),
+                (
+                    "percent",
+                    format!(
+                        "{:>width$}",
+                        Self::percent(tokens, total),
+                        width = self.percent_width
+                    ),
+                ),
+            ],
         )
     }
 
@@ -219,10 +279,12 @@ impl RowLayout {
             let mut second = vec![
                 Span::raw(" "),
                 Span::styled(
-                    format!(
-                        "{} tokens   {}",
-                        fmt_tok(row.tokens),
-                        Self::percent(row.tokens, total)
+                    crate::i18n::format(
+                        "{tokens} tokens   {percent}",
+                        &[
+                            ("tokens", fmt_tok(row.tokens)),
+                            ("percent", Self::percent(row.tokens, total)),
+                        ],
                     ),
                     muted,
                 ),
@@ -374,14 +436,14 @@ impl ContextInfoBlock {
             LegendRow {
                 glyph: system_glyph,
                 color: system_color,
-                label: "System prompt".to_string(),
+                label: crate::i18n::text("System prompt").into_owned(),
                 tokens: system_tokens,
                 detail: None,
             },
             LegendRow {
                 glyph: messages_glyph,
                 color: messages_color,
-                label: "Messages".to_string(),
+                label: crate::i18n::text("Messages").into_owned(),
                 tokens: message_tokens,
                 detail: None,
             },
@@ -390,7 +452,7 @@ impl ContextInfoBlock {
             legend_rows.push(LegendRow {
                 glyph: overhead_glyph,
                 color: overhead_color,
-                label: "Reasoning/overhead".to_string(),
+                label: crate::i18n::text("Reasoning/overhead").into_owned(),
                 tokens: overhead_tokens,
                 detail: None,
             });
@@ -398,23 +460,26 @@ impl ContextInfoBlock {
         legend_rows.push(LegendRow {
             glyph: free_glyph,
             color: empty_color,
-            label: "Free".to_string(),
+            label: crate::i18n::text("Free").into_owned(),
             tokens: free_tokens,
             detail: None,
         });
         let info_rows: Vec<LegendRow> = std::iter::once(LegendRow {
             glyph: tools_glyph,
             color: tools_color,
-            label: "Tool definitions".to_string(),
+            label: crate::i18n::text("Tool definitions").into_owned(),
             tokens: tool_tokens,
-            detail: Some(count_detail(tool_count, "tool")),
+            detail: Some(localized_tool_count(tool_count)),
         })
-        .chain(snapshot.usage_categories.iter().map(|c| LegendRow {
-            glyph: tools_glyph,
-            color: tools_color,
-            label: c.label.clone(),
-            tokens: c.tokens,
-            detail: c.detail.clone(),
+        .chain(snapshot.usage_categories.iter().map(|category| {
+            let (label, detail) = localized_category(&category.label, category.detail.as_deref());
+            LegendRow {
+                glyph: tools_glyph,
+                color: tools_color,
+                label,
+                tokens: category.tokens,
+                detail,
+            }
         }))
         .collect();
         let layout = RowLayout::measure(legend_rows.iter().chain(info_rows.iter()), total);
@@ -422,7 +487,10 @@ impl ContextInfoBlock {
 
         let mut lines: Vec<Line<'static>> = vec![
             // Header: bold white "Context"
-            Line::from(Span::styled("Context", primary)),
+            Line::from(Span::styled(
+                crate::i18n::text("Context").into_owned(),
+                primary,
+            )),
             // Blank row between header and the at-a-glance summary
             Line::from(""),
             // Sub-header: token totals + percent. Uses `text_secondary` for
@@ -434,11 +502,16 @@ impl ContextInfoBlock {
             // decimal places of precision (the `usage_pct: u8` field on
             // `ContextInfo` is pre-rounded to an integer).
             Line::from(Span::styled(
-                format!(
-                    "{} / {} tokens ({:.2}%)",
-                    fmt_tok_big(used),
-                    fmt_tok_big(total),
-                    precise_usage_percent(used, total),
+                crate::i18n::format(
+                    "{used} / {total} tokens ({percent}%)",
+                    &[
+                        ("used", fmt_tok_big(used)),
+                        ("total", fmt_tok_big(total)),
+                        (
+                            "percent",
+                            format!("{:.2}", precise_usage_percent(used, total)),
+                        ),
+                    ],
                 ),
                 Style::default().fg(theme.text_secondary),
             )),
@@ -481,7 +554,10 @@ impl ContextInfoBlock {
             let remaining = threshold_tokens.saturating_sub(used);
             let (text, style) = if usage_pct >= threshold_percent {
                 (
-                    format!("Auto-compact triggers next turn (at {threshold_percent}%)"),
+                    crate::i18n::format(
+                        "Auto-compact triggers next turn (at {percent}%)",
+                        &[("percent", threshold_percent.to_string())],
+                    ),
                     Style::default().fg(quantize(theme.warning)),
                 )
             } else {
@@ -490,9 +566,12 @@ impl ContextInfoBlock {
                 // window at 60% reads `~1.0m tokens remaining`, not
                 // `~1000k tokens remaining`.
                 (
-                    format!(
-                        "Auto-compact at {threshold_percent}% \u{00b7} ~{} tokens remaining",
-                        fmt_tok_big(remaining)
+                    crate::i18n::format(
+                        "Auto-compact at {percent}% · ~{tokens} tokens remaining",
+                        &[
+                            ("percent", threshold_percent.to_string()),
+                            ("tokens", fmt_tok_big(remaining)),
+                        ],
                     ),
                     muted,
                 )

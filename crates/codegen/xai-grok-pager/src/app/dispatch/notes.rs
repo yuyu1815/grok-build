@@ -56,20 +56,20 @@ pub(super) fn dispatch_send_feedback(app: &mut AppView, text: String) -> Vec<Eff
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {
         agent.scrollback.push_block(RenderBlock::system(
-            "Please provide feedback text.".to_string(),
+            crate::i18n::text("Please provide feedback text.").into_owned(),
         ));
         return vec![];
     }
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent
-            .scrollback
-            .push_block(RenderBlock::system("No active session.".to_string()));
+        agent.scrollback.push_block(RenderBlock::system(
+            crate::i18n::text("No active session.").into_owned(),
+        ));
         return vec![];
     };
 
     agent.scrollback.push_block(RenderBlock::system(
-        "Thanks for the feedback! The Grok Build team is on it.".to_string(),
+        crate::i18n::text("Thanks for the feedback! The Grok Build team is on it.").into_owned(),
     ));
 
     vec![Effect::SendFeedback {
@@ -100,7 +100,7 @@ pub(super) fn dispatch_send_remember_note(app: &mut AppView, text: String) -> Ve
     let trimmed = text.trim().to_string();
     if trimmed.is_empty() {
         agent.scrollback.push_block(RenderBlock::system(
-            "Please provide a memory note.".to_string(),
+            crate::i18n::text("Please provide a memory note.").into_owned(),
         ));
         return vec![];
     }
@@ -178,9 +178,9 @@ pub(super) fn dispatch_save_remember_note_from_modal(app: &mut AppView) -> Vec<E
     };
 
     agent.active_modal = None;
-    agent
-        .scrollback
-        .push_block(RenderBlock::system("Saving memory note...".to_string()));
+    agent.scrollback.push_block(RenderBlock::system(
+        crate::i18n::text("Saving memory note...").into_owned(),
+    ));
 
     vec![Effect::SaveMemoryNote {
         agent_id: id,
@@ -289,7 +289,7 @@ pub(super) fn dispatch_send_btw(app: &mut AppView, question: String) -> Vec<Effe
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast("No active session");
+        agent.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -350,14 +350,14 @@ pub(super) fn dispatch_send_recap(app: &mut AppView, auto: bool) -> Vec<Effect> 
     // entirely when the feature is off so we never hit `x.ai/recap`.
     if !app.session_recap_available {
         if !auto {
-            agent.show_toast("Session recap is not enabled");
+            agent.show_toast(crate::i18n::text("Session recap is not enabled").as_ref());
         }
         return vec![];
     }
 
     let Some(session_id) = agent.session.session_id.clone() else {
         if !auto {
-            agent.show_toast("No active session");
+            agent.show_toast(crate::i18n::text("No active session").as_ref());
         }
         return vec![];
     };

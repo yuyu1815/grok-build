@@ -120,13 +120,13 @@ impl ItemKind {
     }
 
     fn label(&self) -> &'static str {
-        match self {
+        crate::i18n::static_text(match self {
             Self::Permission => "Permissions",
             Self::EnvVar => "Env vars",
             Self::McpServer => "MCP servers",
             Self::Hook => "Hooks",
             Self::PathEntry => "Paths",
-        }
+        })
     }
 
     /// Stable sort order for grouping within a scope.
@@ -594,30 +594,33 @@ pub fn render_import_claude_modal(
     theme: &Theme,
     compact: bool,
 ) {
-    let confirm_label = format!("Enter import {}", state.selected_count());
+    let confirm_label = crate::i18n::format(
+        "Enter import {count}",
+        &[("count", state.selected_count().to_string())],
+    );
     let shortcuts = [
         Shortcut {
-            label: "\u{2191}\u{2193} navigate",
+            label: crate::i18n::static_text("↑↓ navigate"),
             clickable: false,
             id: SHORTCUT_ID_HINT,
         },
         Shortcut {
-            label: "space toggle",
+            label: crate::i18n::static_text("space toggle"),
             clickable: false,
             id: SHORTCUT_ID_HINT,
         },
         Shortcut {
-            label: "\u{2190}\u{2192} fold",
+            label: crate::i18n::static_text("←→ fold"),
             clickable: false,
             id: SHORTCUT_ID_HINT,
         },
         Shortcut {
-            label: "a all",
+            label: crate::i18n::static_text("a all"),
             clickable: true,
             id: SHORTCUT_ID_SELECT_ALL,
         },
         Shortcut {
-            label: "n none",
+            label: crate::i18n::static_text("n none"),
             clickable: true,
             id: SHORTCUT_ID_SELECT_NONE,
         },
@@ -627,13 +630,13 @@ pub fn render_import_claude_modal(
             id: SHORTCUT_ID_CONFIRM,
         },
         Shortcut {
-            label: "Esc cancel",
+            label: crate::i18n::static_text("Esc cancel"),
             clickable: true,
             id: SHORTCUT_ID_CANCEL,
         },
     ];
     let config = ModalWindowConfig {
-        title: "Import Claude settings",
+        title: crate::i18n::static_text("Import Claude settings"),
         tabs: None,
         shortcuts: &shortcuts,
         sizing: ModalSizing::default().with_compact(compact),
@@ -714,7 +717,10 @@ fn build_rows(
     if !plan.global_items.is_empty() {
         let scope_start = flat_index;
         let scope_key = format!("scope:{:?}", Scope::Global);
-        let label = "Global  ~/.grok/config.toml".to_string();
+        let label = crate::i18n::format(
+            "Global  {path}",
+            &[("path", "~/.grok/config.toml".to_string())],
+        );
         // Placeholder header; flat_indices filled after children are pushed.
         let scope_header_pos = rows.len();
         rows.push(Row::ScopeHeader {
@@ -742,7 +748,10 @@ fn build_rows(
         let scope_start = flat_index;
         let scope_key = format!("scope:{:?}", Scope::Project);
         let project_config = find_project_root(cwd).join(".grok").join("config.toml");
-        let label = format!("Project  {}", project_config.display());
+        let label = crate::i18n::format(
+            "Project  {path}",
+            &[("path", project_config.display().to_string())],
+        );
         let scope_header_pos = rows.len();
         rows.push(Row::ScopeHeader {
             label,

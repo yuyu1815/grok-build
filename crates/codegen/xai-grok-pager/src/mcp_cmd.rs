@@ -166,7 +166,10 @@ fn run_list(json: bool) -> Result<()> {
             .collect();
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else if servers.is_empty() {
-        println!("No MCP servers configured. Run `grok mcp add --help` to get started.");
+        println!(
+            "{}",
+            crate::tr!("No MCP servers configured. Run `grok mcp add --help` to get started.")
+        );
     } else {
         for (name, (config, scope)) in &servers {
             let transport = match &config.transport {
@@ -241,8 +244,23 @@ async fn run_add(args: AddArgs) -> Result<()> {
 
     let path = scope_target(args.scope);
     xai_grok_shell::util::config::save_mcp_server_config_at(&path, name, &config).await?;
-    println!("Added {summary} to {} config", args.scope.label());
-    println!("File modified: {}", scope_display(args.scope, &path));
+    println!(
+        "{}",
+        crate::i18n::format(
+            "Added {summary} to {scope} config",
+            &[
+                ("summary", summary),
+                ("scope", args.scope.label().to_string())
+            ]
+        )
+    );
+    println!(
+        "{}",
+        crate::i18n::format(
+            "File modified: {path}",
+            &[("path", scope_display(args.scope, &path))]
+        )
+    );
     Ok(())
 }
 
@@ -447,7 +465,10 @@ fn looks_like_env_pair(s: &str) -> bool {
 /// Current working directory, exiting loudly when it cannot be determined.
 fn current_dir_or_exit() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|e| {
-        eprintln!("Cannot determine working directory: {e}");
+        eprintln!(
+            "{}",
+            crate::tr!("Cannot determine working directory: {e}", e)
+        );
         std::process::exit(1);
     })
 }
@@ -544,14 +565,42 @@ async fn run_remove(name: &str, requested_scope: Option<McpScope>) -> Result<()>
         Ok(site) => site,
         Err(RemoveError::NotFound) => {
             let searched = requested_scope.map_or("user or project", McpScope::label);
-            eprintln!("No MCP server named '{name}' in {searched} config");
+            eprintln!(
+                "{}",
+                crate::tr!(
+                    "No MCP server named '{name}' in {searched} config",
+                    name,
+                    searched
+                )
+            );
             std::process::exit(1);
         }
         Err(RemoveError::Ambiguous { project_path }) => {
-            eprintln!("MCP server '{name}' exists in multiple scopes:");
-            eprintln!("  user: {}", display_user_grok_path("config.toml"));
-            eprintln!("  project: {}", project_path.display());
-            eprintln!("Specify which one to remove, e.g.: grok mcp remove {name} --scope project");
+            eprintln!(
+                "{}",
+                crate::tr!("MCP server '{name}' exists in multiple scopes:", name)
+            );
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  user: {path}",
+                    &[("path", display_user_grok_path("config.toml"))]
+                )
+            );
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  project: {path}",
+                    &[("path", project_path.display().to_string())]
+                )
+            );
+            eprintln!(
+                "{}",
+                crate::tr!(
+                    "Specify which one to remove, e.g.: grok mcp remove {name} --scope project",
+                    name
+                )
+            );
             std::process::exit(1);
         }
     };
@@ -559,12 +608,36 @@ async fn run_remove(name: &str, requested_scope: Option<McpScope>) -> Result<()>
     let existed = delete_mcp_server_config_at(&path, name).await?;
     if !existed {
         // Race guard: the entry vanished between the existence check and the delete.
-        eprintln!("No MCP server named '{name}' in {} config", scope.label());
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "No MCP server named '{name}' in {scope} config",
+                &[
+                    ("name", name.to_string()),
+                    ("scope", scope.label().to_string())
+                ]
+            )
+        );
         std::process::exit(1);
     }
 
-    println!("Removed MCP server '{name}' from {} config", scope.label());
-    println!("File modified: {}", scope_display(scope, &path));
+    println!(
+        "{}",
+        crate::i18n::format(
+            "Removed MCP server '{name}' from {scope} config",
+            &[
+                ("name", name.to_string()),
+                ("scope", scope.label().to_string())
+            ]
+        )
+    );
+    println!(
+        "{}",
+        crate::i18n::format(
+            "File modified: {path}",
+            &[("path", scope_display(scope, &path))]
+        )
+    );
 
     // A scoped delete can leave the name defined in the other scope or an
     // ancestor .grok/config.toml, where it still resolves for sessions.
@@ -588,9 +661,21 @@ async fn run_doctor(json: bool, name: Option<String>) -> Result<()> {
     if let Some(ref filter) = name
         && report.servers.is_empty()
     {
-        eprintln!("MCP server '{}' not found.", filter);
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "MCP server '{name}' not found.",
+                &[("name", filter.to_string())]
+            )
+        );
         if !report.all_server_names.is_empty() {
-            eprintln!("Available servers: {}", report.all_server_names.join(", "));
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "Available servers: {servers}",
+                    &[("servers", report.all_server_names.join(", "))]
+                )
+            );
         }
         std::process::exit(1);
     }

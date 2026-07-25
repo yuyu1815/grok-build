@@ -3,6 +3,7 @@
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
+use crate::i18n::text;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
     AccentStyle, BlockBackground, BlockContext, BlockLine, BlockOutput, DisplayMode, Selectable,
@@ -113,7 +114,7 @@ impl ListDirToolCallBlock {
             theme.fg(theme.path)
         };
 
-        let prefix = "List ";
+        let prefix = text("List").into_owned() + " ";
         let path_budget = width
             .map(|w| w.saturating_sub(prefix.len()))
             .unwrap_or(usize::MAX);

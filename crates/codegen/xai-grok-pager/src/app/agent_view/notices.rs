@@ -251,7 +251,11 @@ impl AgentView {
     /// Triggered on Shift+Tab mode cycles.
     /// Renders at full visibility for 2 s, then fades out over the final 0.3 s.
     pub fn show_mode_switch_banner(&mut self, mode_name: &str) {
-        let msg = format!("Switched to mode: {}", mode_name);
+        let localized_mode = crate::i18n::text(mode_name);
+        let msg = crate::i18n::format(
+            "Switched to mode: {mode}",
+            &[("mode", localized_mode.into_owned())],
+        );
         self.mode_switch_banner = Some((msg, MODE_BANNER_TOTAL_TICKS));
     }
 

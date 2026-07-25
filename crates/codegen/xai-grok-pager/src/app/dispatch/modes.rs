@@ -48,13 +48,16 @@ pub(super) fn dispatch_enter_plan_mode(
 
     let in_plan = agent.plan_mode_pending.unwrap_or(agent.plan_mode_active);
     if in_plan {
-        app.show_toast("Already in plan mode. Use /view-plan to view the current plan.");
+        app.show_toast(
+            crate::i18n::text("Already in plan mode. Use /view-plan to view the current plan.")
+                .as_ref(),
+        );
         return vec![];
     }
 
     let agent = app.agents.get_mut(&id).unwrap();
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast("No active session");
+        agent.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -142,7 +145,7 @@ pub(super) fn set_plan_mode(
     };
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast("No active session");
+        agent.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -393,7 +396,7 @@ pub(super) fn set_yolo_mode(app: &mut AppView, new: bool) -> Vec<Effect> {
     // plan mode, say the plan edit gate stays binding — "all tool actions
     // auto-run" would overpromise while the shell rejects non-plan-file edits.
     if new && effective_plan {
-        app.show_toast(YOLO_ON_UNDER_PLAN_TOAST);
+        app.show_toast(crate::i18n::text(YOLO_ON_UNDER_PLAN_TOAST).as_ref());
     } else {
         app.show_toast(&yolo_toast(new));
     }
@@ -467,7 +470,7 @@ pub(super) fn set_permission_mode(
     // Toast on every save (plan-aware for AlwaysApprove, mirroring
     // `set_yolo_mode` — the plan edit gate stays binding under yolo).
     if kind.is_always_approve() && effective_plan {
-        app.show_toast(YOLO_ON_UNDER_PLAN_TOAST);
+        app.show_toast(crate::i18n::text(YOLO_ON_UNDER_PLAN_TOAST).as_ref());
     } else {
         app.show_toast(&permission_mode_toast(kind));
     }
@@ -486,9 +489,11 @@ pub(super) fn permission_mode_toast(kind: crate::app::actions::PermissionModeKin
     use crate::app::actions::PermissionModeKind;
     match kind {
         PermissionModeKind::AlwaysApprove => yolo_toast(true),
-        PermissionModeKind::Auto => "\u{2713} Permission mode: Auto (classifier)".to_string(),
-        PermissionModeKind::Ask => "\u{2713} Permission mode: Ask".to_string(),
-        PermissionModeKind::Default => "\u{2713} Permission mode: Default".to_string(),
+        PermissionModeKind::Auto => {
+            crate::i18n::text("✓ Permission mode: Auto (classifier)").into_owned()
+        }
+        PermissionModeKind::Ask => crate::i18n::text("✓ Permission mode: Ask").into_owned(),
+        PermissionModeKind::Default => crate::i18n::text("✓ Permission mode: Default").into_owned(),
     }
 }
 
@@ -496,13 +501,13 @@ pub(super) fn permission_mode_toast(kind: crate::app::actions::PermissionModeKin
 /// fast path, but the shell's plan-mode gate still rejects non-plan-file
 /// edits, so the standard "all tool actions auto-run" would overpromise.
 pub(super) const YOLO_ON_UNDER_PLAN_TOAST: &str =
-    "\u{26A0} Always-approve ON: plan mode still blocks file edits until you exit plan mode";
+    "⚠ Always-approve ON: plan mode still blocks file edits until you exit plan mode";
 
 /// Build the YOLO toast — ⚠ on ON (destructive), ✓ on OFF (safe default).
 fn yolo_toast(new: bool) -> String {
     if new {
         // Warning glyph + consequence — only post-commit feedback.
-        "\u{26A0} Always-approve ON: all tool actions auto-run".to_string()
+        crate::i18n::text("⚠ Always-approve ON: all tool actions auto-run").into_owned()
     } else {
         // OFF restores safe default — uniform ✓ glyph.
         save_success_toast("Always-approve", false)

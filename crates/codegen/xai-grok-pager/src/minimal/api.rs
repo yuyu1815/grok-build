@@ -163,7 +163,7 @@ pub fn request_minimal_transcript(app: &mut AppView) {
         agent
             .scrollback
             .push_block(crate::scrollback::block::RenderBlock::system(
-                "No conversation transcript to view yet",
+                crate::i18n::text("No conversation transcript to view yet").into_owned(),
             ));
         return;
     }

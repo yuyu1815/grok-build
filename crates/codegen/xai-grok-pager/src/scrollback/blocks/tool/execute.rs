@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 
 use super::TOOL_HEADER_RANGE;
 use crate::appearance::ExecuteHeaderStyle;
+use crate::i18n::text;
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -208,11 +209,14 @@ impl ExecuteToolCallBlock {
                 } else {
                     theme.primary().add_modifier(Modifier::BOLD)
                 };
-                let mut spans = vec![Span::styled("Run ".to_string(), label_style)];
-                let mut hang = UnicodeWidthStr::width("Run ");
+                let mut spans = vec![Span::styled(text("Run").into_owned() + " ", label_style)];
+                let mut hang = UnicodeWidthStr::width(text("Run").as_ref()) + 1;
                 if self.bash_mode {
-                    spans.push(Span::styled("(user) ".to_string(), theme.muted()));
-                    hang += UnicodeWidthStr::width("(user) ");
+                    spans.push(Span::styled(
+                        text("(user)").into_owned() + " ",
+                        theme.muted(),
+                    ));
+                    hang += UnicodeWidthStr::width(text("(user)").as_ref()) + 1;
                 }
                 (spans, hang)
             }
@@ -303,10 +307,13 @@ impl ExecuteToolCallBlock {
         } else {
             theme.primary().add_modifier(Modifier::BOLD)
         };
-        let mut spans = vec![Span::styled("Run ", label_style)];
+        let mut spans = vec![Span::styled(text("Run").into_owned() + " ", label_style)];
         if self.bash_mode {
             // Same style as session event messages (e.g. "Worked for 2.3s.")
-            spans.push(Span::styled("(user) ", theme.muted()));
+            spans.push(Span::styled(
+                text("(user)").into_owned() + " ",
+                theme.muted(),
+            ));
         }
         // Single ratatui Line — never pass raw newlines (callers that need
         // multi-line command display use `push_command_soft_wrap`).
@@ -806,6 +813,7 @@ impl BlockContent for ExecuteToolCallBlock {
 mod tests {
     use super::*;
     use crate::appearance::ExecuteHeaderStyle;
+    use crate::i18n::text;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()

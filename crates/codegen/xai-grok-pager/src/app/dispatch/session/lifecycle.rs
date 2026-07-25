@@ -164,7 +164,7 @@ pub(in crate::app::dispatch) fn open_new_session_question(app: &mut AppView) -> 
         return vec![];
     };
     if agent.question_view.is_some() {
-        app.show_toast("Finish answering the current question first");
+        app.show_toast(crate::i18n::text("Finish answering the current question first").as_ref());
         return vec![];
     }
     let mut options = vec![
@@ -223,7 +223,7 @@ pub(in crate::app::dispatch) fn open_agent_type_mismatch_question(
         return vec![];
     };
     if agent.question_view.is_some() {
-        app.show_toast("Finish answering the current question first");
+        app.show_toast(crate::i18n::text("Finish answering the current question first").as_ref());
         return vec![];
     }
     let question = Question {
@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(

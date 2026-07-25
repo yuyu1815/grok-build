@@ -229,7 +229,17 @@ pub fn parse_permission_rules_lenient(
 ) -> Vec<xai_grok_workspace::permission::types::PermissionRule> {
     let (rules, errors) = parse_permission_rules_inner(allow, deny);
     for (flag, rule, err) in errors {
-        eprintln!("warning: {flag} \"{rule}\": {err}, skipping");
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "warning: {flag} \"{rule}\": {error}, skipping",
+                &[
+                    ("flag", flag.to_string()),
+                    ("rule", rule),
+                    ("error", err.to_string()),
+                ],
+            )
+        );
     }
     rules
 }
@@ -1308,7 +1318,7 @@ pub async fn run_single_turn(
                 == Some("max_turns_reached");
             if is_max_turns {
                 match emitter.format {
-                    OutputFormat::Plain => eprintln!("Max turns reached"),
+                    OutputFormat::Plain => eprintln!("{}", crate::tr!("Max turns reached")),
                     OutputFormat::StreamingJson => {
                         println!("{}", serde_json::json!({"type": "max_turns_reached"}))
                     }
@@ -1685,7 +1695,13 @@ fn handle_ext_notification(
                 );
             }
             OutputFormat::Plain => {
-                eprintln!("Auto-compacting conversation ({percentage}% full)...");
+                eprintln!(
+                    "{}",
+                    crate::tr!(
+                        "Auto-compacting conversation ({percentage}% full)...",
+                        percentage
+                    )
+                );
             }
             OutputFormat::Json => {}
         },
@@ -1693,7 +1709,7 @@ fn handle_ext_notification(
             OutputFormat::StreamingJson => {
                 println!("{}", serde_json::json!({"type": "auto_compact_completed"}));
             }
-            OutputFormat::Plain => eprintln!("Conversation compacted."),
+            OutputFormat::Plain => eprintln!("{}", crate::tr!("Conversation compacted.")),
             OutputFormat::Json => {}
         },
         XaiUpdate::AutoCompactFailed { error } => match format {
@@ -1705,9 +1721,9 @@ fn handle_ext_notification(
             }
             OutputFormat::Plain => {
                 if error.trim().is_empty() {
-                    eprintln!("Auto-compact failed.");
+                    eprintln!("{}", crate::tr!("Auto-compact failed."));
                 } else {
-                    eprintln!("Auto-compact failed: {error}");
+                    eprintln!("{}", crate::tr!("Auto-compact failed: {error}", error));
                 }
             }
             OutputFormat::Json => {}
@@ -1716,7 +1732,7 @@ fn handle_ext_notification(
             OutputFormat::StreamingJson => {
                 println!("{}", serde_json::json!({"type": "auto_compact_cancelled"}));
             }
-            OutputFormat::Plain => eprintln!("Auto-compact cancelled."),
+            OutputFormat::Plain => eprintln!("{}", crate::tr!("Auto-compact cancelled.")),
             OutputFormat::Json => {}
         },
         XaiUpdate::AutoContinueCompleted { total_tokens } => match format {
@@ -1726,7 +1742,7 @@ fn handle_ext_notification(
                     serde_json::json!({"type": "auto_continue_completed", "total_tokens": total_tokens})
                 );
             }
-            OutputFormat::Plain => eprintln!("Resumed after compaction."),
+            OutputFormat::Plain => eprintln!("{}", crate::tr!("Resumed after compaction.")),
             OutputFormat::Json => {}
         },
         XaiUpdate::ImageCompressed { message } => match format {

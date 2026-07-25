@@ -2329,7 +2329,7 @@ pub(crate) fn render_session_picker(
     use crate::views::shortcuts_bar::HintItem;
     let mut default_shortcuts: Vec<HintItem> = vec![
         HintItem::new(crate::key!(Esc), "back"),
-        HintItem::new(crate::key!(Enter), "select"),
+        HintItem::new(crate::key!(Enter), crate::i18n::static_text("select")),
     ];
     if !ctx.chat_mode {
         default_shortcuts.push(HintItem {

@@ -47,9 +47,17 @@ pub fn section_key(section: &McpSectionId) -> String {
 /// Display label for a section header, e.g. `"Managed by grok.com (3)"`.
 pub fn section_label(section: &McpSectionId, count: usize) -> String {
     match section {
-        McpSectionId::Managed => format!("Managed by grok.com ({count})"),
-        McpSectionId::Plugin(name) => format!("Plugin: {name} ({count})"),
-        McpSectionId::Local => format!("Local ({count})"),
+        McpSectionId::Managed => crate::i18n::format(
+            "Managed by grok.com ({count})",
+            &[("count", count.to_string())],
+        ),
+        McpSectionId::Plugin(name) => crate::i18n::format(
+            "Plugin: {name} ({count})",
+            &[("name", name.clone()), ("count", count.to_string())],
+        ),
+        McpSectionId::Local => {
+            crate::i18n::format("Local ({count})", &[("count", count.to_string())])
+        }
     }
 }
 
@@ -83,7 +91,8 @@ pub fn section_description_lines(section: &McpSectionId, team_id: Option<&str>) 
         McpSectionId::Managed => {
             let url = managed_connectors_url_display(team_id);
             vec![
-                "Add, remove, or manage connectors. Ctrl+O to open or go to:".into(),
+                crate::i18n::text("Add, remove, or manage connectors. Ctrl+O to open or go to:")
+                    .into_owned(),
                 format!("[{url}]"),
             ]
         }
@@ -210,10 +219,10 @@ impl McpServerDisplayStatus {
     /// Short human label for the status.
     pub(crate) fn label(&self) -> &'static str {
         match self {
-            Self::Ready => "ready",
-            Self::NeedsAuth => "needs auth",
-            Self::Unavailable => "unavailable",
-            Self::Initializing => "initializing",
+            Self::Ready => crate::i18n::static_text("ready"),
+            Self::NeedsAuth => crate::i18n::static_text("needs auth"),
+            Self::Unavailable => crate::i18n::static_text("unavailable"),
+            Self::Initializing => crate::i18n::static_text("initializing"),
         }
     }
 }

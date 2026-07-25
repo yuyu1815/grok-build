@@ -21,7 +21,7 @@ use crate::scrollback::block::RenderBlock;
 /// On completion, TaskResult::ShareSessionComplete shows the URL in scrollback.
 pub(super) fn dispatch_share_session(app: &mut AppView) -> Vec<Effect> {
     if !app.sharing_enabled {
-        app.show_toast("Sharing is disabled");
+        app.show_toast(crate::i18n::text("Sharing is disabled").as_ref());
         return vec![];
     }
     let ActiveView::Agent(id) = app.active_view else {

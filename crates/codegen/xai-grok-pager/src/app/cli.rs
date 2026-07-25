@@ -1,6 +1,6 @@
 //! CLI argument parsing for the pager.
 pub use crate::headless::OutputFormat;
-use clap::{ArgAction, Parser, Subcommand, ValueHint};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand, ValueHint};
 use clap_complete::Shell;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -746,6 +746,30 @@ pub enum ResumeTarget {
     None,
 }
 impl PagerArgs {
+    /// Parse CLI arguments through the localized clap command without exiting.
+    pub fn try_parse_localized_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        Self::try_parse_from_for_locale(itr, crate::i18n::locale())
+    }
+
+    /// Locale-explicit variant used to verify CLI rendering without mutating process globals.
+    pub fn try_parse_from_for_locale<I, T>(
+        itr: I,
+        locale: crate::i18n::Locale,
+    ) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let mut command = Self::command();
+        crate::i18n::localize_clap_command_for_locale(&mut command, locale);
+        let mut matches = command.clone().try_get_matches_from(itr)?;
+        Self::from_arg_matches_mut(&mut matches).map_err(|error| error.format(&mut command))
+    }
+
     /// Parse CLI arguments and apply `--cwd` if provided.
     pub fn parse_and_apply_cwd() -> anyhow::Result<Self> {
         let bin_name = std::env::args()
@@ -757,7 +781,10 @@ impl PagerArgs {
             .filter(|n| *n == "grok" || *n == "agent")
             .unwrap_or("grok")
             .to_owned();
-        let mut args = Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)));
+        let mut args = Self::try_parse_localized_from(
+            std::iter::once(bin_name).chain(std::env::args().skip(1)),
+        )
+        .unwrap_or_else(|error| error.exit());
         if let Some(socket) = args.leader_socket.take() {
             args.leader_socket = Some(std::path::absolute(&socket).unwrap_or(socket));
         }

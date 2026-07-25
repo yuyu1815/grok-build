@@ -2233,7 +2233,10 @@ impl DashboardState {
         let mut attachment = match image {
             ProbedAttachment::Image(pasted) => {
                 if peek_in_question {
-                    self.set_error_toast("Pasted image discarded — reply switched to a question");
+                    self.set_error_toast(
+                        crate::i18n::text("Pasted image discarded — reply switched to a question")
+                            .as_ref(),
+                    );
                     ClipboardPasteCompletion::Dropped
                 } else {
                     let (_, completion) = if peek {
@@ -2258,7 +2261,10 @@ impl DashboardState {
             if file_urls.as_deref().is_some_and(|urls| {
                 !crate::prompt_images::try_read_images_from_paste(urls).is_empty()
             }) {
-                self.set_error_toast("Pasted image discarded — reply switched to a question");
+                self.set_error_toast(
+                    crate::i18n::text("Pasted image discarded — reply switched to a question")
+                        .as_ref(),
+                );
             }
             attachment = ClipboardPasteCompletion::Dropped;
         }
@@ -2334,12 +2340,16 @@ impl DashboardState {
                 });
             } else if !same_row {
                 // Never reply to a row the user is no longer peeking.
-                self.set_error_toast("Reply canceled — peek panel changed");
+                self.set_error_toast(
+                    crate::i18n::text("Reply canceled — peek panel changed").as_ref(),
+                );
             } else {
                 // A question now owns the panel (Enter answers it there, and the
                 // reply dispatch would silently queue a prompt + wipe the draft
                 // behind the dialog) — drop the stash; the draft stays put.
-                self.set_error_toast("Reply canceled — answer the question first");
+                self.set_error_toast(
+                    crate::i18n::text("Reply canceled — answer the question first").as_ref(),
+                );
             }
         }
         actions
@@ -4677,7 +4687,7 @@ mod tests {
     #[test]
     fn set_error_toast_prefixes_error_glyph() {
         let mut state = DashboardState::new();
-        state.set_error_toast("boom");
+        state.set_error_toast(crate::i18n::text("boom").as_ref());
         assert_eq!(
             state.error_toast.as_deref(),
             Some(format!("{} boom", crate::glyphs::ballot_x()).as_str()),
@@ -9261,7 +9271,7 @@ mod tests {
         let reg = crate::actions::ActionRegistry::defaults();
         let key_sec = SectionKey::State(RowState::Working);
         state.focus_section(key_sec);
-        state.set_error_toast("boom");
+        state.set_error_toast(crate::i18n::text("boom").as_ref());
         let _ = state.handle_key(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &reg);
         assert!(state.is_section_collapsed(key_sec), "Left must collapse");
         assert!(

@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use xai_grok_workspace::permission::mcp_titleize_segment;
 
 use super::TOOL_HEADER_RANGE;
+use crate::i18n::{format as tr_format, text};
 use crate::render::line_utils::truncate_str;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -98,12 +99,22 @@ impl SearchToolCallBlock {
     }
 
     pub fn copy_text(&self) -> String {
-        let mut out = format!("query: {}\n", self.query);
+        let mut out = tr_format("query: {query}\n", &[("query", self.query.clone())]);
         if let Some(limit) = self.limit {
-            out.push_str(&format!("limit: {limit}\n"));
+            out.push_str(&tr_format(
+                "limit: {limit}\n",
+                &[("limit", limit.to_string())],
+            ));
         }
-        let s = if self.result_count == 1 { "" } else { "s" };
-        out.push_str(&format!("{} result{s}\n", self.result_count));
+        let result_template = if self.result_count == 1 {
+            "{count} result\n"
+        } else {
+            "{count} results\n"
+        };
+        out.push_str(&tr_format(
+            result_template,
+            &[("count", self.result_count.to_string())],
+        ));
 
         for (i, tool) in self.results.iter().enumerate() {
             out.push('\n');
@@ -131,12 +142,16 @@ impl SearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Search Tools ";
+        let prefix = text("Search Tools").into_owned() + " ";
 
         match max_width {
             Some(w) => {
-                let s = if self.result_count == 1 { "" } else { "s" };
-                let suffix = format!(" ({} result{s})", self.result_count);
+                let template = if self.result_count == 1 {
+                    " ({count} result)"
+                } else {
+                    " ({count} results)"
+                };
+                let suffix = tr_format(template, &[("count", self.result_count.to_string())]);
 
                 let suffix_fits = prefix.len() + suffix.len() < w;
                 let effective_suffix = if suffix_fits { &suffix } else { "" };
@@ -240,7 +255,11 @@ impl BlockContent for SearchToolCallBlock {
                 } else if self.error.is_none() {
                     lines.push(Line::from("").into());
                     lines.push(
-                        Line::from(Span::styled("  (no results found)", theme.muted())).into(),
+                        Line::from(Span::styled(
+                            format!("  {}", text("(no results found)")),
+                            theme.muted(),
+                        ))
+                        .into(),
                     );
                 }
 

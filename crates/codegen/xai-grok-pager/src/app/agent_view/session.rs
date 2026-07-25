@@ -367,7 +367,9 @@ impl AgentView {
             saw_todo_update: false,
         });
         self.loading_placeholder_id = Some(self.scrollback.push_block(
-            crate::scrollback::block::RenderBlock::system("Reloading session after reconnect..."),
+            crate::scrollback::block::RenderBlock::system(
+                crate::i18n::text("Reloading session after reconnect...").into_owned(),
+            ),
         ));
         self.scrollback.begin_batch();
         self.begin_replay_window();

@@ -38,7 +38,7 @@ struct ClearTarget {
 
 fn workspace_target(storage: &MemoryStorage) -> ClearTarget {
     ClearTarget {
-        label: "workspace memory",
+        label: crate::i18n::static_text("workspace memory"),
         path: storage.workspace_dir().to_path_buf(),
         clear: |s| s.clear_workspace(),
     }
@@ -46,7 +46,7 @@ fn workspace_target(storage: &MemoryStorage) -> ClearTarget {
 
 fn global_target(storage: &MemoryStorage) -> ClearTarget {
     ClearTarget {
-        label: "global MEMORY.md",
+        label: crate::i18n::static_text("global MEMORY.md"),
         path: storage.global_memory_file(),
         clear: |s| s.clear_global(),
     }
@@ -77,23 +77,26 @@ fn run_clear(storage: &MemoryStorage, targets: &[ClearTarget], skip_confirm: boo
     let existing: Vec<_> = targets.iter().filter(|t| t.path.exists()).collect();
 
     if existing.is_empty() {
-        println!("Nothing to clear \u{2014} no memory files found.");
+        println!(
+            "{}",
+            crate::tr!("Nothing to clear — no memory files found.")
+        );
         return Ok(());
     }
 
-    println!("The following will be deleted:");
+    println!("{}", crate::tr!("The following will be deleted:"));
     for t in &existing {
         println!("  {}: {}", t.label, t.path.display());
     }
 
     if !skip_confirm {
-        print!("\nAre you sure? [y/N] ");
+        print!("\n{}", crate::tr!("Are you sure? [y/N] "));
         std::io::stdout().flush()?;
 
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         if !matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-            println!("Cancelled.");
+            println!("{}", crate::tr!("Cancelled."));
             return Ok(());
         }
     }
@@ -104,7 +107,7 @@ fn run_clear(storage: &MemoryStorage, targets: &[ClearTarget], skip_confirm: boo
         match (t.clear)(storage) {
             Ok(true) => {
                 cleared = true;
-                println!("  Cleared: {}", t.label);
+                println!("  {}: {}", crate::tr!("Cleared"), t.label);
             }
             Ok(false) => {} // nothing to clear for this scope
             Err(e) => {
@@ -114,14 +117,14 @@ fn run_clear(storage: &MemoryStorage, targets: &[ClearTarget], skip_confirm: boo
     }
 
     if cleared && errors.is_empty() {
-        println!("Memory cleared.");
+        println!("{}", crate::tr!("Memory cleared."));
     } else if cleared {
-        println!("Memory partially cleared. Errors:");
+        println!("{}", crate::tr!("Memory partially cleared. Errors:"));
         for e in &errors {
             eprintln!("  {e}");
         }
     } else if !errors.is_empty() {
-        eprintln!("Failed to clear memory:");
+        eprintln!("{}", crate::tr!("Failed to clear memory:"));
         for e in &errors {
             eprintln!("  {e}");
         }

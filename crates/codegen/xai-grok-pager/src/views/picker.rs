@@ -1558,7 +1558,7 @@ pub fn picker_shortcuts() -> &'static [HintItem] {
                 description: None,
                 pinned: false,
             },
-            HintItem::new(crate::key!(Enter), "select"),
+            HintItem::new(crate::key!(Enter), crate::i18n::static_text("select")),
             HintItem::new(crate::key!(Esc), "close"),
         ]
     });
