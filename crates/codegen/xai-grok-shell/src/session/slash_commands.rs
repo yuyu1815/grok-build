@@ -256,6 +256,54 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             }
         },
     },
+    BuiltinCommand {
+        name: "auth",
+        description: "Show Grok authentication status",
+        argument_hint: Some("status"),
+        aliases: &[],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |args| {
+            if args.trim().eq_ignore_ascii_case("status") {
+                BuiltinAction::AuthStatus
+            } else {
+                BuiltinAction::UsageError {
+                    message: "Usage: /auth status",
+                }
+            }
+        },
+    },
+    BuiltinCommand {
+        name: "providers",
+        description: "Show configured providers and their model state",
+        argument_hint: None,
+        aliases: &[],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |args| {
+            if args.trim().is_empty() {
+                BuiltinAction::Providers
+            } else {
+                BuiltinAction::UsageError {
+                    message: "Usage: /providers",
+                }
+            }
+        },
+    },
+    BuiltinCommand {
+        name: "models",
+        description: "Show available Grok models",
+        argument_hint: None,
+        aliases: &[],
+        gate: BuiltinGate::AlwaysOn,
+        resolve: |args| {
+            if args.trim().is_empty() {
+                BuiltinAction::Models
+            } else {
+                BuiltinAction::UsageError {
+                    message: "Usage: /models",
+                }
+            }
+        },
+    },
 ];
 
 /// Split a trailing `--budget <tokens>` flag off a `/goal` objective.
@@ -660,6 +708,12 @@ pub(super) enum BuiltinAction {
     GoalPause,
     GoalResume,
     GoalClear,
+    AuthStatus,
+    Providers,
+    Models,
+    UsageError {
+        message: &'static str,
+    },
 }
 
 impl BuiltinAction {
@@ -692,6 +746,10 @@ impl BuiltinAction {
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => "goal",
+            BuiltinAction::AuthStatus => "auth",
+            BuiltinAction::Providers => "providers",
+            BuiltinAction::Models => "models",
+            BuiltinAction::UsageError { .. } => "usage",
         }
     }
 
@@ -723,7 +781,11 @@ impl BuiltinAction {
             BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
-            | BuiltinAction::GoalClear => false,
+            | BuiltinAction::GoalClear
+            | BuiltinAction::AuthStatus
+            | BuiltinAction::Providers
+            | BuiltinAction::Models => false,
+            BuiltinAction::UsageError { .. } => true,
         }
     }
 }
@@ -959,6 +1021,16 @@ pub(super) async fn build_skill_information_for_refs(
 
 /// Resolve prompt blocks as a slash command.
 /// `Ok(blocks)` = not a command, pass through. `Err(outcome)` = matched.
+pub(crate) fn is_provider_status_command(prompt_blocks: &[acp::ContentBlock]) -> bool {
+    matches!(
+        parse_slash_prefix(prompt_blocks),
+        Some(("auth", args)) if args.trim().eq_ignore_ascii_case("status")
+    ) || matches!(
+        parse_slash_prefix(prompt_blocks),
+        Some(("providers" | "models", args)) if args.trim().is_empty()
+    )
+}
+
 pub(super) fn resolve(
     prompt_blocks: Vec<acp::ContentBlock>,
     skills: &[SkillInfo],
@@ -1262,7 +1334,52 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn provider_status_commands_require_explicit_arguments() {
+        assert!(matches!(
+            resolve_builtin("auth", "status"),
+            Some(BuiltinAction::AuthStatus)
+        ));
+        assert!(matches!(
+            resolve_builtin("auth", ""),
+            Some(BuiltinAction::UsageError {
+                message: "Usage: /auth status"
+            })
+        ));
+        assert!(matches!(
+            resolve_builtin("providers", ""),
+            Some(BuiltinAction::Providers)
+        ));
+        assert!(matches!(
+            resolve_builtin("providers", "grok"),
+            Some(BuiltinAction::UsageError {
+                message: "Usage: /providers"
+            })
+        ));
+        assert!(matches!(
+            resolve_builtin("models", ""),
+            Some(BuiltinAction::Models)
+        ));
+        assert!(matches!(
+            resolve_builtin("models", "grok"),
+            Some(BuiltinAction::UsageError {
+                message: "Usage: /models"
+            })
+        ));
+    }
+
     // ── resolve ─────────────────────────────────────────────────────
+
+    #[test]
+    fn provider_status_exemption_requires_an_exact_valid_command() {
+        assert!(is_provider_status_command(&[text_block("/auth status")]));
+        assert!(is_provider_status_command(&[text_block("/providers")]));
+        assert!(is_provider_status_command(&[text_block("/models")]));
+        assert!(!is_provider_status_command(&[text_block("/auth")]));
+        assert!(!is_provider_status_command(&[text_block("/models extra")]));
+        assert!(!is_provider_status_command(&[text_block("/models-evil")]));
+        assert!(!is_provider_status_command(&[text_block("hello /models")]));
+    }
 
     #[test]
     fn resolve_routes_builtin() {

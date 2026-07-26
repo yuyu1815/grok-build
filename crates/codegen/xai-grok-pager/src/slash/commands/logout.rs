@@ -15,10 +15,14 @@ impl SlashCommand for LogoutCommand {
     }
 
     fn usage(&self) -> &str {
-        "/logout"
+        "/logout grok"
     }
 
-    fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        CommandResult::Action(Action::Logout)
+    fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
+        if args.trim() == "grok" {
+            CommandResult::Action(Action::Logout)
+        } else {
+            CommandResult::Error("Usage: /logout grok".to_string())
+        }
     }
 }
