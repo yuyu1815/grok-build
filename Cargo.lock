@@ -13553,7 +13553,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "xai-grok-compaction",
- "xai-grok-tools",
 ]
 
 [[package]]
@@ -13956,6 +13955,7 @@ dependencies = [
  "xai-file-utils",
  "xai-grok-config",
  "xai-grok-env",
+ "xai-grok-sampling-types",
  "xai-grok-sandbox",
  "xai-grok-tools-api",
  "xai-grok-version",

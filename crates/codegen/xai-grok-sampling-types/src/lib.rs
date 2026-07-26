@@ -7,6 +7,7 @@
 //! (e.g., `xai-chat-state`) without pulling in the full `xai-grok-shell`.
 
 pub mod conversation;
+pub mod definition;
 pub mod doom_loop;
 pub mod error;
 pub mod messages;

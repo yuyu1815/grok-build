@@ -3,43 +3,60 @@
 //! These types represent tool schemas sent to the model when tools are
 //! advertised for a turn.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+pub use xai_grok_sampling_types::definition::{FunctionTool, ToolDefinition, ToolType};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolType {
-    Function,
-}
+#[cfg(test)]
+mod tests {
+    use super::{ToolDefinition as ToolsDefinition, ToolType as ToolsToolType};
+    use serde_json::json;
+    use xai_grok_sampling_types::{
+        ToolDefinition as SamplingRootDefinition, ToolType as SamplingRootToolType,
+        definition::{ToolDefinition as SamplingDefinition, ToolType as SamplingToolType},
+        types::{ToolDefinition as SamplingTypesDefinition, ToolType as SamplingTypesToolType},
+    };
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ToolDefinition {
-    #[serde(rename = "type")]
-    pub kind: ToolType,
-    pub function: FunctionTool,
-}
+    fn accepts_sampling_definition(_: SamplingDefinition) {}
+    fn accepts_tools_definition(_: ToolsDefinition) {}
 
-impl ToolDefinition {
-    pub fn function(
-        name: impl Into<String>,
-        description: Option<impl Into<String>>,
-        parameters: Value,
-    ) -> Self {
-        Self {
-            kind: ToolType::Function,
-            function: FunctionTool {
-                name: name.into(),
-                description: description.map(Into::into),
-                parameters,
-            },
-        }
+    #[test]
+    fn public_paths_resolve_to_the_same_types() {
+        let definition = SamplingRootDefinition::function("example", Some("desc"), json!({}));
+        accepts_sampling_definition(definition.clone());
+        accepts_tools_definition(definition.clone());
+        let _: SamplingTypesDefinition = definition.clone();
+        let _: ToolsDefinition = definition;
+
+        let _: SamplingRootToolType = SamplingToolType::Function;
+        let _: SamplingTypesToolType = SamplingRootToolType::Function;
+        let _: ToolsToolType = SamplingTypesToolType::Function;
     }
-}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FunctionTool {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub parameters: Value,
+    #[test]
+    fn tool_definition_json_shape_round_trips_with_optional_description() {
+        for (description, expected_function) in [
+            (
+                Some("desc"),
+                json!({
+                    "name": "example",
+                    "description": "desc",
+                    "parameters": {}
+                }),
+            ),
+            (None, json!({"name": "example", "parameters": {}})),
+        ] {
+            let definition = SamplingDefinition::function("example", description, json!({}));
+            let value = serde_json::to_value(&definition).unwrap();
+            assert_eq!(
+                value,
+                json!({"type": "function", "function": expected_function})
+            );
+            let round_trip: ToolsDefinition = serde_json::from_value(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(round_trip).unwrap(), value);
+        }
+
+        assert_eq!(
+            serde_json::to_value(SamplingToolType::Function).unwrap(),
+            json!("function")
+        );
+    }
 }

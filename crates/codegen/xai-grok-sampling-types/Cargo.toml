@@ -14,7 +14,6 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 xai-grok-compaction = { path = "../../common/xai-grok-compaction" }
-xai-grok-tools = { path = "../xai-grok-tools" }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
