@@ -11,6 +11,7 @@ use indexmap::IndexMap;
 
 use crate::agent::config::{self, ModelEntry, resolve_credentials, sampling_config_for_model};
 use crate::auth::{AuthManager, GrokAuth, GrokComConfig};
+use crate::provider::CatalogFetchState;
 use crate::remote::{FetchModelsResult, fetch_models_blocking};
 use crate::sampling::SamplerConfig as SamplingConfig;
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -114,6 +115,7 @@ struct Inner {
     /// time) or `reselect_current_model_if_missing` (subsequent).
     /// Reset in `clear()` for identity changes.
     has_fetched_real_catalog: RwLock<bool>,
+    fetch_state: RwLock<CatalogFetchState>,
     // ── Owned context for self-contained refresh ────────────────
     auth_manager: Arc<AuthManager>,
     cfg: RwLock<config::Config>,
@@ -181,6 +183,7 @@ impl ModelsManager {
                 current_reasoning_effort: RwLock::new(current_reasoning_effort),
                 etag: RwLock::new(None),
                 has_fetched_real_catalog: RwLock::new(false),
+                fetch_state: RwLock::new(CatalogFetchState::NotAttempted),
                 auth_manager,
                 cfg: RwLock::new(cfg),
                 fetch_auth: RwLock::new(fetch_auth),
@@ -263,6 +266,17 @@ impl ModelsManager {
         );
         if has_prefetched {
             *mgr.inner.has_fetched_real_catalog.write() = true;
+            *mgr.inner.fetch_state.write() = if mgr
+                .inner
+                .prefetched
+                .read()
+                .as_ref()
+                .is_some_and(|models| models.is_empty())
+            {
+                CatalogFetchState::Empty
+            } else {
+                CatalogFetchState::Ready
+            };
         }
         Ok(mgr)
     }
@@ -384,6 +398,82 @@ impl ModelsManager {
             .collect();
 
         available_models(&selectable, self.is_session_auth())
+    }
+
+    /// Return the provider-safe state used by status and chat gating. The
+    /// bundled catalog is deliberately excluded from the real-model count.
+    pub(crate) fn provider_model_state(
+        &self,
+        authenticated: bool,
+    ) -> crate::provider::ProviderModelState {
+        let is_session_auth = self.is_session_auth();
+        let prefetched = self.inner.prefetched.read();
+        let final_models = self.inner.models.read();
+        let real_models = prefetched
+            .as_ref()
+            .map(|remote| {
+                remote
+                    .keys()
+                    .filter(|id| {
+                        final_models.get(*id).is_some_and(|entry| {
+                            entry.info.user_selectable
+                                && entry.info.visible_for_auth(is_session_auth)
+                        })
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        crate::provider::ProviderModelState {
+            authenticated,
+            selectable_real_models: real_models,
+            real_catalog_fetched: *self.inner.has_fetched_real_catalog.read(),
+            allowlist_excludes_all: self.allowlist_excludes_all(),
+            fetch_state: *self.inner.fetch_state.read(),
+        }
+    }
+
+    pub(crate) fn selectable_model_count(&self) -> usize {
+        self.available().len()
+    }
+
+    pub(crate) fn auth_manager(&self) -> Arc<AuthManager> {
+        self.inner.auth_manager.clone()
+    }
+
+    pub(crate) fn has_current_model_credentials(&self) -> bool {
+        let current = self.current_model_id();
+        self.inner
+            .models
+            .read()
+            .get(current.0.as_ref())
+            .is_some_and(ModelEntry::has_own_credentials)
+    }
+
+    pub(crate) fn real_available_model_names(&self) -> Vec<String> {
+        let is_session_auth = self.is_session_auth();
+        let prefetched = self.inner.prefetched.read();
+        let final_models = self.inner.models.read();
+        prefetched
+            .as_ref()
+            .map(|remote| {
+                remote
+                    .keys()
+                    .filter_map(|id| {
+                        final_models.get(id).filter(|entry| {
+                            entry.info.user_selectable
+                                && entry.info.visible_for_auth(is_session_auth)
+                        })
+                    })
+                    .map(|entry| {
+                        entry
+                            .info
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| entry.info.model.clone())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn task_model_error(&self, requested: &str) -> Option<String> {
@@ -600,6 +690,7 @@ impl ModelsManager {
             && fetch_auth == ModelFetchAuth::Session
         {
             self.clear();
+            self.notify_models_updated();
             return;
         }
 
@@ -916,11 +1007,12 @@ impl ModelsManager {
     }
 
     /// Wipe in-memory state so a previous identity's catalog doesn't leak.
-    fn clear(&self) {
+    pub(crate) fn clear(&self) {
         *self.inner.prefetched.write() = None;
         *self.inner.models.write() = IndexMap::new();
         *self.inner.etag.write() = None;
         *self.inner.has_fetched_real_catalog.write() = false;
+        *self.inner.fetch_state.write() = CatalogFetchState::NotAttempted;
         self.inner
             .allowlist_excludes_all
             .store(false, Ordering::Relaxed);
@@ -981,6 +1073,7 @@ impl ModelsManager {
         };
         let cfg = self.inner.cfg.read().clone();
         *self.inner.has_fetched_real_catalog.write() = true;
+        *self.inner.fetch_state.write() = CatalogFetchState::StaleCache;
         *self.inner.prefetched.write() = Some(cached.models.clone());
         self.rebuild(&cfg, Some(cached.models));
         *self.inner.etag.write() = cached.etag;
@@ -1094,6 +1187,13 @@ impl ModelsManager {
         new_etag: Option<String>,
     ) -> bool {
         let Some(new_prefetched) = new_prefetched else {
+            let had_catalog = *self.inner.has_fetched_real_catalog.read()
+                || self.inner.prefetched.read().is_some();
+            *self.inner.fetch_state.write() = if had_catalog {
+                CatalogFetchState::StaleCache
+            } else {
+                CatalogFetchState::Failed
+            };
             tracing::warn!("model refresh failed, leaving existing models unchanged");
             xai_grok_telemetry::unified_log::warn(
                 "model catalog refresh failed",
@@ -1105,6 +1205,11 @@ impl ModelsManager {
             return false;
         };
 
+        *self.inner.fetch_state.write() = if new_prefetched.is_empty() {
+            CatalogFetchState::Empty
+        } else {
+            CatalogFetchState::Ready
+        };
         let first_real_catalog = {
             let mut flag = self.inner.has_fetched_real_catalog.write();
             let was_first = !*flag;
