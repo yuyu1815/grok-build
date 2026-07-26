@@ -23,43 +23,49 @@ jobs:
        (github.event.issue.pull_request &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     runs-on: ubuntu-latest
+    # Environment protection rules, if configured, may require approval before this job starts.
+    environment: PRbot
     steps:
-      # Configure repository secrets PR_AGENT_API_KEY / PR_AGENT_API_BASE and,
-      # optionally, repository variable PR_AGENT_MODEL (for example openai/gpt-4o).
+      # Configure PR_AGENT_API_KEY / PR_AGENT_API_BASE and, optionally,
+      # PR_AGENT_MODEL (for example openai/gpt-4o) as environment secrets in PRbot.
       - name: Validate PR-Agent configuration
         shell: bash
         env:
           PR_AGENT_API_KEY: ${{ secrets.PR_AGENT_API_KEY }}
           PR_AGENT_API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
-          PR_AGENT_MODEL: ${{ vars.PR_AGENT_MODEL }}
+          PR_AGENT_MODEL: ${{ secrets.PR_AGENT_MODEL }}
         run: |
           set -euo pipefail
           missing=0
           if [[ -z "${PR_AGENT_API_KEY}" ]]; then
-            echo "::error::Repository secret PR_AGENT_API_KEY is not configured. Add it under Settings > Secrets and variables > Actions."
+            echo "::error::Environment secret PR_AGENT_API_KEY is not configured. Add it under Settings > Environments > PRbot."
             missing=1
           fi
           if [[ -z "${PR_AGENT_API_BASE}" ]]; then
-            echo "::error::Repository secret PR_AGENT_API_BASE is not configured. Add the OpenAI-compatible API base URL (usually ending in /v1)."
+            echo "::error::Environment secret PR_AGENT_API_BASE is not configured. Add the OpenAI-compatible API base URL (usually ending in /v1) under Settings > Environments > PRbot."
             missing=1
           fi
           if (( missing )); then
             exit 1
           fi
           if [[ -z "${PR_AGENT_MODEL}" ]]; then
-            echo "Repository variable PR_AGENT_MODEL is not set; using openai/gpt-4o."
+            echo "Environment secret PR_AGENT_MODEL is not set in Settings > Environments > PRbot; using openai/gpt-4o."
           else
-            echo "Repository variable PR_AGENT_MODEL is configured."
+            echo "Environment secret PR_AGENT_MODEL is configured in PRbot."
           fi
 
+      # Required for arbitrary OpenAI-compatible models not listed in PR-Agent MAX_TOKENS.
       - name: Run PR-Agent
         uses: docker://pragent/pr-agent:0.40.0-github_action@sha256:09c05ab658712c0874ef3fdebf44fa1e104143af506378aefd5e7c422dde11c1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_KEY: ${{ secrets.PR_AGENT_API_KEY }}
           OPENAI.API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
-          CONFIG.MODEL: ${{ vars.PR_AGENT_MODEL || 'openai/gpt-4o' }}
+          CONFIG.MODEL: ${{ secrets.PR_AGENT_MODEL || 'openai/gpt-4o' }}
           CONFIG.FALLBACK_MODELS: '[]'
+          # custom_model_max_tokens / max_model_tokens (pr-agent v0.40.0 config)
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "128000"
+          CONFIG.MAX_MODEL_TOKENS: "32000"
           CONFIG.RESPONSE_LANGUAGE: ja-JP
           CONFIG.RESTRICTED_MODE: 'true'
           CONFIG.REPO_CONTEXT_FILES: '[]'
