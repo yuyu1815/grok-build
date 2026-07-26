@@ -13,6 +13,17 @@ pub fn auth_path(grok_home: &Path) -> PathBuf {
         .unwrap_or_else(|| grok_home.join("auth").join("grok.json"))
 }
 
+/// Create the parent directory for a disk-backed auth file.
+///
+/// This belongs to auth storage initialization rather than the grok-home path
+/// resolver so memory-only credentials do not create persistent directories.
+pub(crate) fn ensure_auth_parent(auth_file: &Path) -> std::io::Result<()> {
+    if let Some(parent) = auth_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
 /// Return the advisory lock path next to an auth file.
 pub(crate) fn auth_lock_path(auth_file: &Path) -> PathBuf {
     let file_name = auth_file

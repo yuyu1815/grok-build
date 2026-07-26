@@ -33,8 +33,8 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, auth_path, read_auth_json, read_auth_json_or_empty_recovering_corrupt,
-    write_auth_json,
+    AuthFileLock, auth_path, ensure_auth_parent, read_auth_json,
+    read_auth_json_or_empty_recovering_corrupt, write_auth_json,
 };
 
 #[cfg(test)]
@@ -301,6 +301,21 @@ impl AuthManager {
         }
 
         let path = auth_path(grok_home);
+        if let Err(e) = ensure_auth_parent(&path) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "auth: failed to initialize auth storage parent"
+            );
+            xai_grok_telemetry::unified_log::warn(
+                "auth: failed to initialize auth storage parent",
+                None,
+                Some(serde_json::json!({
+                    "path": path.display().to_string(),
+                    "error": e.to_string(),
+                })),
+            );
+        }
         let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {
                 let found = lookup_auth(&map, &scope);

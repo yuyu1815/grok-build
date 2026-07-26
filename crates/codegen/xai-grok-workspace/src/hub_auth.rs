@@ -209,6 +209,19 @@ fn write_json_atomic(path: &Path, value: &serde_json::Value) -> anyhow::Result<(
     Ok(())
 }
 
+/// Initialize the parent directory for a disk-backed hub auth path.
+fn ensure_auth_parent(auth_path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = auth_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to initialize auth storage parent {}: {e}",
+                parent.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Build a hub auth provider for `hub_url`. `auth_config` overrides
 /// the default credential path (`~/.grok/auth/grok.json`).
 pub fn provider(
@@ -219,6 +232,7 @@ pub fn provider(
         Some(p) => p.to_path_buf(),
         None => default_auth_path()?,
     };
+    ensure_auth_parent(&auth_path)?;
     let (scope_key, entry) = read_auth_entry(&auth_path)?;
 
     let is_loopback = hub_url.scheme() == "ws"

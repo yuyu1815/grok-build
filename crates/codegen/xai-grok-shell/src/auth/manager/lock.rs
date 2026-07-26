@@ -46,13 +46,6 @@ fn parse_holder_info(content: &str) -> Option<(u32, u64)> {
     Some((pid_str.parse().ok()?, ts_str.parse().ok()?))
 }
 
-fn ensure_lock_parent(lock_path: &Path) -> io::Result<()> {
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(())
-}
-
 // ── Platform-specific helpers ────────────────────────────────────────
 
 /// Check whether the process that wrote the lock file is still running.
@@ -376,7 +369,6 @@ fn blocking_acquire(lock_path: &Path) -> io::Result<File> {
 /// leave an empty `auth.json.lock` that defeated stale-lock recovery.
 pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<AuthFileLock> {
     let lock_path = auth_lock_path(auth_json_path);
-    ensure_lock_parent(&lock_path).ok()?;
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -415,18 +407,6 @@ pub(crate) async fn try_lock_auth_file_async(
     timeout: StdDuration,
 ) -> Option<AuthFileLock> {
     let lock_path = auth_lock_path(auth_json_path);
-    if let Err(e) = ensure_lock_parent(&lock_path) {
-        unified_log::warn(
-            &format!(
-                "auth lock: failed to create parent {}: {e}",
-                lock_path.display()
-            ),
-            None,
-            None,
-        );
-        return None;
-    }
-
     unified_log::debug(
         &format!(
             "auth lock: attempting acquire (timeout={}ms)",
