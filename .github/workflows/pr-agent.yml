@@ -22,6 +22,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_KEY: ${{ secrets.PR_AGENT_API_KEY }}
           OPENAI.API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
+          LITELLM.EXTRA_HEADERS: >-
+            {"CF-Access-Client-Id":"${{ secrets.CF_ACCESS_CLIENT_ID }}","CF-Access-Client-Secret":"${{ secrets.CF_ACCESS_CLIENT_SECRET }}"}
           CONFIG.MODEL: ${{ secrets.PR_AGENT_MODEL || 'openai/gpt-4o' }}
           CONFIG.FALLBACK_MODELS: '[]'
           CONFIG.CUSTOM_MODEL_MAX_TOKENS: "240000"
