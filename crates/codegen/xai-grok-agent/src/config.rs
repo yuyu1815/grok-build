@@ -1663,6 +1663,80 @@ mod tests {
         assert!(explore.tools.len() < plan.tools.len());
         assert!(plan.tools.len() < gb.tools.len());
     }
+    /// Assert the client-facing schema after the registry has assembled the
+    /// `TaskTool` config.  This guards the public contract rather than only
+    /// the source `TaskToolInput` schema: the tool and parameter renames must
+    /// be present in the final definition sent to the model.
+    #[tokio::test]
+    async fn grok_build_spawn_subagent_schema_exposes_reasoning_effort() {
+        use std::sync::Arc;
+        use xai_grok_tools::computer::local::LocalTerminalBackend;
+        use xai_grok_tools::notification::ToolNotificationHandle;
+
+        let agent = crate::builder::AgentBuilder::new(
+            std::env::temp_dir(),
+            Arc::new(LocalTerminalBackend::new()),
+            ToolNotificationHandle::noop(),
+        )
+        .from_definition(AgentDefinition::default_grok_build())
+        .with_subagents_enabled(true)
+        .build()
+        .await
+        .expect("default grok-build agent should assemble its tool schema");
+
+        let definition = agent
+            .tool_definitions()
+            .await
+            .into_iter()
+            .find(|definition| definition.function.name == "spawn_subagent")
+            .expect("spawn_subagent must be advertised when subagents are enabled");
+        let parameters = definition
+            .function
+            .parameters
+            .as_object()
+            .expect("spawn_subagent parameters must be a JSON object");
+        let properties = parameters
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("spawn_subagent parameters must expose properties");
+
+        assert!(
+            properties.contains_key("background"),
+            "run_in_background must be renamed to background in the client schema"
+        );
+        assert!(
+            !properties.contains_key("run_in_background"),
+            "canonical run_in_background must not leak into the client schema"
+        );
+        assert!(
+            properties.contains_key("reasoning_effort"),
+            "reasoning_effort must be exposed by spawn_subagent"
+        );
+        let required = parameters
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .expect("spawn_subagent parameters must expose required");
+        assert!(
+            !required.iter().any(|name| name == "reasoning_effort"),
+            "reasoning_effort is optional in the client schema"
+        );
+        let effort_enum = properties["reasoning_effort"]
+            .get("enum")
+            .and_then(serde_json::Value::as_array)
+            .expect("reasoning_effort must expose its allowed values");
+        let effort_values: Vec<&str> = effort_enum
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(
+            effort_values,
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        );
+        assert!(
+            effort_enum.iter().any(serde_json::Value::is_null),
+            "optional reasoning_effort must allow null in the assembled schema"
+        );
+    }
     fn grok_computer_exclusive_ids() -> Vec<String> {
         #[allow(unused_mut)]
         let mut ids: Vec<String> = vec![

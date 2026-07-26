@@ -130,6 +130,16 @@ fn resume_worktree_action_covers_three_outcomes() {
     assert_eq!(resume_worktree_action(false, None), ResumeWorktreeAction::Shared);
 }
 #[test]
+fn failed_rehydrate_never_removes_source_owned_destination() {
+    assert!(!super::rehydrate_destination_cleanup_owned(true));
+    assert!(super::rehydrate_destination_cleanup_owned(false));
+    assert_eq!(
+        super::resume_worktree_action(true, Some("refs/grok/subagents/existing")),
+        ResumeWorktreeAction::Rehydrate,
+        "an existing destination may still require rehydrate, but remains source-owned"
+    );
+}
+#[test]
 fn subagent_inherits_parent_lsp_via_context() {
     let parent: std::sync::Arc<dyn xai_grok_tools::implementations::lsp::LspBackend> = Arc::new(
         DummyLspDispatch,
@@ -2095,6 +2105,43 @@ async fn handle_subagent_request_rejects_disabled_agent() {
     );
 }
 #[tokio::test]
+async fn handle_subagent_request_rejects_unsupported_explicit_tool_effort() {
+    use crate::agent::config::{ModelEntry, ModelInfo};
+    use xai_grok_tools::implementations::grok_build::task::types::ReasoningEffortOverrideProvenance;
+
+    let mut ctx = ctx_with_toggle(HashMap::new());
+    ctx.available_models.insert(
+        "test".to_string(),
+        ModelEntry {
+            info: ModelInfo::fallback("test"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        },
+    );
+    let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());
+    let gateway = test_gateway();
+    let (mut request, result_rx) = make_request("explore");
+    request.runtime_overrides.reasoning_effort = Some("high".into());
+    request
+        .runtime_overrides
+        .reasoning_effort_override_provenance = ReasoningEffortOverrideProvenance::Tool;
+
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            Box::pin(handle_subagent_request(request, ctx, &coordinator, &gateway)).await;
+        })
+        .await;
+
+    let result = result_rx.await.expect("handler must return a failed spawn result");
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or_default();
+    assert!(error.contains("Task.reasoning_effort 'high'"), "{error}");
+    assert!(error.contains("model 'test'"), "{error}");
+    assert!(error.contains("Omit `reasoning_effort`"), "{error}");
+}
+#[tokio::test]
 async fn handle_subagent_request_allows_when_absent_from_toggle() {
     let ctx = ctx_with_toggle(HashMap::new());
     let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());
@@ -2579,6 +2626,50 @@ async fn background_not_allowed_type_records_failure_completion() {
             "not allowed",
         )
         .await;
+}
+#[tokio::test]
+async fn definition_background_resume_preflight_failure_records_completion() {
+    use crate::test_support::lsp_runtime::{
+        ctx_with_toggle_and_cmd_tx, test_gateway_with_receiver,
+    };
+    use xai_grok_agent::config::AgentDefinition;
+    let mut definition = AgentDefinition::general_purpose();
+    definition.name = "forced-background".into();
+    definition.background = Some(true);
+    let mut config = crate::agent::config::Config::default();
+    config.cli_agents = vec![definition];
+    let (mut ctx, mut cmd_rx) = ctx_with_toggle_and_cmd_tx(HashMap::new());
+    ctx.agent_config = Some(config);
+    let coordinator = std::cell::RefCell::new(SubagentCoordinator::new());
+    let (gateway, mut gateway_rx) = test_gateway_with_receiver();
+    let (mut request, result_rx) = make_request("forced-background");
+    let subagent_id = request.id.clone();
+    request.resume_from = Some("missing-source".into());
+    assert_background_pre_spawn_failure(
+            ctx,
+            &coordinator,
+            &gateway,
+            request,
+            result_rx,
+            "not found",
+        )
+        .await;
+    assert!(cmd_rx.try_iter().any(|cmd| matches!(
+        cmd,
+        SessionCommand::XaiSessionNotification { notification }
+            if matches!(
+                notification.update,
+                SessionUpdate::SubagentFinished { subagent_id: id, .. }
+                    if id == subagent_id
+            )
+    )));
+    assert!(gateway_rx.try_iter().any(|msg| match msg {
+        xai_acp_lib::AcpClientMessage::ExtNotification(args) => {
+            let body = args.request.params.get();
+            body.contains("subagent_finished") && body.contains(&subagent_id)
+        }
+        _ => false,
+    }));
 }
 async fn assert_blocking_pre_spawn_does_not_push_summary(
     ctx: SubagentSpawnContext,
@@ -3080,6 +3171,32 @@ fn record_pre_spawn_failure_clears_stale_pending_entry() {
         "sub-z"), "outstanding_for_prompt must not still list a recorded-failed id",
     );
 }
+
+#[tokio::test]
+async fn spawn_worktree_guard_error_cleanup_releases_owned_path() {
+    let missing = std::env::temp_dir().join(format!(
+        "grok-subagent-guard-missing-{}",
+        uuid::Uuid::now_v7()
+    ));
+    let mut guard = SpawnWorktreeGuard::new(Some(missing), true);
+    guard.cleanup().await;
+    assert!(!guard.owned, "failed materialization must release ownership");
+    assert!(guard.path.is_none(), "cleanup consumes the owned path");
+}
+
+#[tokio::test]
+async fn spawn_worktree_guard_promote_transfers_cleanup_ownership() {
+    let path = std::env::temp_dir().join(format!(
+        "grok-subagent-guard-promoted-{}",
+        uuid::Uuid::now_v7()
+    ));
+    let mut guard = SpawnWorktreeGuard::new(Some(path.clone()), true);
+    guard.promote();
+    guard.cleanup().await;
+    assert!(!guard.owned, "promotion must disarm pre-promote cleanup");
+    assert_eq!(guard.path.as_deref(), Some(path.as_path()));
+}
+
 fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
     crate::agent::config::ModelEntry {
         info: crate::agent::config::ModelInfo {
