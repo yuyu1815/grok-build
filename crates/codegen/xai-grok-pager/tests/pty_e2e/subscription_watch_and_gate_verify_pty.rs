@@ -155,7 +155,7 @@ fn seed_fake_oauth_local_issuer(content: &ContentController, user: &str) {
     let grok_home = content.home().join(".grok");
     std::fs::create_dir_all(&grok_home).expect("create temp .grok");
     std::fs::write(
-        grok_home.join("auth.json"),
+        grok_home.join("auth").join("grok.json"),
         format!(
             r#"{{
   "http://localhost:22255::b1a00492-073a-47ea-816f-4c329264a828": {{

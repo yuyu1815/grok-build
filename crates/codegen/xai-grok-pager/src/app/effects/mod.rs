@@ -3905,7 +3905,7 @@ pub(crate) fn execute(
                             }
                             let grok_home = xai_grok_shell::util::grok_home::grok_home();
                             let store = xai_grok_shell::auth::read_auth_json(
-                                    &grok_home.join("auth.json"),
+                                    &xai_grok_shell::auth::auth_path(&grok_home),
                                 )
                                 .ok()?;
                             let scope = xai_grok_shell::auth::GrokComConfig::default()

@@ -126,7 +126,7 @@ fn seed_auth_json(home: &Path, token: &str) {
     };
     let store = serde_json::json!({ scope: auth });
     std::fs::write(
-        home.join("auth.json"),
+        home.join("auth").join("grok.json"),
         serde_json::to_vec(&store).expect("serialize auth.json"),
     )
     .expect("write auth.json");

@@ -98,7 +98,7 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json`
+/// Watches `~/.grok/` for `auth/grok.json`, `config.toml`, and `models_cache.json`
 /// changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`,
 /// etc.) provided at startup.
 ///
@@ -106,7 +106,7 @@ pub enum ConfigChangeEvent {
 /// editor writes (including write-then-rename patterns).
 ///
 /// Self-write suppression is intentionally omitted. When the agent writes
-/// `auth.json` or `config.toml`, the watcher will fire and the
+/// `auth/grok.json` or `config.toml`, the watcher will fire and the
 /// [`ConfigReloader`](super::reloader::ConfigReloader) will re-read the file.
 /// The reloader's own content-based deduplication (auth key hash, toml value
 /// comparison) skips the update when nothing actually changed, so the
@@ -199,11 +199,6 @@ impl ConfigFileWatcher {
                     }
                     Some("grok.json")
                         if watch_auth_files && parent == Some(canonical_auth_dir.as_path()) =>
-                    {
-                        Some(ConfigChangeEvent::AuthChanged)
-                    }
-                    Some("auth.json")
-                        if watch_auth_files && parent == Some(grok_home_buf.as_path()) =>
                     {
                         Some(ConfigChangeEvent::AuthChanged)
                     }
@@ -701,15 +696,21 @@ mod tests {
         target_os = "macos",
         ignore = "flaky on macOS: FSEvents does not reliably deliver events in test harness"
     )]
-    fn watcher_detects_auth_json_change() {
+    fn watcher_detects_canonical_auth_change() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("auth.json"), "{}").unwrap();
+        let auth_dir = tmp.path().join("auth");
+        fs::create_dir_all(&auth_dir).unwrap();
+        fs::write(auth_dir.join("grok.json"), "{}").unwrap();
 
         let (_w, mut rx) =
             ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
                 .expect("watcher should start");
 
-        fs::write(tmp.path().join("auth.json"), r#"{"new":"token"}"#).unwrap();
+        fs::write(
+            tmp.path().join("auth").join("grok.json"),
+            r#"{"new":"token"}"#,
+        )
+        .unwrap();
         wait_ms(300);
 
         let mut found = false;
@@ -718,7 +719,7 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "should detect auth.json change");
+        assert!(found, "should detect canonical auth file change");
     }
 
     /// Regression test for the MCP/skills reload storm (feedback loop):
@@ -734,7 +735,8 @@ mod tests {
     fn watcher_ignores_reads_of_watched_files() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("config.toml"), "a = 1").unwrap();
-        fs::write(tmp.path().join("auth.json"), "{}").unwrap();
+        fs::create_dir_all(tmp.path().join("auth")).unwrap();
+        fs::write(tmp.path().join("auth").join("grok.json"), "{}").unwrap();
 
         let (_w, mut rx) =
             ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
@@ -746,7 +748,7 @@ mod tests {
         // files. Repeatedly, to defeat any incidental coalescing.
         for _ in 0..5 {
             let _ = fs::read(tmp.path().join("config.toml")).unwrap();
-            let _ = fs::read(tmp.path().join("auth.json")).unwrap();
+            let _ = fs::read(tmp.path().join("auth").join("grok.json")).unwrap();
             wait_ms(20);
         }
         wait_ms(300);

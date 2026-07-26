@@ -89,7 +89,7 @@ On first launch, Grok opens your browser to authenticate with grok.com:
 grok
 ```
 
-Credentials are stored in `~/.grok/auth.json` and persist across sessions. Tokens expire after 7 days; Grok will prompt you to re-authenticate when needed.
+Credentials are stored in `~/.grok/auth/grok.json` and persist across sessions. Tokens expire after 7 days; Grok will prompt you to re-authenticate when needed.
 
 ### Re-authenticate
 
@@ -139,7 +139,7 @@ Customers typically also override the API endpoint to point at their own proxy:
 export GROK_CLI_CHAT_PROXY_BASE_URL="https://grok-proxy.acme.com/v1"
 ```
 
-**3. Run `grok`.** The CLI discovers endpoints via `{issuer}/.well-known/openid-configuration`, opens the IdP login page, and stores tokens in `~/.grok/auth.json`. The OIDC token is sent as `Authorization: Bearer` to the configured proxy. Tokens auto-refresh silently via the stored `refresh_token`.
+**3. Run `grok`.** The CLI discovers endpoints via `{issuer}/.well-known/openid-configuration`, opens the IdP login page, and stores tokens in `~/.grok/auth/grok.json`. The OIDC token is sent as `Authorization: Bearer` to the configured proxy. Tokens auto-refresh silently via the stored `refresh_token`.
 
 **Optional fields:**
 
@@ -169,7 +169,7 @@ Grok is provider-agnostic — it doesn't know or care how your binary authentica
 1. Grok runs your command via `sh -c "<command>"`
 2. Your binary does whatever auth flow it needs (SSO login, device code, cert exchange, etc.)
 3. **stderr** → displayed directly to the user (use for login URLs, status messages, progress)
-4. **stdout** → captured by Grok and saved to `~/.grok/auth.json` as the access token
+4. **stdout** → captured by Grok and saved to `~/.grok/auth/grok.json` as the access token
 5. exit 0 → success; exit non-zero → Grok falls through to interactive login
 
 #### The stdout / stderr Contract
@@ -341,7 +341,7 @@ If you've authenticated with `grok login`, you can use the stored credentials to
 ```bash
 curl -s -N -X POST "https://cli-chat-proxy.grok.com/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $(jq -r '."https://accounts.x.ai/sign-in".key' ~/.grok/auth.json)" \
+  -H "Authorization: Bearer $(jq -r '."https://accounts.x.ai/sign-in".key' ~/.grok/auth/grok.json)" \
   -H "X-XAI-Token-Auth: xai-grok-cli" \
   -H "x-grok-model-override: grok-build" \
   -d '{
@@ -355,7 +355,7 @@ curl -s -N -X POST "https://cli-chat-proxy.grok.com/v1/chat/completions" \
 
 | Header                           | Required | Purpose                                                                                                                                                                                   |
 | -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Authorization: Bearer <token>`  | Yes      | Session token from `~/.grok/auth.json` (set by `grok login`)                                                                                                                              |
+| `Authorization: Bearer <token>`  | Yes      | Session token from `~/.grok/auth/grok.json` (set by `grok login`)                                                                                                                              |
 | `X-XAI-Token-Auth: xai-grok-cli` | Yes      | Tells the auth middleware to validate as a CLI session token                                                                                                                              |
 | `x-grok-model-override: <model>` | Yes\*    | The proxy uses this header (not the JSON body) to route to the correct backend. \*Can be omitted for `grok-build` which is on the default route, but always safe to include. |
 
@@ -2365,7 +2365,7 @@ The agent persists all session updates automatically. Clients can reconnect and 
 | --------------------- | --------------------------------------------------- |
 | `~/.grok/config.toml` | Configuration file                                  |
 | `~/.grok/sessions/`   | Persisted sessions (organized by working directory) |
-| `~/.grok/auth.json`   | Authentication credentials (auto-managed)           |
+| `~/.grok/auth/grok.json`   | Authentication credentials (auto-managed)           |
 | `~/.grok/memory/`     | Cross-session memory files and index                |
 | `~/.grok/skills/`     | User-scoped skill definitions                       |
 | `~/.grok/plugins/`    | User-scoped plugins                                 |

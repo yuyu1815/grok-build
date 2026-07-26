@@ -1,4 +1,4 @@
-//! Hub [`AuthProvider`] from `~/.grok/auth.json` for the standalone
+//! Hub [`AuthProvider`] from `~/.grok/auth/grok.json` for the standalone
 //! `workspace_server` binary: loopback `ws://` uses a plain bearer, otherwise
 //! an auto-refreshing OIDC provider that persists rotated tokens to disk.
 //!
@@ -18,7 +18,7 @@ use xai_computer_hub_sdk::{
 /// Plain bearer provider that also carries the owner identity parsed from the
 /// same auth.json entry. Used for the loopback / local-dev path (no OIDC
 /// refresh) so the workspace can still derive `WorkspaceIdentity` from the auth
-/// provider — without a second auth.json read.
+/// provider — without a second auth store read.
 struct BearerWithIdentity {
     token: String,
     identity: AuthIdentity,
@@ -43,7 +43,7 @@ impl AuthProvider for BearerWithIdentity {
     }
 }
 
-/// Owner identity parsed from an auth.json entry, for the [`AuthProvider`]s
+/// Owner identity parsed from an auth store entry, for the [`AuthProvider`]s
 /// built here to surface via [`AuthProvider::identity`].
 fn identity_from_entry(entry: &AuthEntry) -> AuthIdentity {
     AuthIdentity {
@@ -73,9 +73,12 @@ struct AuthEntry {
 }
 
 fn default_auth_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("GROK_AUTH_PATH") {
+        return Ok(PathBuf::from(path));
+    }
     let grok = xai_grok_config::user_grok_home()
         .ok_or_else(|| anyhow::anyhow!("no user grok home (set $GROK_HOME or $HOME)"))?;
-    Ok(grok.join("auth.json"))
+    Ok(grok.join("auth").join("grok.json"))
 }
 
 /// Read the active OIDC entry and its scope key. The key is threaded to the
@@ -207,7 +210,7 @@ fn write_json_atomic(path: &Path, value: &serde_json::Value) -> anyhow::Result<(
 }
 
 /// Build a hub auth provider for `hub_url`. `auth_config` overrides
-/// the default credential path (`~/.grok/auth.json`).
+/// the default credential path (`~/.grok/auth/grok.json`).
 pub fn provider(
     hub_url: &Url,
     auth_config: Option<&Path>,
@@ -238,7 +241,7 @@ mod tests {
     use std::io::Write;
 
     fn write_auth_json(dir: &std::path::Path, json: &str) -> PathBuf {
-        let path = dir.join("auth.json");
+        let path = dir.join("auth").join("grok.json");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(json.as_bytes()).unwrap();
         path

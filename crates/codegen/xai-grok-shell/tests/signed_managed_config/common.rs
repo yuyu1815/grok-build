@@ -127,7 +127,7 @@ pub fn write_team_auth(home: &std::path::Path, team_id: &str) {
             "team_id": team_id,
         }
     });
-    std::fs::write(home.join("auth.json"), auth.to_string()).unwrap();
+    std::fs::write(home.join("auth").join("grok.json"), auth.to_string()).unwrap();
 }
 
 /// A fresh Ed25519 keypair plus its raw public key, installed as the sole trusted

@@ -33,7 +33,7 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, auth_storage_paths, read_auth_json, read_auth_json_or_empty_recovering_corrupt,
+    AuthFileLock, auth_path, read_auth_json, read_auth_json_or_empty_recovering_corrupt,
     write_auth_json,
 };
 
@@ -134,8 +134,6 @@ pub struct AuthManager {
     inner: Arc<RwLock<Option<GrokAuth>>>,
     /// Canonical or explicit path used for all writes and locks.
     path: PathBuf,
-    /// Legacy path used only while the canonical path is absent.
-    read_fallback: Option<PathBuf>,
     /// Inline `GROK_AUTH` is intentionally memory-only.
     read_only: bool,
     scope: String,
@@ -291,8 +289,7 @@ impl AuthManager {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    grok_home.join("auth").join("grok.json"),
-                    None,
+                    auth_path(grok_home),
                     true,
                     scope,
                     grok_com_config,
@@ -303,34 +300,13 @@ impl AuthManager {
             tracing::warn!("GROK_AUTH set but failed to parse as JSON, falling back to file");
         }
 
-        let paths = auth_storage_paths(grok_home);
-        let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&paths.read_path) {
+        let path = auth_path(grok_home);
+        let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {
                 let found = lookup_auth(&map, &scope);
-                // If lookup_auth skipped a legacy WebLogin token, remove the
-                // stale scope entry from auth.json so it is not re-evaluated
-                // on every launch.
-                if found.is_none()
-                    && map
-                        .get(LEGACY_SCOPE)
-                        .is_some_and(|a| a.auth_mode == AuthMode::WebLogin)
-                {
-                    // Best-effort cleanup under advisory lock (consistent with
-                    // other auth.json writers). Non-blocking: if the lock is
-                    // held by a concurrent process, skip — retried next launch.
-                    if let Some(_lock) = lock::try_lock_auth_file_nonblocking(&paths.write_path) {
-                        let mut cleaned = map.clone();
-                        cleaned.remove(LEGACY_SCOPE);
-                        let _ = write_auth_json(&paths.write_path, &cleaned);
-                        tracing::debug!("auth: removed stale WebLogin scope from auth.json");
-                        // lock released on drop
-                    } else {
-                        tracing::debug!("auth: skipped WebLogin cleanup (lock unavailable)");
-                    }
-                }
                 let detail = serde_json::json!({
                     "read": "ok",
-                    "resolved_path": paths.read_path.display().to_string(),
+                    "resolved_path": path.display().to_string(),
                     "scopes_on_disk": map.keys().collect::<Vec<_>>(),
                     "target_scope": &scope,
                     "found": found.is_some(),
@@ -349,8 +325,8 @@ impl AuthManager {
                 let detail = serde_json::json!({
                     "read": "error",
                     "error": e.to_string(),
-                    "path": paths.read_path.display().to_string(),
-                    "path_exists": paths.read_path.exists(),
+                    "path": path.display().to_string(),
+                    "path_exists": path.exists(),
                 });
                 let state = if e.kind() == std::io::ErrorKind::NotFound {
                     DiskAuthState::FileMissing
@@ -366,12 +342,9 @@ impl AuthManager {
             Some(auth_read_detail),
         );
 
-        let read_fallback = (paths.read_path != paths.write_path).then_some(paths.read_path);
-        let write_path = paths.write_path;
         let manager = Self::assemble(
             auth,
-            write_path,
-            read_fallback,
+            path,
             false,
             scope,
             grok_com_config,
@@ -391,7 +364,6 @@ impl AuthManager {
     fn assemble(
         inner: Option<GrokAuth>,
         path: PathBuf,
-        read_fallback: Option<PathBuf>,
         read_only: bool,
         scope: String,
         grok_com_config: GrokComConfig,
@@ -401,7 +373,6 @@ impl AuthManager {
         Self {
             inner: Arc::new(RwLock::new(inner)),
             path,
-            read_fallback,
             read_only,
             scope,
             grok_com_config,
@@ -429,23 +400,6 @@ impl AuthManager {
             dark_wake_override: parking_lot::Mutex::new(None),
             #[cfg(test)]
             devbox_override: parking_lot::Mutex::new(None),
-        }
-    }
-
-    /// Resolve the active read source. The canonical/explicit path always wins
-    /// when present; the legacy path is consulted only while canonical storage
-    /// is absent.
-    fn auth_read_path(&self) -> PathBuf {
-        if self.path.exists() {
-            self.path.clone()
-        } else if self
-            .read_fallback
-            .as_ref()
-            .is_some_and(|fallback| fallback.exists())
-        {
-            self.read_fallback.clone().expect("checked above")
-        } else {
-            self.path.clone()
         }
     }
 
@@ -520,16 +474,14 @@ impl AuthManager {
     /// scope is gone. Caller holds the `auth.json` lock (taken by
     /// [`Self::remove_scope_impl`]).
     fn write_scope_removal(&self, scope: &str) -> std::io::Result<ScopeRemoval> {
-        let Ok(mut auth_store) = read_auth_json(&self.auth_read_path()) else {
+        let Ok(mut auth_store) = read_auth_json(&self.path) else {
             return Ok(ScopeRemoval::SkippedUnreadable);
         };
         auth_store.remove(scope);
-        if auth_store.is_empty() && self.read_fallback.is_none() {
+        if auth_store.is_empty() {
             let _ = std::fs::remove_file(&self.path);
             Ok(ScopeRemoval::FileDeleted)
         } else {
-            // Keep an empty canonical file when a legacy fallback exists so a
-            // post-logout launch cannot resurrect the legacy credential.
             write_auth_json(&self.path, &auth_store)?;
             Ok(ScopeRemoval::EntryRemoved)
         }
@@ -838,7 +790,7 @@ impl AuthManager {
             return Ok(auth);
         }
         let update_started = std::time::Instant::now();
-        let map = match read_auth_json_or_empty_recovering_corrupt(&self.auth_read_path()) {
+        let map = match read_auth_json_or_empty_recovering_corrupt(&self.path) {
             Ok(map) => map,
             Err(e) => {
                 // Non-recoverable error (PermissionDenied, etc.) — keep conservative.
@@ -904,7 +856,7 @@ impl AuthManager {
             return Ok(auth);
         }
         let started = std::time::Instant::now();
-        let map = match read_auth_json_or_empty_recovering_corrupt(&self.auth_read_path()) {
+        let map = match read_auth_json_or_empty_recovering_corrupt(&self.path) {
             Ok(map) => map,
             Err(e) => {
                 // Non-recoverable error — keep conservative.
@@ -1070,7 +1022,7 @@ impl AuthManager {
     #[cfg(test)]
     fn persist_and_swap(&self, auth: GrokAuth) -> Option<GrokAuth> {
         self.hot_swap(auth.clone());
-        let mut map = match read_auth_json_or_empty(&self.auth_read_path()) {
+        let mut map = match read_auth_json_or_empty(&self.path) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(error = %e, "auth: read failed in persist_and_swap, skipping disk write");
@@ -1120,7 +1072,7 @@ impl AuthManager {
         if self.read_only {
             return self.inner.read().clone();
         }
-        read_auth_json(&self.auth_read_path())
+        read_auth_json(&self.path)
             .ok()
             .and_then(|map| lookup_auth(&map, &self.scope))
     }
@@ -1151,7 +1103,7 @@ impl AuthManager {
         if self.read_only {
             return (self.inner.read().clone(), DiskAuthState::Ok);
         }
-        let (auth, state, err_detail) = match read_auth_json(&self.auth_read_path()) {
+        let (auth, state, err_detail) = match read_auth_json(&self.path) {
             Ok(map) => {
                 let found = lookup_auth(&map, &self.scope);
                 let state = if found.is_some() {
@@ -1875,7 +1827,7 @@ impl AuthManager {
     /// refresh chains). Non-destructive: only updates in-memory if disk has a
     /// different valid token (a sibling process wrote a fresher one).
     pub(crate) fn pick_up_sibling_token(&self) {
-        let auth = match read_auth_json(&self.auth_read_path()) {
+        let auth = match read_auth_json(&self.path) {
             Ok(map) => lookup_auth(&map, &self.scope),
             _ => None,
         };

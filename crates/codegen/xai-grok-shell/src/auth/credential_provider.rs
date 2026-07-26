@@ -625,7 +625,7 @@ mod tests {
         let _guard = EarlyInvalidationGuard::pin_to_default();
         let dir = tempfile::tempdir().unwrap();
         let scope = crate::auth::GrokComConfig::default().auth_scope();
-        let auth_path = dir.path().join("auth.json");
+        let auth_path = dir.path().join("auth").join("grok.json");
         let mgr = make_manager(
             &dir,
             Some(make_auth("initial-token", ChronoDuration::hours(1))),

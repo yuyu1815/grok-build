@@ -1400,10 +1400,10 @@ pub async fn run_leader(
             }
             let auth_scope = agent_config.grok_com_config.auth_scope();
             let auth_read_only = auth_manager_for_config.is_read_only();
-            // Gated on user_grok_home() so a cwd-relative .grok/auth.json is never
+            // Gated on user_grok_home() so a cwd-relative .grok/auth/grok.json is never
             // read as the user auth store when no home resolves.
             let initial_auth_key_hash = xai_grok_config::user_grok_home()
-                .map(|g| crate::auth::auth_storage_paths(&g).read_path)
+                .map(|g| crate::auth::auth_path(&g))
                 .and_then(|auth_path| crate::auth::read_auth_json(&auth_path).ok())
                 .and_then(|store| {
                     crate::auth::lookup_auth(&store, &auth_scope)

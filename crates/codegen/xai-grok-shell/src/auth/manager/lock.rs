@@ -514,7 +514,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn auth_json_path(dir: &TempDir) -> std::path::PathBuf {
-        dir.path().join("auth.json")
+        dir.path().join("auth").join("grok.json")
     }
 
     // ── Pure-function unit tests (no runtime needed) ─────────────────

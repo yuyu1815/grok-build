@@ -8,7 +8,7 @@
 //!       [--output out.jsonl] \
 //!       [--model grok-4.5] \
 //!       [--api-base-url https://api.x.ai/v1] \
-//!       [--api-key <key> | $XAI_API_KEY | <grok-home>/auth.json] \
+//!       [--api-key <key> | $XAI_API_KEY | <grok-home>/auth/grok.json] \
 //!       [--min-confidence 0.7] \
 //!       [--include-reasoning true] \
 //!       [--grok-home <path>]
@@ -52,7 +52,7 @@ struct Cli {
     api_base_url: String,
 
     /// API key. Overrides `$XAI_API_KEY` when set; falls back to
-    /// `$XAI_API_KEY`, then `<grok-home>/auth.json` (`xai::api_key`
+    /// `$XAI_API_KEY`, then `<grok-home>/auth/grok.json` (`xai::api_key`
     /// scope) when absent or empty.
     #[arg(long)]
     api_key: Option<String>,
@@ -73,7 +73,7 @@ struct Cli {
     #[arg(long)]
     include_reasoning: Option<bool>,
 
-    /// Override the directory containing `auth.json` for the
+    /// Override the Grok home containing `auth/grok.json` for the
     /// third-tier API-key fallback. Defaults to the same path the
     /// shell uses (`$GROK_HOME` or `~/.grok`). Exposed primarily for
     /// tests / sandboxed invocations.

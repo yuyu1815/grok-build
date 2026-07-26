@@ -188,7 +188,7 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
+                        let path = crate::auth::auth_path(&self.grok_home);
                         xai_grok_telemetry::unified_log::error(
                             "auth reload: auth file unreadable, keeping previous credentials",
                             None,
@@ -280,7 +280,7 @@ impl ConfigReloader {
     }
 
     fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
+        let auth_path = crate::auth::auth_path(&self.grok_home);
         let store = read_auth_json(&auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {
@@ -560,7 +560,7 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
 
         let initial_hash = hash_auth_key("same-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -592,7 +592,7 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("old-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -625,7 +625,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert("https://other.example.com".to_string(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("had-a-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -650,7 +650,11 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_malformed_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("auth.json"), "not valid json{{{").unwrap();
+        std::fs::write(
+            tmp.path().join("auth").join("grok.json"),
+            "not valid json{{{",
+        )
+        .unwrap();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
