@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1050" role="img" aria-labelledby="title desc">
+  <title id="title">Verification と compatibility の全体像</title>
+  <desc id="desc">approved-3 の三段階 lifecycle、cleanup ownership、実行済み focused test、未実行 shell acceptance と baseline 29件、wire 互換を示す。</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #172033; }
+      .title { font-size: 40px; font-weight: 750; }
+      .subtitle { font-size: 19px; fill: #526078; }
+      .section { font-size: 23px; font-weight: 780; }
+      .body { font-size: 16px; fill: #46546c; }
+      .small { font-size: 14px; fill: #526078; }
+      .metric { font-size: 20px; font-weight: 800; }
+      .code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; fill: #25324a; }
+      .badge { font-size: 14px; font-weight: 800; }
+      .anchor { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; fill: #64748b; }
+      .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .rule { stroke: #cbd5e1; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1050" fill="#f8fafc"/>
+  <rect width="1600" height="14" fill="#0369a1"/>
+  <text class="title" x="55" y="72">Verification / Compatibility — 何が確認済みか</text>
+  <text class="subtitle" x="55" y="108">PASS と制約を分離し、三段階 lifecycle と cleanup seam の根拠を固定</text>
+
+  <g transform="translate(1140 48)">
+    <rect width="180" height="42" rx="21" fill="#dcfce7" stroke="#22c55e"/>
+    <text class="badge" x="27" y="27" fill="#15803d">approved-3 PASS</text>
+    <rect x="195" width="205" height="42" rx="21" fill="#e0f2fe" stroke="#38bdf8"/>
+    <text class="badge" x="222" y="27" fill="#0369a1">independent verify</text>
+  </g>
+
+  <!-- executed -->
+  <g transform="translate(55 155)">
+    <rect class="card" width="720" height="465" fill="#ffffff"/>
+    <rect x="0" y="0" width="720" height="62" rx="18" fill="#dcfce7"/>
+    <rect x="0" y="44" width="720" height="18" fill="#dcfce7"/>
+    <text class="section" x="28" y="40" fill="#15803d">実行済み — PASS</text>
+
+    <circle cx="42" cy="102" r="18" fill="#16a34a"/><text x="34" y="109" font-size="22" font-weight="900" fill="#ffffff">✓</text>
+    <text class="metric" x="75" y="108">93 passed</text>
+    <text class="body" x="235" y="108">xai-tool-types</text>
+    <text class="small" x="75" y="133">constructor defaults / serde / schema を含む</text>
+
+    <circle cx="42" cy="175" r="18" fill="#16a34a"/><text x="34" y="182" font-size="22" font-weight="900" fill="#ffffff">✓</text>
+    <text class="metric" x="75" y="181">271 passed</text>
+    <text class="body" x="235" y="181">xai-grok-tools task</text>
+    <text class="small" x="75" y="206">schema / transport / canonical max / background / worktree / resume</text>
+
+    <circle cx="42" cy="248" r="18" fill="#16a34a"/><text x="34" y="255" font-size="22" font-weight="900" fill="#ffffff">✓</text>
+    <text class="metric" x="75" y="254">98 passed</text>
+    <text class="body" x="235" y="254">xai-grok-subagent-resolution</text>
+    <text class="small" x="75" y="279">spawn → role → persona precedence</text>
+
+    <line class="rule" x1="28" y1="306" x2="692" y2="306"/>
+    <text class="body" x="42" y="342">✓ cargo check -p xai-grok-tools --tests</text>
+    <text class="body" x="42" y="374">✓ cargo check -p xai-grok-shell --lib</text>
+    <text class="body" x="42" y="406">✓ targeted package cargo fmt --check</text>
+    <text class="body" x="42" y="438">✓ TaskToolInput exhaustive literal = 0 / git diff --check</text>
+    <text class="body" x="42" y="470">✓ catalog key/slug preflight + explicit cleanup ownership (production compile)</text>
+  </g>
+
+  <!-- constraints -->
+  <g transform="translate(825 155)">
+    <rect class="card" width="720" height="465" fill="#ffffff"/>
+    <rect x="0" y="0" width="720" height="62" rx="18" fill="#fef3c7"/>
+    <rect x="0" y="44" width="720" height="18" fill="#fef3c7"/>
+    <text class="section" x="28" y="40" fill="#b45309">制約 — PASS を主張しない</text>
+
+    <rect x="28" y="88" width="664" height="126" rx="14" fill="#fff7ed" stroke="#fb923c"/>
+    <text class="metric" x="48" y="122" fill="#c2410c">shell acceptance: 未実行</text>
+    <text class="body" x="48" y="153">cargo check -p xai-grok-shell --tests</text>
+    <text class="body" x="48" y="180">同じ既知 baseline 29 errors で compile 停止</text>
+    <text class="small" x="48" y="202">新規 preflight tests は存在 / changed-path diagnostic なし</text>
+
+    <rect x="28" y="234" width="664" height="92" rx="14" fill="#f8fafc" stroke="#94a3b8"/>
+    <text class="section" x="48" y="268" font-size="19">clippy</text>
+    <text class="body" x="48" y="296">変更外の既知 warning で停止 — PASS は未主張</text>
+    <text class="small" x="48" y="317">manual_checked_ops / unnecessary_sort_by</text>
+
+    <rect x="28" y="346" width="664" height="92" rx="14" fill="#f8fafc" stroke="#94a3b8"/>
+    <text class="section" x="48" y="380" font-size="19">format scope</text>
+    <text class="body" x="48" y="408">変更 package の fmt は PASS</text>
+    <text class="small" x="48" y="429">workspace 全体は無関係な既存 pager whitespace を除外</text>
+  </g>
+
+  <!-- compatibility -->
+  <text class="section" x="55" y="680">Compatibility matrix</text>
+  <g transform="translate(55 705)">
+    <rect class="card" width="1490" height="190"/>
+    <rect x="0" y="0" width="260" height="190" rx="18" fill="#eff6ff"/>
+    <rect x="242" y="0" width="18" height="190" fill="#eff6ff"/>
+    <text class="body" x="28" y="43">既存 JSON caller</text>
+    <text class="body" x="28" y="105">新規 Tool field</text>
+    <text class="body" x="28" y="167">Rust caller</text>
+
+    <line class="rule" x1="260" y1="64" x2="1490" y2="64"/>
+    <line class="rule" x1="260" y1="126" x2="1490" y2="126"/>
+    <text class="metric" x="290" y="43" fill="#15803d">WIRE COMPATIBLE</text>
+    <text class="body" x="650" y="43">field 省略 → 従来の fallback / default</text>
+    <text class="metric" x="290" y="105" fill="#0369a1">OPTIONAL ADDITION</text>
+    <text class="body" x="650" y="105">reasoning_effort: 7値 / unknown reject / max → xhigh</text>
+    <text class="metric" x="290" y="167" fill="#c2410c">SOURCE-BREAKING</text>
+    <text class="code" x="650" y="167">0.2.0: TaskToolInput::new(...) + field assignment</text>
+  </g>
+
+  <!-- tracking -->
+  <rect x="55" y="930" width="1490" height="70" rx="18" fill="#e0f2fe" stroke="#38bdf8" stroke-width="2"/>
+  <text class="section" x="82" y="974" fill="#0369a1">Tracking</text>
+  <text class="metric" x="260" y="974">PR #12</text>
+  <text class="body" x="400" y="974">feat: add per-spawn subagent reasoning effort</text>
+  <text class="metric" x="900" y="974">Issue #11</text>
+  <text class="body" x="1125" y="974">Refs（自動 close なし）</text>
+
+  <text class="anchor" x="55" y="1028">Symbols: preflight · materialize · SpawnWorktreeGuard::cleanup/promote · coordinator.insert · TaskTool::run</text>
+</svg>

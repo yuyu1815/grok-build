@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1060" role="img" aria-labelledby="title desc">
+  <title id="title">Public spawn schema と Rust API の before / after</title>
+  <desc id="desc">reasoning_effort の optional enum、max の正規化、unknown 拒否、TaskToolInput の non_exhaustive 化、constructor、0.2.0 migration を示す。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #172033; }
+      .title { font-size: 40px; font-weight: 750; }
+      .subtitle { font-size: 19px; fill: #526078; }
+      .panel-title { font-size: 28px; font-weight: 800; }
+      .section { font-size: 20px; font-weight: 750; }
+      .body { font-size: 17px; fill: #46546c; }
+      .small { font-size: 15px; fill: #526078; }
+      .code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 16px; fill: #25324a; }
+      .chip { font-family: "SFMono-Regular", Consolas, monospace; font-size: 14px; font-weight: 700; }
+      .anchor { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; fill: #64748b; }
+      .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .arrow { stroke: #7c3aed; stroke-width: 5; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1060" fill="#fafafa"/>
+  <rect width="1600" height="14" fill="#7c3aed"/>
+  <text class="title" x="55" y="72">Public spawn schema / Rust API — Before → After</text>
+  <text class="subtitle" x="55" y="108">wire 互換の public API と、三段階 spawn の境界を同じ図で固定</text>
+
+  <g transform="translate(55 160)">
+    <rect class="card" width="650" height="370" fill="#f8fafc"/>
+    <rect x="0" y="0" width="650" height="64" rx="18" fill="#e2e8f0"/>
+    <rect x="0" y="46" width="650" height="18" fill="#e2e8f0"/>
+    <text class="panel-title" x="28" y="42">Before</text>
+    <text class="small" x="520" y="39">xai-tool-types 0.1.0</text>
+
+    <text class="section" x="28" y="100">Public Tool schema</text>
+    <text class="code" x="45" y="132">TaskToolInput {</text>
+    <text class="code" x="68" y="160">prompt, description, subagent_type,</text>
+    <text class="code" x="68" y="188">background, capability, isolation,</text>
+    <text class="code" x="68" y="216">resume_from, cwd, model</text>
+    <text class="code" x="45" y="244">}</text>
+
+    <text class="section" x="28" y="282">Rust construction</text>
+    <text class="body" x="45" y="314">外部 crate でも exhaustive struct literal</text>
+    <text class="code" x="45" y="339">TaskToolInput { 全 field ... }</text>
+  </g>
+
+  <path class="arrow" d="M 730 332 L 855 332"/>
+  <rect x="758" y="286" width="70" height="42" rx="21" fill="#ede9fe" stroke="#a78bfa"/>
+  <text class="chip" x="778" y="313" fill="#6d28d9">API</text>
+
+  <g transform="translate(895 160)">
+    <rect class="card" width="650" height="370" fill="#ffffff"/>
+    <rect x="0" y="0" width="650" height="64" rx="18" fill="#ede9fe"/>
+    <rect x="0" y="46" width="650" height="18" fill="#ede9fe"/>
+    <text class="panel-title" x="28" y="42" fill="#6d28d9">After</text>
+    <text class="small" x="520" y="39">xai-tool-types 0.2.0</text>
+
+    <text class="section" x="28" y="100">Public Tool schema — optional field を追加</text>
+    <text class="code" x="45" y="132">reasoning_effort?: SubagentReasoningEffort</text>
+    <g transform="translate(45 150)">
+      <rect width="68" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="16" y="21">none</text>
+      <rect x="76" width="88" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="87" y="21">minimal</text>
+      <rect x="172" width="62" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="189" y="21">low</text>
+      <rect x="242" width="82" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="252" y="21">medium</text>
+      <rect x="332" width="68" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="347" y="21">high</text>
+      <rect x="408" width="76" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="420" y="21">xhigh</text>
+      <rect x="492" width="64" height="32" rx="16" fill="#dcfce7"/><text class="chip" x="508" y="21">max</text>
+    </g>
+    <text class="body" x="45" y="218">既存 JSON caller: field を省略すれば従来挙動</text>
+
+    <text class="section" x="28" y="258">Rust API — forward extensible</text>
+    <text class="code" x="45" y="290">#[non_exhaustive] TaskToolInput</text>
+    <text class="code" x="45" y="320">TaskToolInput::new(prompt, description)</text>
+    <text class="small" x="45" y="342">serde omission と同じ default を構築</text>
+  </g>
+
+  <!-- observable rules -->
+  <g transform="translate(55 550)">
+    <rect class="card" width="460" height="150"/>
+    <circle cx="42" cy="42" r="22" fill="#16a34a"/>
+    <text x="35" y="49" font-size="24" font-weight="800" fill="#ffffff">?</text>
+    <text class="section" x="78" y="42">省略</text>
+    <text class="body" x="28" y="82">role / persona / custom agent /</text>
+    <text class="body" x="28" y="110">parent / model の既存 default へ</text>
+    <text class="small" x="28" y="136">wire behavior: backward compatible / preflight only</text>
+  </g>
+
+  <g transform="translate(570 550)">
+    <rect class="card" width="460" height="150"/>
+    <circle cx="42" cy="42" r="22" fill="#7c3aed"/>
+    <text x="31" y="49" font-size="19" font-weight="800" fill="#ffffff">max</text>
+    <text class="section" x="95" y="42">alias 正規化</text>
+    <text class="code" x="28" y="86">public: max</text>
+    <path d="M 170 80 L 250 80" stroke="#7c3aed" stroke-width="3" marker-end="url(#arrow)"/>
+    <text class="code" x="270" y="86">sampling: xhigh</text>
+    <text class="small" x="28" y="136">schema には max を残す; canonicalize once in TaskTool</text>
+  </g>
+
+  <g transform="translate(1085 550)">
+    <rect class="card" width="460" height="150"/>
+    <circle cx="42" cy="42" r="22" fill="#dc2626"/>
+    <text x="35" y="50" font-size="26" font-weight="800" fill="#ffffff">×</text>
+    <text class="section" x="78" y="42">unknown token</text>
+    <text class="code" x="28" y="84">"ultra" → deserialize error</text>
+    <text class="body" x="28" y="112">SubagentRequest を作らない</text>
+    <text class="small" x="28" y="136">preflight rejects before worktree / child side effect</text>
+  </g>
+
+  <!-- migration -->
+  <rect x="55" y="750" width="1490" height="155" rx="18" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/>
+  <text class="section" x="83" y="790" fill="#c2410c">Rust migration — source-breaking を明示</text>
+  <text class="code" x="83" y="828">Before: TaskToolInput { prompt, description, ...all fields }</text>
+  <path class="arrow" d="M 700 822 L 760 822"/>
+  <text class="code" x="800" y="828">After: let mut input = TaskToolInput::new(prompt, description);</text>
+  <text class="body" x="800" y="858">必要な override だけ field assignment</text>
+  <text class="small" x="83" y="882">constructor defaults: subagent_type = general-purpose / background = true / optional fields = None</text>
+
+  <rect x="55" y="920" width="1490" height="48" rx="16" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text class="body" x="83" y="951">Lifecycle: pure preflight → materialize (SpawnWorktreeGuard) → run/promote (single catalog snapshot)</text>
+
+  <text class="anchor" x="55" y="988">Symbols: TaskToolInput · SubagentReasoningEffort · TaskToolInput::new · TaskTool::run · SpawnWorktreeGuard</text>
+  <text class="anchor" x="55" y="1008">Migration: xai-tool-types/CHANGELOG.md · Tool docs: xai-grok-pager/docs/user-guide/16-subagents.md</text>
+</svg>
