@@ -149,6 +149,16 @@ impl ConfigFileWatcher {
         let debounce = debounce.unwrap_or(DEFAULT_DEBOUNCE);
         let (tx, rx) = mpsc::unbounded_channel();
         let grok_home_buf = grok_home.to_path_buf();
+        let canonical_auth_dir = grok_home_buf.join("auth");
+        let explicit_auth_path = std::env::var_os("GROK_AUTH_PATH").map(PathBuf::from);
+        let explicit_auth_path_for_event = explicit_auth_path.clone();
+        // A valid inline `GROK_AUTH` is authoritative and memory-only. Do not
+        // even enqueue disk auth events; the reloader also guards application.
+        let watch_auth_files = std::env::var("GROK_AUTH")
+            .ok()
+            .and_then(|json| serde_json::from_str::<crate::auth::GrokAuth>(&json).ok())
+            .is_none();
+        let _ = std::fs::create_dir_all(&canonical_auth_dir);
         // `~/.claude.json` is consumed by **every**
         // session (see `load_claude_json_mcp_servers_as_configs`), so
         // a write to it must broadcast through the unit
@@ -168,6 +178,7 @@ impl ConfigFileWatcher {
         // canonicalized in `parent_is_dir`.
         let user_home_buf: Option<PathBuf> =
             dirs::home_dir().map(|h| dunce::canonicalize(&h).unwrap_or(h));
+        let canonical_auth_dir_for_watch = canonical_auth_dir.clone();
 
         let mut debouncer = new_filtered_debouncer(debounce, move |res: DebounceEventResult| {
             let Ok(events) = res else { return };
@@ -179,7 +190,21 @@ impl ConfigFileWatcher {
                 let parent = path.parent();
 
                 let change = match name {
-                    Some("auth.json") if parent == Some(grok_home_buf.as_path()) => {
+                    _ if watch_auth_files
+                        && explicit_auth_path_for_event
+                            .as_deref()
+                            .is_some_and(|configured| path == configured) =>
+                    {
+                        Some(ConfigChangeEvent::AuthChanged)
+                    }
+                    Some("grok.json")
+                        if watch_auth_files && parent == Some(canonical_auth_dir.as_path()) =>
+                    {
+                        Some(ConfigChangeEvent::AuthChanged)
+                    }
+                    Some("auth.json")
+                        if watch_auth_files && parent == Some(grok_home_buf.as_path()) =>
+                    {
                         Some(ConfigChangeEvent::AuthChanged)
                     }
                     Some("config.toml") if parent == Some(grok_home_buf.as_path()) => {
@@ -233,6 +258,29 @@ impl ConfigFileWatcher {
                 )
             })
             .ok()?;
+
+        if canonical_auth_dir_for_watch.is_dir() {
+            debouncer
+                .watcher()
+                .watch(&canonical_auth_dir_for_watch, RecursiveMode::NonRecursive)
+                .map_err(|e| {
+                    tracing::warn!(
+                        path = %canonical_auth_dir_for_watch.display(),
+                        error = %e,
+                        "failed to watch canonical auth directory"
+                    )
+                })
+                .ok()?;
+        }
+
+        if let Some(explicit_auth_path) = explicit_auth_path.as_deref()
+            && let Some(parent) = explicit_auth_path.parent()
+            && parent != canonical_auth_dir_for_watch.as_path()
+        {
+            let _ = debouncer
+                .watcher()
+                .watch(parent, RecursiveMode::NonRecursive);
+        }
 
         for p in extra_paths {
             if let Some(parent) = p.parent() {

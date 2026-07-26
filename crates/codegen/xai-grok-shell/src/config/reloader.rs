@@ -90,6 +90,8 @@ pub struct ConfigReloader {
     last_project_mcp_hashes: HashMap<PathBuf, u64>,
     grok_home: PathBuf,
     auth_scope: String,
+    /// Inline `GROK_AUTH` is authoritative and must ignore disk watcher events.
+    auth_read_only: bool,
     remote_settings: Option<crate::util::config::RemoteSettings>,
     config_update_tx: mpsc::UnboundedSender<ConfigUpdate>,
     /// Whether --experimental-memory was passed at startup. Persists across config reloads.
@@ -104,6 +106,7 @@ impl ConfigReloader {
         initial_auth_key_hash: u64,
         initial_config: toml::Value,
         auth_scope: String,
+        auth_read_only: bool,
         remote_settings: Option<crate::util::config::RemoteSettings>,
         config_update_tx: mpsc::UnboundedSender<ConfigUpdate>,
         experimental_memory: bool,
@@ -115,6 +118,7 @@ impl ConfigReloader {
             last_project_mcp_hashes: HashMap::new(),
             grok_home,
             auth_scope,
+            auth_read_only,
             remote_settings,
             config_update_tx,
             experimental_memory,
@@ -173,7 +177,9 @@ impl ConfigReloader {
             // `McpServersChanged` that swept every session).
             let project_cwds = collect_project_cwds(&batch);
 
-            if has_auth {
+            if has_auth && self.auth_read_only {
+                debug!("ignoring auth file change because inline GROK_AUTH is authoritative");
+            } else if has_auth {
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reload_auth()));
                 match result {
@@ -182,9 +188,9 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = self.grok_home.join("auth.json");
+                        let path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
                         xai_grok_telemetry::unified_log::error(
-                            "auth reload: auth.json unreadable, keeping previous credentials",
+                            "auth reload: auth file unreadable, keeping previous credentials",
                             None,
                             Some(serde_json::json!({
                                 "error": e.to_string(),
@@ -274,7 +280,7 @@ impl ConfigReloader {
     }
 
     fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = self.grok_home.join("auth.json");
+        let auth_path = crate::auth::auth_storage_paths(&self.grok_home).read_path;
         let store = read_auth_json(&auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {
@@ -564,6 +570,7 @@ mod tests {
             initial_hash,
             empty_config,
             scope,
+            false,
             None,
             tx,
             false,
@@ -595,6 +602,7 @@ mod tests {
             old_hash,
             empty_config,
             scope,
+            false,
             None,
             tx,
             false,
@@ -627,6 +635,7 @@ mod tests {
             old_hash,
             empty_config,
             "https://test.example.com".to_string(),
+            false,
             None,
             tx,
             false,
@@ -650,6 +659,7 @@ mod tests {
             0,
             empty_config,
             "https://test.example.com".to_string(),
+            false,
             None,
             tx,
             false,
@@ -676,6 +686,7 @@ mod tests {
             0,
             empty_config,
             "https://test.example.com".to_string(),
+            false,
             None,
             tx,
             false,
@@ -688,6 +699,47 @@ mod tests {
             rx.try_recv().is_err(),
             "should not send update on missing file"
         );
+    }
+
+    #[tokio::test]
+    async fn inline_auth_ignores_disk_watcher_reload() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let scope = "https://test.example.com".to_string();
+        let disk_auth = make_auth("disk-key");
+        let mut store = BTreeMap::new();
+        store.insert(scope.clone(), disk_auth);
+        std::fs::create_dir_all(tmp.path().join("auth")).unwrap();
+        std::fs::write(
+            tmp.path().join("auth").join("grok.json"),
+            serde_json::to_string_pretty(&store).unwrap(),
+        )
+        .unwrap();
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let reloader = ConfigReloader::new(
+            tmp.path().to_path_buf(),
+            hash_auth_key("inline-key"),
+            toml::Value::Table(toml::map::Map::new()),
+            scope,
+            true,
+            None,
+            tx,
+            false,
+            false,
+        );
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(reloader.run(event_rx, cancel.clone()));
+
+        event_tx.send(ConfigChangeEvent::AuthChanged).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "disk auth must not replace or clear authoritative inline GROK_AUTH"
+        );
+
+        cancel.cancel();
+        let _ = handle.await;
     }
 
     /// `ModelsCacheChanged` is a pure pass-through: the reloader has no toml
@@ -704,6 +756,7 @@ mod tests {
             0,
             empty_config,
             "https://test.example.com".to_string(),
+            false,
             None,
             tx,
             false,
@@ -745,6 +798,7 @@ mod tests {
             0,
             empty_config,
             "https://test.example.com".to_string(),
+            false,
             None,
             tx,
             false,
