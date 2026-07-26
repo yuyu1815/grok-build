@@ -1,0 +1,73 @@
+name: PR-Agent
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-agent:
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (github.event_name == 'pull_request_target' ||
+       (github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
+    runs-on: ubuntu-latest
+    steps:
+      # Configure repository secrets PR_AGENT_API_KEY / PR_AGENT_API_BASE and,
+      # optionally, repository variable PR_AGENT_MODEL (for example openai/gpt-4o).
+      - name: Validate PR-Agent configuration
+        shell: bash
+        env:
+          PR_AGENT_API_KEY: ${{ secrets.PR_AGENT_API_KEY }}
+          PR_AGENT_API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
+          PR_AGENT_MODEL: ${{ vars.PR_AGENT_MODEL }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ -z "${PR_AGENT_API_KEY}" ]]; then
+            echo "::error::Repository secret PR_AGENT_API_KEY is not configured. Add it under Settings > Secrets and variables > Actions."
+            missing=1
+          fi
+          if [[ -z "${PR_AGENT_API_BASE}" ]]; then
+            echo "::error::Repository secret PR_AGENT_API_BASE is not configured. Add the OpenAI-compatible API base URL (usually ending in /v1)."
+            missing=1
+          fi
+          if (( missing )); then
+            exit 1
+          fi
+          if [[ -z "${PR_AGENT_MODEL}" ]]; then
+            echo "Repository variable PR_AGENT_MODEL is not set; using openai/gpt-4o."
+          else
+            echo "Repository variable PR_AGENT_MODEL is configured."
+          fi
+
+      - name: Run PR-Agent
+        uses: docker://pragent/pr-agent:0.40.0-github_action@sha256:09c05ab658712c0874ef3fdebf44fa1e104143af506378aefd5e7c422dde11c1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_KEY: ${{ secrets.PR_AGENT_API_KEY }}
+          OPENAI.API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
+          CONFIG.MODEL: ${{ vars.PR_AGENT_MODEL || 'openai/gpt-4o' }}
+          CONFIG.FALLBACK_MODELS: '[]'
+          CONFIG.RESPONSE_LANGUAGE: ja-JP
+          CONFIG.RESTRICTED_MODE: 'true'
+          CONFIG.REPO_CONTEXT_FILES: '[]'
+          CONFIG.USE_WIKI_SETTINGS_FILE: 'false'
+          CONFIG.USE_GLOBAL_SETTINGS_FILE: 'false'
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: 'true'
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: 'false'
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: 'false'
+          GITHUB_ACTION_CONFIG.PR_ACTIONS: '["opened","reopened","ready_for_review"]'
+          GITHUB_ACTION_CONFIG.HANDLE_PUSH_TRIGGER: 'true'
+          GITHUB_ACTION_CONFIG.PUSH_COMMANDS: '["/review"]'
