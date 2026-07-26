@@ -355,12 +355,13 @@ mod tests {
         };
         let items = cmd.suggest_args(&ctx, "").unwrap();
         assert_eq!(items.len(), EFFORT_LEVELS.len());
-        assert_eq!(items[0].insert_text, "xhigh");
-        assert_eq!(items[1].insert_text, "high");
-        assert_eq!(items[1].display, "high (active)");
-        assert_eq!(items[2].insert_text, "medium");
-        assert_eq!(items[3].insert_text, "low");
+        assert_eq!(items[0].insert_text, "max");
+        assert_eq!(items[1].insert_text, "xhigh");
+        assert_eq!(items[2].insert_text, "high");
+        assert_eq!(items[2].display, "high (active)");
+        assert_eq!(items[3].insert_text, "medium");
+        assert_eq!(items[4].insert_text, "low");
         assert!(items[0].match_text.starts_with("a "));
-        assert!(items[3].match_text.starts_with("d "));
+        assert!(items[4].match_text.starts_with("e "));
     }
 }

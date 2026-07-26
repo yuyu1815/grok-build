@@ -1142,6 +1142,9 @@ impl SamplingClient {
         // it in post-serialize. This is the last surviving piece of the
         // old raw_output machinery.
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
+        if let Some(reasoning_effort) = request.reasoning_effort_override {
+            request_body["reasoning"]["effort"] = serde_json::json!(reasoning_effort);
+        }
         let http_request = grok_headers
             .apply(self.post(self.endpoint("responses")))
             .json(&request_body);
@@ -1287,6 +1290,9 @@ impl SamplingClient {
             }
         }
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
+        if let Some(reasoning_effort) = request.reasoning_effort_override {
+            request_body["reasoning"]["effort"] = serde_json::json!(reasoning_effort);
+        }
         // Fresh per attempt so signals never leak across retries; `None`
         // (check disabled) sends no header and does no peek work per event.
         let doom_loop = self
@@ -1850,9 +1856,11 @@ impl SamplingClient {
         // (e.g., x_search). These are injected as raw JSON after serialization.
         let extra_tools = xai_grok_sampling_types::extra_raw_tools(&request.hosted_tools);
 
+        let reasoning_effort_override = request.reasoning_effort;
         let responses_request: rs::CreateResponse = (&request).into();
 
         let mut wrapper = CreateResponseWrapper::new(responses_request);
+        wrapper.reasoning_effort_override = reasoning_effort_override;
         wrapper.x_grok_conv_id = x_grok_conv_id;
         wrapper.x_grok_req_id = x_grok_req_id;
         wrapper.x_grok_session_id = x_grok_session_id;
@@ -1883,9 +1891,11 @@ impl SamplingClient {
         let x_grok_turn_idx = request.x_grok_turn_idx.clone();
         let x_grok_agent_id = request.x_grok_agent_id.clone();
 
+        let reasoning_effort_override = request.reasoning_effort;
         let responses_request: rs::CreateResponse = (&request).into();
 
         let mut wrapper = CreateResponseWrapper::new(responses_request);
+        wrapper.reasoning_effort_override = reasoning_effort_override;
         wrapper.x_grok_conv_id = x_grok_conv_id;
         wrapper.x_grok_req_id = x_grok_req_id;
         wrapper.x_grok_session_id = x_grok_session_id;
@@ -2107,6 +2117,20 @@ mod tests {
 
         assert!(obj.get("max_tokens").is_none());
         assert!(obj.get("tools").is_none());
+    }
+
+    #[test]
+    fn responses_payload_override_preserves_max() {
+        let mut payload = serde_json::json!({ "reasoning": { "effort": "xhigh" } });
+        let reasoning_effort = xai_grok_sampling_types::ReasoningEffort::Max;
+        payload["reasoning"]["effort"] = serde_json::json!(reasoning_effort);
+
+        assert_eq!(
+            payload
+                .pointer("/reasoning/effort")
+                .and_then(|value| value.as_str()),
+            Some("max")
+        );
     }
 
     #[test]

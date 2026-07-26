@@ -183,16 +183,13 @@ fn stashed_model_keeps_model_when_unsupported() {
 }
 
 #[test]
-fn effort_only_accepts_max_as_xhigh() {
+fn effort_only_keeps_max_distinct_from_xhigh() {
     let models = models_with_current(true);
     let out = take_deferred_model_switch(None, &models, Some("max"));
     assert_eq!(
         out,
         DeferredSwitchOutcome {
-            switch: Some((
-                models.current.clone().unwrap(),
-                Some(ReasoningEffort::Xhigh)
-            )),
+            switch: Some((models.current.clone().unwrap(), Some(ReasoningEffort::Max))),
             effort_error: None,
         }
     );

@@ -231,9 +231,9 @@ impl ModelState {
         {
             return Some(option.value);
         }
-        // Canonical level (e.g. "high", "max"→xhigh) only if the model menu
-        // actually offers that value — not free-form power-user aliases that
-        // would 400 on the server (e.g. `none` on grok-4.5).
+        // Canonical level (e.g. "high" or "max") only if the model menu
+        // actually offers that distinct value — not free-form power-user values
+        // that would 400 on the server (e.g. `none` on grok-4.5).
         let parsed = token.parse::<ReasoningEffort>().ok()?;
         options
             .iter()
@@ -463,20 +463,24 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_options_renders_server_list() {
+    fn reasoning_effort_options_renders_server_list_with_distinct_max_and_xhigh() {
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
             "reasoningEfforts": [
                 { "id": "balanced", "value": "medium", "label": "Balanced" },
-                { "id": "deep", "value": "xhigh", "label": "Deep", "description": "Max" },
+                { "id": "extra", "value": "xhigh", "label": "Extra-high" },
+                { "id": "deep", "value": "max", "label": "Max", "description": "Maximum reasoning" },
             ],
         })));
         let opts = state.reasoning_effort_options();
-        assert_eq!(opts.len(), 2);
+        assert_eq!(opts.len(), 3);
         assert_eq!(opts[0].label, "Balanced");
         assert_eq!(opts[0].value, ReasoningEffort::Medium);
-        assert_eq!(opts[1].id, "deep");
-        assert_eq!(opts[1].description.as_deref(), Some("Max"));
+        assert_eq!(opts[1].id, "extra");
+        assert_eq!(opts[1].value, ReasoningEffort::Xhigh);
+        assert_eq!(opts[2].id, "deep");
+        assert_eq!(opts[2].value, ReasoningEffort::Max);
+        assert_eq!(opts[2].description.as_deref(), Some("Maximum reasoning"));
     }
 
     #[test]
@@ -492,7 +496,7 @@ mod tests {
 
     #[test]
     fn reasoning_effort_options_falls_back_to_builtin_menu() {
-        // Supported but no server list → today's four-row built-in menu.
+        // Supported but no server list → the built-in Max through low menu.
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
         })));
@@ -501,7 +505,7 @@ mod tests {
             .into_iter()
             .map(|o| o.id)
             .collect();
-        assert_eq!(ids, ["xhigh", "high", "medium", "low"]);
+        assert_eq!(ids, ["max", "xhigh", "high", "medium", "low"]);
     }
 
     #[test]
@@ -530,20 +534,33 @@ mod tests {
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
             "reasoningEfforts": [
-                { "id": "deep", "value": "xhigh", "label": "Deep" },
+                { "id": "deep", "value": "max", "label": "Deep" },
+                { "id": "extra", "value": "xhigh", "label": "Extra-high" },
                 { "id": "high", "value": "high", "label": "High" },
             ],
         })));
-        // Design-2 remap: the typed id resolves to its canonical wire value.
+        // A menu id resolves to its distinct canonical wire value.
         assert_eq!(
             state.resolve_effort_token("deep"),
-            Some(ReasoningEffort::Xhigh)
+            Some(ReasoningEffort::Max)
         );
         assert_eq!(
             state.resolve_effort_token("DEEP"),
+            Some(ReasoningEffort::Max)
+        );
+        assert_eq!(
+            state.resolve_effort_token("extra"),
             Some(ReasoningEffort::Xhigh)
         );
-        // Canonical level offered by the menu is accepted by value.
+        // Canonical levels offered by the menu are accepted by value.
+        assert_eq!(
+            state.resolve_effort_token("max"),
+            Some(ReasoningEffort::Max)
+        );
+        assert_eq!(
+            state.resolve_effort_token("xhigh"),
+            Some(ReasoningEffort::Xhigh)
+        );
         assert_eq!(
             state.resolve_effort_token("high"),
             Some(ReasoningEffort::High)
