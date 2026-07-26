@@ -81,6 +81,18 @@ pub enum ModelOverrideProvenance {
     Tool,
 }
 
+/// Where an explicit reasoning-effort runtime override came from.
+///
+/// Tool-originated values are a public request and therefore fail closed when
+/// the effective model cannot provide the requested level. Harness/config
+/// values retain their historical best-effort behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReasoningEffortOverrideProvenance {
+    #[default]
+    Harness,
+    Tool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SubagentRuntimeOverrides {
     /// Override the model (e.g. "test-model").
@@ -89,6 +101,8 @@ pub struct SubagentRuntimeOverrides {
     pub model_override_provenance: ModelOverrideProvenance,
     /// Override reasoning effort (e.g. "low", "medium", "high").
     pub reasoning_effort: Option<String>,
+    /// Whether `reasoning_effort` came from the public Task tool.
+    pub reasoning_effort_override_provenance: ReasoningEffortOverrideProvenance,
     /// Named persona/SOUL template to apply.
     pub persona: Option<String>,
     /// Capability mode controlling tool access.
