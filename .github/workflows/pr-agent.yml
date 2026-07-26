@@ -24,8 +24,8 @@ jobs:
           OPENAI.API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
           CONFIG.MODEL: ${{ secrets.PR_AGENT_MODEL || 'openai/gpt-4o' }}
           CONFIG.FALLBACK_MODELS: '[]'
-          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "128000"
-          CONFIG.MAX_MODEL_TOKENS: "32000"
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "240000"
+          CONFIG.MAX_MODEL_TOKENS: "240000"
           CONFIG.RESPONSE_LANGUAGE: ja-JP
           CONFIG.RESTRICTED_MODE: 'true'
           CONFIG.REPO_CONTEXT_FILES: '[]'
