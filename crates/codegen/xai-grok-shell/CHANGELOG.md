@@ -2,10 +2,15 @@
 
 # 0.2.101 — 2026-07-13
 
+## Breaking Changes
+
+- `xai-tool-types` is now 0.2.0 and `TaskToolInput` is `#[non_exhaustive]`. Rust consumers must migrate exhaustive struct literals to `TaskToolInput::new(prompt, description)` and then assign any overrides; JSON/serde callers are unchanged.
+
 ## Features
 
 - **grok inspect** now shows effective compatibility settings for Cursor, Claude, and Codex sessions.
 - **New setting** "Match display refresh rate" lets high-refresh displays run the TUI at native cadence.
+- **Subagent** `task` and `spawn_subagent` tools now accept an optional per-spawn `reasoning_effort`; unsupported levels are rejected before the child starts.
 
 ## Bug Fixes
 
@@ -4849,5 +4854,3 @@
 - **More reliable long streaming requests** use per-sampling HTTP clients with keep-alive tuning instead of a shared global client.
 - **Startup stability for external instruction files** avoids gitignore panics by skipping ignore checks for paths outside the repository root.
 - **Tool-call protocol compliance** now emits cancellation and rejection outputs for unexecuted tools, preventing model errors when expected tool results are missing.
-
-

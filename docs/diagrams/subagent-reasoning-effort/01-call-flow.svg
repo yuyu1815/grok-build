@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Subagent reasoning effort の呼び出しフロー</title>
+  <desc id="desc">TaskToolInput から TaskTool、SubagentRequest、解決処理、handler、child session まで、追加・変更・既存の箇所を示す。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Hiragino Sans", "Yu Gothic", sans-serif; fill: #172033; }
+      .title { font-size: 40px; font-weight: 750; }
+      .subtitle { font-size: 19px; fill: #526078; }
+      .step { font-size: 16px; font-weight: 800; fill: #ffffff; }
+      .node-title { font-size: 22px; font-weight: 750; }
+      .node-text { font-size: 16px; fill: #46546c; }
+      .code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 15px; fill: #25324a; }
+      .tag { font-size: 14px; font-weight: 750; }
+      .legend { font-size: 15px; font-weight: 700; }
+      .anchor { font-family: "SFMono-Regular", Consolas, monospace; font-size: 13px; fill: #64748b; }
+      .arrow { stroke: #2563eb; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; filter: url(#shadow); }
+      .added { fill: #dcfce7; stroke: #22c55e; }
+      .changed { fill: #fff7ed; stroke: #f97316; }
+      .existing { fill: #f1f5f9; stroke: #94a3b8; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#f8fafc"/>
+  <rect x="0" y="0" width="1600" height="14" fill="#2563eb"/>
+  <text id="titleText" class="title" x="55" y="72">呼び出し上位から child session まで</text>
+  <text class="subtitle" x="55" y="108">公開 schema から三段階 spawn（preflight → materialize → run/promote）へ届く経路</text>
+
+  <g transform="translate(1040 52)">
+    <rect class="added" x="0" y="0" width="150" height="42" rx="21"/>
+    <circle cx="23" cy="21" r="7" fill="#22c55e"/>
+    <text class="legend" x="40" y="27">追加</text>
+    <rect class="changed" x="165" y="0" width="150" height="42" rx="21"/>
+    <circle cx="188" cy="21" r="7" fill="#f97316"/>
+    <text class="legend" x="205" y="27">変更</text>
+    <rect class="existing" x="330" y="0" width="150" height="42" rx="21"/>
+    <circle cx="353" cy="21" r="7" fill="#94a3b8"/>
+    <text class="legend" x="370" y="27">既存を接続</text>
+  </g>
+
+  <!-- top row -->
+  <g transform="translate(55 180)">
+    <rect class="card added" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#16a34a"/>
+    <text class="step" x="29" y="40">1</text>
+    <text class="tag" x="70" y="39" fill="#15803d">追加: PUBLIC INPUT</text>
+    <text class="node-title" x="26" y="82">TaskToolInput</text>
+    <text class="code" x="26" y="112">reasoning_effort?: enum</text>
+    <text class="node-text" x="26" y="144">7値 / optional / schema公開</text>
+    <text class="node-text" x="26" y="171">unknown は serde/schema で拒否</text>
+    <text class="anchor" x="26" y="196">TaskToolInput / SubagentReasoningEffort</text>
+  </g>
+
+  <path class="arrow" d="M 390 285 L 412 285"/>
+
+  <g transform="translate(420 180)">
+    <rect class="card existing" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#64748b"/>
+    <text class="step" x="29" y="40">2</text>
+    <text class="tag" x="70" y="39" fill="#475569">既存: TOOL SURFACE</text>
+    <text class="node-title" x="26" y="82">TaskTool</text>
+    <text class="node-text" x="26" y="115">task / spawn_subagent の</text>
+    <text class="node-text" x="26" y="142">共通 Tool 実装</text>
+    <text class="node-text" x="26" y="171">既存 permission / depth gate を維持</text>
+    <text class="anchor" x="26" y="196">TaskTool::run</text>
+  </g>
+
+  <path class="arrow" d="M 755 285 L 777 285"/>
+
+  <g transform="translate(785 180)">
+    <rect class="card changed" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#ea580c"/>
+    <text class="step" x="29" y="40">3</text>
+    <text class="tag" x="70" y="39" fill="#c2410c">変更: TOOL EXECUTION</text>
+    <text class="node-title" x="26" y="82">TaskTool::run</text>
+    <text class="node-text" x="26" y="115">入力を正規化・検証</text>
+    <text class="code" x="26" y="145">max → "xhigh"</text>
+    <text class="node-text" x="26" y="171">spawn 前に request を組み立てる</text>
+    <text class="anchor" x="26" y="196">TaskTool::run / canonical effort</text>
+  </g>
+
+  <path class="arrow" d="M 1120 285 L 1142 285"/>
+
+  <g transform="translate(1150 180)">
+    <rect class="card changed" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#ea580c"/>
+    <text class="step" x="29" y="40">4</text>
+    <text class="tag" x="70" y="39" fill="#c2410c">変更: REQUEST</text>
+    <text class="node-title" x="26" y="82">SubagentRequest</text>
+    <text class="code" x="26" y="112">runtime_overrides</text>
+    <text class="node-text" x="26" y="142">effort + provenance = Tool</text>
+    <text class="node-text" x="26" y="171">同じ request を全 spawn 形態へ</text>
+    <text class="anchor" x="26" y="196">SubagentRequest::runtime_overrides</text>
+  </g>
+
+  <path class="arrow" d="M 1315 395 L 1315 485"/>
+
+  <!-- bottom row, right to left -->
+  <g transform="translate(1150 500)">
+    <rect class="card existing" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#64748b"/>
+    <text class="step" x="29" y="40">5</text>
+    <text class="tag" x="70" y="39" fill="#475569">STAGE 1: PURE PREFLIGHT</text>
+    <text class="node-title" x="26" y="82">preflight_spawn</text>
+    <text class="node-text" x="26" y="115">argument / resume / cwd を検証</text>
+    <text class="node-text" x="26" y="142">available_models で key → slug 解決</text>
+    <text class="node-text" x="26" y="171">Tool strict / Harness best-effort</text>
+    <text class="anchor" x="26" y="196">handle_subagent_request preflight</text>
+  </g>
+
+  <path class="arrow" d="M 1142 605 L 1120 605"/>
+
+  <g transform="translate(785 500)">
+    <rect class="card changed" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#ea580c"/>
+    <text class="step" x="29" y="40">6</text>
+    <text class="tag" x="70" y="39" fill="#c2410c">STAGE 2: MATERIALIZE</text>
+    <text class="code" x="26" y="82" style="font-size: 18px; font-weight: 750;">materialize spawn</text>
+    <text class="node-text" x="26" y="115">worktree / resume rehydrate</text>
+    <text class="node-text" x="26" y="142">context + persistence を準備</text>
+    <text class="node-text" x="26" y="171">SpawnWorktreeGuard が cleanup 所有</text>
+    <text class="anchor" x="26" y="196">SpawnWorktreeGuard::cleanup</text>
+  </g>
+
+  <path class="arrow" d="M 777 605 L 755 605"/>
+
+  <g transform="translate(420 500)">
+    <rect class="card existing" width="330" height="210"/>
+    <circle cx="34" cy="34" r="22" fill="#64748b"/>
+    <text class="step" x="29" y="40">7</text>
+    <text class="tag" x="70" y="39" fill="#475569">STAGE 3: RUN / PROMOTE</text>
+    <text class="node-title" x="26" y="82">spawn_session_on_thread</text>
+    <text class="node-text" x="26" y="115">child execution を開始</text>
+    <text class="node-text" x="26" y="142">active tracker が worktree を所有</text>
+    <text class="node-text" x="26" y="171">失敗時は SubagentFinished を維持</text>
+    <text class="anchor" x="26" y="196">spawn_session_on_thread / coordinator.insert</text>
+  </g>
+
+  <rect x="55" y="790" width="1425" height="105" rx="18" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text class="node-title" x="82" y="828">同じ request が通る spawn 形態</text>
+  <g class="code">
+    <rect x="82" y="848" width="220" height="32" rx="16" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="116" y="870">foreground</text>
+    <rect x="322" y="848" width="220" height="32" rx="16" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="365" y="870">background</text>
+    <rect x="562" y="848" width="220" height="32" rx="16" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="605" y="870">worktree</text>
+    <rect x="802" y="848" width="220" height="32" rx="16" fill="#ffffff" stroke="#bfdbfe"/>
+    <text x="858" y="870">resume</text>
+  </g>
+  <text class="node-text" x="1060" y="858">観測可能な既存の順序・副作用は維持</text>
+  <text class="node-text" x="1060" y="882">effort override だけを直交して伝播</text>
+
+  <text class="anchor" x="55" y="950">Symbols: TaskToolInput · TaskTool::run · SubagentRequest · SpawnWorktreeGuard · spawn_session_on_thread</text>
+  <text class="anchor" x="55" y="976">Scope: approved-3 / PR #12 / Refs Issue #11</text>
+</svg>
