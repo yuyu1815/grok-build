@@ -2749,7 +2749,7 @@ impl PromptWidget {
             Span::styled(action, chord),
             Span::styled(" or ", dim),
             Span::styled("double-click", chord),
-            Span::styled(" to expand", dim),
+            Span::styled(crate::i18n::text(" to expand"), dim),
         ])
     }
 

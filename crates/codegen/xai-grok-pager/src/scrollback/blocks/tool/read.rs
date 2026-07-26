@@ -6,6 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 
 use super::{LineRange, TOOL_HEADER_RANGE};
+use crate::i18n::{format as tr_format, text};
 use crate::prompt_images::ScrollbackImageRef;
 use crate::render::wrapping::word_wrap_lines_with_joiners;
 use crate::scrollback::block::BlockContent;
@@ -175,19 +176,22 @@ impl ReadToolCallBlock {
         // SKILL.md reads render as "Skill {skill_name}".
         if let Some(skill) = self.skill_name() {
             return Line::from(vec![
-                Span::styled("Skill ", bold_style),
+                Span::styled(text("Skill").into_owned() + " ", bold_style),
                 Span::styled(skill.to_owned(), path_style),
             ]);
         }
 
-        let prefix = "Read ";
+        let prefix = text("Read").into_owned() + " ";
         let range_suffix = self
             .line_range
             .map(|r| {
                 if let Some(total) = self.total_lines
                     && total > r.end.saturating_sub(r.start) + 1
                 {
-                    format!(" ({} of {total})", r)
+                    tr_format(
+                        " ({range} of {total})",
+                        &[("range", r.to_string()), ("total", total.to_string())],
+                    )
                 } else {
                     format!(" ({})", r)
                 }
@@ -195,11 +199,13 @@ impl ReadToolCallBlock {
             .unwrap_or_default();
         // Extra suffix for errors or empty content
         let extra_suffix = if self.content.as_ref().is_some_and(|c| c.is_empty()) {
-            " (empty)".to_string()
+            text(" (empty)").into_owned()
         } else if let Some(media) = &self.media_kind {
             match media {
-                ReadMediaKind::Image => " (image)".to_string(),
-                ReadMediaKind::Pdf { pages } => format!(" ({pages} pages)"),
+                ReadMediaKind::Image => text(" (image)").into_owned(),
+                ReadMediaKind::Pdf { pages } => {
+                    tr_format(" ({pages} pages)", &[("pages", pages.to_string())])
+                }
             }
         } else {
             String::new()

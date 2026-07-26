@@ -11,6 +11,7 @@ use ratatui::layout::{Alignment, Constraint, Flex, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Widget, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::app_view::{AuthMode, AuthState, SessionPickerEntry, TrustState};
 use crate::startup::StartupWarning;
@@ -48,7 +49,10 @@ fn quit_hint_spans(theme: &Theme) -> Vec<Span<'static>> {
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  quit", Style::default().fg(theme.gray)),
+        Span::styled(
+            format!("  {}", crate::tr!("quit")),
+            Style::default().fg(theme.gray),
+        ),
     ]
 }
 
@@ -419,14 +423,14 @@ pub(super) fn render_version_badge(
         } = &mode
     {
         spans.push(Span::styled(
-            format!("Tier: {tier}"),
+            crate::tr!("Tier: {tier}", tier),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep.clone());
     }
     if show_api_key && is_api_key_auth {
         spans.push(Span::styled(
-            "Logged in with API key",
+            crate::tr!("Logged in with API key"),
             Style::default().fg(theme.gray),
         ));
         spans.push(sep);
@@ -541,7 +545,7 @@ fn render_prompt_and_version(
             .add_modifier(Modifier::BOLD);
         let action_style = Style::default().fg(theme.gray);
         let key_text = pending.shortcut.display();
-        let label = format!("press again to {}", pending.label);
+        let label = crate::tr!("press again to {label}", label = pending.label);
         let line = Line::from(vec![
             Span::styled(format!("  {key_text}"), key_style),
             Span::styled(":", action_style),
@@ -684,9 +688,10 @@ pub fn render_welcome(
 
     let mut result = match params.auth_state {
         AuthState::Pending { error } => {
-            let label = params.login_label.unwrap_or("grok.com");
-            let login_text = format!("Login with {}", label);
-            let menu = [("l", login_text.as_str()), ("q", "Quit")];
+            let provider = params.login_label.unwrap_or("grok.com");
+            let login_text = crate::tr!("Login with {provider}", provider);
+            let quit_text = crate::tr!("Quit");
+            let menu = [("l", login_text.as_str()), ("q", quit_text.as_ref())];
             let msg = error.as_deref().map(|e| (e, theme.accent_error));
             let info = PromptInfo {
                 model_name: params.model_name,
@@ -755,14 +760,14 @@ pub fn render_welcome(
             }
         }
         AuthState::Done if params.is_zdr_blocked => {
-            let menu = [("l", "Switch account"), ("q", "Quit")];
+            let switch_account = crate::tr!("Switch account");
+            let quit_text = crate::tr!("Quit");
+            let unavailable = crate::tr!("Grok Build is not yet available for this account.");
+            let menu = [("l", switch_account.as_ref()), ("q", quit_text.as_ref())];
             let (menu_rects, post_flush_escapes) = render_welcome_blocked(
                 content_area,
                 buf,
-                Some((
-                    "Grok Build is not yet available for this account.",
-                    theme.gray_bright,
-                )),
+                Some((unavailable.as_ref(), theme.gray_bright)),
                 &menu,
                 params.selected,
                 None,
@@ -1541,7 +1546,7 @@ fn render_changelog_section(
             .fg(theme.gray_bright)
             .add_modifier(Modifier::DIM),
     );
-    let title = "Changelog";
+    let title = crate::tr!("Changelog");
     buf.set_span(
         centered.x,
         centered.y,
@@ -1703,10 +1708,20 @@ fn render_welcome_done(
     // frame so the menu doesn't shift while the CDN fetch completes.
     let show_changelog_action = p.has_access && !show_picker;
 
+    let logout_text = crate::tr!("Logout");
+    let quit_text = crate::tr!("Quit");
+    let import_text = crate::tr!("Import Claude settings");
+    let new_worktree_text = crate::tr!("New worktree");
+    let resume_session_text = crate::tr!("Resume session");
+    let changelog_text = crate::tr!("Changelog");
     let gate_menu;
     let owned_menu;
     let menu_items: &[(&str, &str)] = if !p.has_access {
-        gate_menu = [(key_g, cta), (key_l, "Logout"), (key_q, "Quit")];
+        gate_menu = [
+            (key_g, cta),
+            (key_l, logout_text.as_ref()),
+            (key_q, quit_text.as_ref()),
+        ];
         &gate_menu
     } else {
         let (key_w, key_s, key_q, key_i_with_x) = (
@@ -1724,15 +1739,15 @@ fn render_welcome_done(
             // 3 cells of this row as dismiss instead of open. Keyboard:
             // ctrl-shift-i. The key string is right-aligned by render_menu,
             // so [x] sits at the very end of the row.
-            items.push((key_i_with_x, "Import Claude settings"));
+            items.push((key_i_with_x, import_text.as_ref()));
         }
-        items.push((key_w, "New worktree"));
-        items.push((key_s, "Resume session"));
+        items.push((key_w, new_worktree_text.as_ref()));
+        items.push((key_s, resume_session_text.as_ref()));
         // "Changelog" above Quit; no shortcut — opened by click (row or block).
         if show_changelog_action {
-            items.push(("", "Changelog"));
+            items.push(("", changelog_text.as_ref()));
         }
-        items.push((key_q, "Quit"));
+        items.push((key_q, quit_text.as_ref()));
         owned_menu = items;
         owned_menu.as_slice()
     };
@@ -1900,11 +1915,13 @@ fn render_welcome_done(
         .areas(layout.prompt);
         // Show the user's current tier + clickable refresh button above the gate message.
         let tier_label = p.subscription_tier.unwrap_or("Free");
-        let tier_prefix = format!("Tier: {tier_label}  ");
-        let refresh_text = "[Refresh]";
-        let total_width = tier_prefix.len() + refresh_text.len();
+        let tier_prefix = crate::tr!("Tier: {tier}", tier = tier_label);
+        let tier_prefix_width = tier_prefix.width();
+        let refresh_text = crate::tr!("[Refresh]");
+        let refresh_width = refresh_text.width();
+        let total_width = tier_prefix_width + 2 + refresh_width;
         let tier_line = Line::from(vec![
-            Span::styled("Tier: ", Style::default().fg(theme.gray)),
+            Span::styled(crate::tr!("Tier: "), Style::default().fg(theme.gray)),
             Span::styled(
                 tier_label,
                 Style::default()
@@ -1929,9 +1946,9 @@ fn render_welcome_done(
         // Compute the click rect for "[Refresh]" within the centered line.
         let line_start_x = tier_area.x + tier_area.width.saturating_sub(total_width as u16) / 2;
         refresh_hit_rect = Some(Rect {
-            x: line_start_x + tier_prefix.len() as u16,
+            x: line_start_x + tier_prefix_width as u16 + 2,
             y: tier_area.y,
-            width: refresh_text.len() as u16,
+            width: refresh_width as u16,
             height: 1,
         });
 
@@ -2329,7 +2346,7 @@ pub(crate) fn render_session_picker(
     use crate::views::shortcuts_bar::HintItem;
     let mut default_shortcuts: Vec<HintItem> = vec![
         HintItem::new(crate::key!(Esc), "back"),
-        HintItem::new(crate::key!(Enter), "select"),
+        HintItem::new(crate::key!(Enter), crate::i18n::static_text("select")),
     ];
     if !ctx.chat_mode {
         default_shortcuts.push(HintItem {

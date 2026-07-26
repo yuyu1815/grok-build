@@ -28,6 +28,7 @@ mod dispatch;
 mod display_refresh_startup;
 mod effects;
 mod event_loop;
+pub use event_loop::load_initial_ui_config;
 mod foreign_sessions;
 mod inline_edit;
 #[cfg(all(test, unix))]

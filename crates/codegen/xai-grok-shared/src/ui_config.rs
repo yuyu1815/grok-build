@@ -19,6 +19,11 @@ pub struct UiConfig {
     /// Compact mode. Read by pager, declared here for `serde_ignored`.
     #[serde(default)]
     pub compact_mode: bool,
+    /// User-interface language (`en-US` or `ja-JP`). Display-only; protocol,
+    /// command, config, persistence, telemetry, and model identifiers remain canonical.
+    /// Read once by the pager at process startup, so changes apply on next launch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// Simple mode. Read by pager, declared here for `serde_ignored`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simple_mode: Option<bool>,
@@ -234,6 +239,7 @@ impl Default for UiConfig {
             yolo: false,
             ui_theme: None,
             compact_mode: false,
+            language: None,
             simple_mode: None,
             permission_mode: None,
             approval_mode: None,

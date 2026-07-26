@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use ratatui::text::{Line, Span};
 
+use crate::i18n::text;
 use crate::scrollback::types::{BlockLine, DisplayMode};
 use crate::theme::Theme;
 
@@ -90,7 +91,10 @@ fn hooks_count_spans(success: usize, failed: usize) -> Option<Vec<Span<'static>>
         return None;
     }
     let theme = Theme::current();
-    let mut spans = vec![Span::styled("  [hooks: ", theme.muted())];
+    let mut spans = vec![Span::styled(
+        format!("  [{}: ", text("hooks")),
+        theme.muted(),
+    )];
     if success > 0 {
         spans.push(Span::styled(
             format!("{}", success),
@@ -226,7 +230,7 @@ fn render_hooks_expanded_inner(runs: &[HookRunEntry]) -> Vec<BlockLine> {
                         Span::styled(format!("{}  ", INDENT), theme.muted()),
                         Span::styled("- ", theme.muted()),
                         Span::styled(run.name.clone(), theme.muted()),
-                        Span::styled(" skipped", theme.muted()),
+                        Span::styled(format!(" {}", text("skipped")), theme.muted()),
                     ])
                     .into(),
                 );

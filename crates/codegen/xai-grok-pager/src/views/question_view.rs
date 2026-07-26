@@ -1807,7 +1807,7 @@ fn render_truncation_indicator(buf: &mut Buffer, x: u16, y: u16, width: u16, the
             "Ctrl-F",
             Style::default().fg(theme.accent_user).bg(theme.bg_light),
         ),
-        Span::styled(" to expand", style),
+        Span::styled(crate::i18n::text(" to expand"), style),
     ]);
     buf.set_line(x, y, &indicator, width);
 }

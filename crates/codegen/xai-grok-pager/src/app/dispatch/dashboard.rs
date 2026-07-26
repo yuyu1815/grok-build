@@ -107,21 +107,25 @@ pub(super) fn dispatch_open_dashboard(app: &mut AppView) -> Vec<Effect> {
     use crate::views::dashboard::dashboard_enabled;
 
     if !dashboard_enabled() {
-        app.show_toast("Agent dashboard is disabled in this configuration");
+        app.show_toast(
+            crate::i18n::text("Agent dashboard is disabled in this configuration").as_ref(),
+        );
         return vec![];
     }
     // Gate behind auth. Until login completes, the
     // backend rejects new sessions; activating the dashboard view
     // visually dismisses the auth UI. Toast and stay put.
     if !matches!(app.auth_state, crate::app::app_view::AuthState::Done) {
-        app.show_toast("Sign in to open the dashboard");
+        app.show_toast(crate::i18n::text("Sign in to open the dashboard").as_ref());
         return vec![];
     }
     // Same rationale for folder trust: opening the dashboard would visually
     // dismiss the trust question with the folder still unanswered. Toast and
     // stay put (mirrors the auth gate above) so the question is resolved first.
     if matches!(app.trust_state, TrustState::Pending { .. }) {
-        app.show_toast("Answer the folder-trust question to open the dashboard");
+        app.show_toast(
+            crate::i18n::text("Answer the folder-trust question to open the dashboard").as_ref(),
+        );
         return vec![];
     }
     // Edge case 24: idempotent toggle — opening from the dashboard view
@@ -272,7 +276,7 @@ pub(super) fn dispatch_dashboard_attach(
         DashboardRowId::TopLevel(agent_id) => {
             if !app.agents.contains_key(&agent_id) {
                 if let Some(d) = app.dashboard.as_mut() {
-                    d.set_error_toast("Session no longer exists");
+                    d.set_error_toast(crate::i18n::text("Session no longer exists").as_ref());
                 }
                 return vec![];
             }
@@ -309,7 +313,7 @@ pub(super) fn dispatch_dashboard_attach(
                 .is_some_and(|a| a.subagent_sessions.contains_key(&child_session_id));
             if !alive {
                 if let Some(d) = app.dashboard.as_mut() {
-                    d.set_error_toast("Subagent no longer running");
+                    d.set_error_toast(crate::i18n::text("Subagent no longer running").as_ref());
                 }
                 return vec![];
             }
@@ -496,7 +500,10 @@ pub(super) fn dispatch_dashboard_overlay_stop(app: &mut AppView) -> Vec<Effect> 
         // agent disappears externally (`app_view.rs`, AgentDashboard arm).
         // Don't clobber a refusal toast planted by the close path above.
         if d.error_toast.is_none() {
-            d.error_toast = Some(format!("{} Session closed", crate::glyphs::check_mark()));
+            d.error_toast = Some(crate::i18n::format(
+                "{mark} Session closed",
+                &[("mark", crate::glyphs::check_mark().to_string())],
+            ));
         }
     }
     effects
@@ -516,7 +523,9 @@ pub(super) fn dispatch_dashboard_toggle_worktree(app: &mut AppView) -> Vec<Effec
             d.dispatch_worktree = !d.dispatch_worktree;
         } else {
             d.dispatch_worktree = false;
-            d.set_error_toast("Not a git repository — worktrees need one");
+            d.set_error_toast(
+                crate::i18n::text("Not a git repository — worktrees need one").as_ref(),
+            );
         }
     }
     vec![]
@@ -539,7 +548,7 @@ pub(super) fn dispatch_dashboard_toggle_auto_approve(app: &mut AppView) -> Vec<E
     };
     let Some(selected) = d.selected.as_ref() else {
         if let Some(d) = app.dashboard.as_mut() {
-            d.set_error_toast("Select a session first");
+            d.set_error_toast(crate::i18n::text("Select a session first").as_ref());
         }
         return vec![];
     };
@@ -550,7 +559,7 @@ pub(super) fn dispatch_dashboard_toggle_auto_approve(app: &mut AppView) -> Vec<E
     };
     if !app.agents.contains_key(&agent_id) {
         if let Some(d) = app.dashboard.as_mut() {
-            d.set_error_toast("Session no longer exists");
+            d.set_error_toast(crate::i18n::text("Session no longer exists").as_ref());
         }
         return vec![];
     }
@@ -735,7 +744,9 @@ pub(super) fn dispatch_dashboard_open_location_picker(app: &mut AppView) -> Vec<
         // Gate on the dashboard being the *foreground* view (not merely
         // `app.dashboard.is_some()`, which stays true for the rest of the
         // session once the dashboard has been opened even once).
-        app.show_toast("Open the dashboard (/dashboard) to change location");
+        app.show_toast(
+            crate::i18n::text("Open the dashboard (/dashboard) to change location").as_ref(),
+        );
         return vec![];
     }
     // Idempotent — re-triggering while open keeps the current query.
@@ -766,9 +777,9 @@ pub(super) fn dispatch_dashboard_open_location_picker(app: &mut AppView) -> Vec<
     let mut candidates: Vec<LocationCandidate> = Vec::new();
     candidates.push(LocationCandidate {
         label: location_picker_label(&cwd),
-        detail: format!(
-            "{}  (current)",
-            crate::project_picker::sources::display_path(&cwd)
+        detail: crate::i18n::format(
+            "{path}  (current)",
+            &[("path", crate::project_picker::sources::display_path(&cwd))],
         ),
         worktree: worktree_label(&cwd),
         path: cwd.clone(),
@@ -811,7 +822,9 @@ pub(super) fn dispatch_dashboard_change_location(app: &mut AppView, input: Strin
     // overlay) would otherwise silently change the process cwd, since
     // `app.dashboard` stays `Some` for the rest of the session once opened.
     if !matches!(app.active_view, ActiveView::AgentDashboard) {
-        app.show_toast("Open the dashboard (/dashboard) to change location");
+        app.show_toast(
+            crate::i18n::text("Open the dashboard (/dashboard) to change location").as_ref(),
+        );
         return vec![];
     }
     let path = match resolve_location_input(&input, &app.cwd).filter(|p| p.is_dir()) {
@@ -822,11 +835,17 @@ pub(super) fn dispatch_dashboard_change_location(app: &mut AppView, input: Strin
                 .as_mut()
                 .and_then(|d| d.location_picker.as_mut())
             {
-                lp.error = Some(format!("Not a directory: {}", input.trim()));
+                lp.error = Some(crate::i18n::format(
+                    "Not a directory: {path}",
+                    &[("path", input.trim().to_string())],
+                ));
             } else if let Some(d) = app.dashboard.as_mut() {
                 // `/cd <bad path>` typed into the dispatch box (no picker
                 // open) — surface the error as a dashboard toast.
-                d.set_error_toast(&format!("Not a directory: {}", input.trim()));
+                d.set_error_toast(&crate::i18n::format(
+                    "Not a directory: {path}",
+                    &[("path", input.trim().to_string())],
+                ));
             }
             return vec![];
         }
@@ -915,7 +934,9 @@ pub(super) fn dispatch_dashboard_confirm_worktree(
             if let Some(p) = prompt {
                 d.dispatch.restore(p);
             }
-            d.set_error_toast("Not a git repository — can't create a worktree here");
+            d.set_error_toast(
+                crate::i18n::text("Not a git repository — can't create a worktree here").as_ref(),
+            );
         }
         return vec![];
     }
@@ -1065,7 +1086,7 @@ pub(super) fn dispatch_dashboard_dispatch(
     // slash-fallback callers.
     if trimmed.is_empty() {
         if let Some(d) = app.dashboard.as_mut() {
-            d.set_error_toast("Type a prompt to dispatch a session");
+            d.set_error_toast(crate::i18n::text("Type a prompt to dispatch a session").as_ref());
         }
         return vec![];
     }
@@ -1079,9 +1100,12 @@ pub(super) fn dispatch_dashboard_dispatch(
     if text.len() > MAX_DISPATCH_BYTES {
         let chars = text.chars().count();
         if let Some(d) = app.dashboard.as_mut() {
-            d.set_error_toast(&format!(
-                "Prompt too long ({chars} chars / {} bytes; max ~64 KiB)",
-                text.len()
+            d.set_error_toast(&crate::i18n::format(
+                "Prompt too long ({chars} chars / {bytes} bytes; max ~64 KiB)",
+                &[
+                    ("chars", chars.to_string()),
+                    ("bytes", text.len().to_string()),
+                ],
             ));
         }
         return vec![];
@@ -1280,9 +1304,12 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             let token = invocation.token.to_string();
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                d.set_error_toast(&format!(
-                    "/{token} requires SuperGrok — upgrade at {}",
-                    super::billing::UPSELL_URL_UPGRADE
+                d.set_error_toast(&crate::i18n::format(
+                    "/{command} requires SuperGrok — upgrade at {url}",
+                    &[
+                        ("command", token),
+                        ("url", super::billing::UPSELL_URL_UPGRADE.to_string()),
+                    ],
                 ));
             }
             return vec![];
@@ -1305,7 +1332,10 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             let name = command.name();
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                d.set_error_toast(&format!("/{name} only works in a session"));
+                d.set_error_toast(&crate::i18n::format(
+                    "/{command} only works in a session",
+                    &[("command", name.to_string())],
+                ));
             }
             return vec![];
         }
@@ -1440,7 +1470,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
         CommandResult::Action(Action::ShowPlan) => {
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                d.set_error_toast("No plan to show on the dashboard");
+                d.set_error_toast(crate::i18n::text("No plan to show on the dashboard").as_ref());
             }
             vec![]
         }
@@ -1579,7 +1609,7 @@ pub(super) fn dispatch_dashboard_peek_cycle_mode(app: &mut AppView) -> Vec<Effec
         DashboardRowId::TopLevel(id) => id,
         DashboardRowId::Subagent { .. } => {
             if let Some(d) = app.dashboard.as_mut() {
-                d.set_error_toast("Can't change a subagent's mode");
+                d.set_error_toast(crate::i18n::text("Can't change a subagent's mode").as_ref());
             }
             return vec![];
         }
@@ -1588,7 +1618,7 @@ pub(super) fn dispatch_dashboard_peek_cycle_mode(app: &mut AppView) -> Vec<Effec
     if !app.agents.contains_key(&agent_id) {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Session no longer exists");
+            d.set_error_toast(crate::i18n::text("Session no longer exists").as_ref());
         }
         return vec![];
     }
@@ -1632,7 +1662,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
     // peeks driven by their parent turn.
     let DashboardRowId::TopLevel(agent_id) = row else {
         if let Some(d) = app.dashboard.as_mut() {
-            d.set_error_toast("Can't reply to a subagent");
+            d.set_error_toast(crate::i18n::text("Can't reply to a subagent").as_ref());
         }
         return vec![];
     };
@@ -1640,7 +1670,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
     if !app.agents.contains_key(&agent_id) {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Session no longer exists");
+            d.set_error_toast(crate::i18n::text("Session no longer exists").as_ref());
         }
         return vec![];
     }
@@ -1665,7 +1695,7 @@ pub(super) fn dispatch_dashboard_peek_reply(
     let Some(agent) = app.agents.get_mut(&agent_id) else {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Session no longer exists");
+            d.set_error_toast(crate::i18n::text("Session no longer exists").as_ref());
         }
         return vec![];
     };
@@ -1720,7 +1750,7 @@ pub(super) fn dispatch_dashboard_begin_rename(app: &mut AppView) {
     // Only top-level rows are renameable (subagents are tool-spawned
     // and have no user-visible name to rename).
     if sel.is_subagent() {
-        d.set_error_toast("Subagent rows can't be renamed");
+        d.set_error_toast(crate::i18n::text("Subagent rows can't be renamed").as_ref());
         return;
     }
     // The draft starts EMPTY (not prefilled with the current title):
@@ -2115,7 +2145,7 @@ pub(super) fn dispatch_dashboard_permission_select(
     let Some(agent) = app.agents.get_mut(&target_id) else {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Row no longer exists");
+            d.set_error_toast(crate::i18n::text("Row no longer exists").as_ref());
         }
         return vec![];
     };
@@ -2127,7 +2157,7 @@ pub(super) fn dispatch_dashboard_permission_select(
     if !front_matches {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Permission has changed — re-open peek");
+            d.set_error_toast(crate::i18n::text("Permission has changed — re-open peek").as_ref());
         }
         return vec![];
     }
@@ -2209,7 +2239,7 @@ pub(super) fn dispatch_dashboard_permission_followup(
     let Some(agent) = app.agents.get_mut(&target_id) else {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Row no longer exists");
+            d.set_error_toast(crate::i18n::text("Row no longer exists").as_ref());
         }
         return vec![];
     };
@@ -2221,7 +2251,7 @@ pub(super) fn dispatch_dashboard_permission_followup(
     if !front_matches {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Permission has changed — re-open peek");
+            d.set_error_toast(crate::i18n::text("Permission has changed — re-open peek").as_ref());
         }
         return vec![];
     }
@@ -2278,7 +2308,7 @@ pub(super) fn dispatch_dashboard_question_answer(
     let Some(agent) = app.agents.get_mut(&target_id) else {
         if let Some(d) = app.dashboard.as_mut() {
             d.set_peek(None);
-            d.set_error_toast("Row no longer exists");
+            d.set_error_toast(crate::i18n::text("Row no longer exists").as_ref());
         }
         return vec![];
     };

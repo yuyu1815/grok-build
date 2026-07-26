@@ -102,7 +102,12 @@ impl AgentView {
                     AgentPane::Catalog => self.catalog.overlay.focused = false,
                     _ => {}
                 }
-                self.show_toast("Editing a queued prompt: press Enter to save, Esc to discard");
+                self.show_toast(
+                    crate::i18n::text(
+                        "Editing a queued prompt: press Enter to save, Esc to discard",
+                    )
+                    .as_ref(),
+                );
                 return Some(false); // blocked, no modal armed
             }
             // Clean edit — silently exit editing mode.
@@ -403,11 +408,14 @@ impl AgentView {
         // Non-prompt rows stay queued (see `queue_row_prompt_like`): save the edit.
         let row_prompt_like = self.queue_row_prompt_like(id);
         if row_prompt_like == Some(false) {
-            self.show_toast("Can't send this mid-turn — it runs when the current turn ends");
+            self.show_toast(
+                crate::i18n::text("Can't send this mid-turn — it runs when the current turn ends")
+                    .as_ref(),
+            );
             return self.save_edited_queued_row(id, server_id, true);
         }
         if row_prompt_like.is_none() && kind != crate::app::agent::QueueEntryKind::Prompt {
-            self.show_toast("Queued prompt is no longer in the queue");
+            self.show_toast(crate::i18n::text("Queued prompt is no longer in the queue").as_ref());
             return self.save_edited_queued_row(id, server_id, true);
         }
         match server_id {
@@ -417,7 +425,12 @@ impl AgentView {
                 // limitation, dropped with an accurate toast.
                 if !self.prompt.images.is_empty() {
                     self.prompt.images.clear();
-                    self.show_toast("Images can't be attached when editing a shared queued prompt");
+                    self.show_toast(
+                        crate::i18n::text(
+                            "Images can't be attached when editing a shared queued prompt",
+                        )
+                        .as_ref(),
+                    );
                 }
                 // new_text carries the edit — without it the agent would
                 // interject the original server-side text.
@@ -485,7 +498,7 @@ impl AgentView {
         // Restore the pre-edit draft; keeping the orphaned edit text would look
         // "duplicated" (the row is now the running turn). A concurrent-removal edit is lost.
         self.exit_editing_mode();
-        self.show_toast("Queued prompt is no longer in the queue");
+        self.show_toast(crate::i18n::text("Queued prompt is no longer in the queue").as_ref());
     }
 
     /// Exit editing mode: restore stashed text, clear mode, focus queue pane.

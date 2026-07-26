@@ -25,8 +25,16 @@ use agent_client_protocol as acp;
 
 /// Format a "✓ Label: value" success toast.
 pub(in crate::app::dispatch) fn save_success_toast(label: &str, on: bool) -> String {
-    let value = if on { "on" } else { "off" };
-    format!("\u{2713} {label}: {value}")
+    crate::i18n::format(
+        "✓ {label}: {value}",
+        &[
+            ("label", crate::i18n::text(label).into_owned()),
+            (
+                "value",
+                crate::i18n::text(if on { "on" } else { "off" }).into_owned(),
+            ),
+        ],
+    )
 }
 
 /// Refresh every open settings modal's `ui_snapshot` + `pager_snapshot`
@@ -367,7 +375,10 @@ pub(in crate::app::dispatch) fn dispatch_confirm_reset_setting(
                     "reset skipped — setting already at default",
                 );
                 with_active_agent(app, |agent| {
-                    agent.show_toast(&format!("{}: already at default", meta.label));
+                    agent.show_toast(&crate::i18n::format(
+                        "{label}: already at default",
+                        &[("label", crate::i18n::text(meta.label).into_owned())],
+                    ));
                 });
                 return vec![];
             }
@@ -445,18 +456,18 @@ pub(in crate::app::dispatch) fn dispatch_toggle_vim_mode(app: &mut AppView) -> V
     // with the `SetVimMode` settings path.
     set_vim_mode_inner(app, enabled);
     refresh_open_settings_modals(app);
-    let msg = if enabled {
+    let msg = crate::i18n::text(if enabled {
         "Vim mode: on"
     } else {
         "Vim mode: off"
-    };
+    });
     tracing::info!(vim_mode = enabled, "Vim mode toggled");
     match app.active_view {
         ActiveView::Agent(id) => {
             if let Some(agent) = app.agents.get_mut(&id) {
                 agent
                     .scrollback
-                    .push_block(RenderBlock::system(msg.to_string()));
+                    .push_block(RenderBlock::system(msg.clone().into_owned()));
             }
         }
         ActiveView::AgentDashboard => {
@@ -474,7 +485,7 @@ pub(in crate::app::dispatch) fn dispatch_toggle_vim_mode(app: &mut AppView) -> V
             }
         }
         _ => {
-            app.show_toast(msg);
+            app.show_toast(msg.as_ref());
         }
     }
     // Persist like the shared setter so `/vim-mode` survives a restart
@@ -552,7 +563,7 @@ pub(in crate::app::dispatch) fn dispatch_toggle_mouse_capture(app: &mut AppView)
         }
         with_active_agent(app, |agent| {
             toast_applied = true;
-            agent.show_toast("Mouse reporting on");
+            agent.show_toast(crate::i18n::text("Mouse reporting on").as_ref());
         });
     } else {
         for agent in app.agents.values_mut() {
@@ -1118,7 +1129,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
                 "rollback path has no arm for this setting key; in-memory cache is now \
                  inconsistent with the on-disk state (which already failed to write)"
             );
-            app.show_toast(ROLLBACK_NO_ARM_TOAST);
+            app.show_toast(crate::i18n::text(ROLLBACK_NO_ARM_TOAST).as_ref());
             return companion_effects;
         }
     }

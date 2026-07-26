@@ -3212,8 +3212,8 @@ fn render_footer(
     // exactly its two actions instead of the dispatch + nav matrix.
     if state.rename.is_some() {
         let hints = vec![
-            HintItem::new(key!(Enter), "save"),
-            HintItem::new(key!(Esc), "cancel"),
+            HintItem::new(key!(Enter), crate::i18n::static_text("save")),
+            HintItem::new(key!(Esc), crate::i18n::static_text("cancel")),
         ];
         ShortcutsBar::new(&hints)
             .compact(4, None)
@@ -3225,9 +3225,9 @@ fn render_footer(
     // live filter rather than the dispatch + nav matrix.
     if state.search_mode {
         let hints = vec![
-            HintItem::paired(key!(Up), key!(Down), "nav"),
+            HintItem::paired(key!(Up), key!(Down), crate::i18n::static_text("nav")),
             HintItem::new(key!(Enter), "apply"),
-            HintItem::new(key!(Esc), "cancel"),
+            HintItem::new(key!(Esc), crate::i18n::static_text("cancel")),
         ];
         ShortcutsBar::new(&hints)
             .compact(4, None)
@@ -3287,7 +3287,10 @@ fn render_footer(
                 HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
-                .compact(4, Some(HintItem::new(help, "shortcuts")))
+                .compact(
+                    4,
+                    Some(HintItem::new(help, crate::i18n::static_text("shortcuts"))),
+                )
                 .render(inner, buf);
             return;
         }
@@ -3305,12 +3308,15 @@ fn render_footer(
                 HintItem::new(key!(Tab), "input"),
             ];
             ShortcutsBar::new(&hints)
-                .compact(4, Some(HintItem::new(help, "shortcuts")))
+                .compact(
+                    4,
+                    Some(HintItem::new(help, crate::i18n::static_text("shortcuts"))),
+                )
                 .render(inner, buf);
             return;
         }
         let mut hints = vec![
-            HintItem::new(key!(Enter), "open"),
+            HintItem::new(key!(Enter), crate::i18n::static_text("open")),
             HintItem::new(key!(Tab), "input"),
         ];
         if stoppable {
@@ -3319,7 +3325,10 @@ fn render_footer(
             hints.push(HintItem::new(stop, stop_label).pinned());
         }
         ShortcutsBar::new(&hints)
-            .compact(4, Some(HintItem::new(help, "shortcuts")))
+            .compact(
+                4,
+                Some(HintItem::new(help, crate::i18n::static_text("shortcuts"))),
+            )
             .render(inner, buf);
         return;
     }
@@ -3350,7 +3359,7 @@ fn render_footer(
         key!('.', CONTROL),
     );
 
-    let help_hint = HintItem::new(help, "shortcuts");
+    let help_hint = HintItem::new(help, crate::i18n::static_text("shortcuts"));
 
     // Submit chord is `send_key` (Enter, or Shift/Alt+Enter in multiline).
     // Ctrl+S is send+open. Empty draft: create/open on the submit chord;
@@ -3410,7 +3419,7 @@ fn render_footer(
         } else if has_pending_question && peek_focused {
             // Question pending, focused, nothing selected — navigation + select.
             let mut h = vec![
-                HintItem::new(enter, "open"),
+                HintItem::new(enter, crate::i18n::static_text("open")),
                 select_hint,
                 tab_hint,
                 esc_hint,
@@ -3426,7 +3435,7 @@ fn render_footer(
             let mut h = vec![
                 HintItem::new(enter, "input"),
                 // Pin open: attach is the replacement for Enter in this mode.
-                HintItem::new(key!(Right), "open").pinned(),
+                HintItem::new(key!(Right), crate::i18n::static_text("open")).pinned(),
                 tab_hint,
                 esc_hint,
             ];
@@ -3443,7 +3452,7 @@ fn render_footer(
         } else if has_pending_question {
             // Non-vim unfocused (or other) with a pending question — open + select.
             let mut h = vec![
-                HintItem::new(enter, "open"),
+                HintItem::new(enter, crate::i18n::static_text("open")),
                 select_hint,
                 tab_hint,
                 esc_hint,
@@ -3454,7 +3463,7 @@ fn render_footer(
             h
         } else if peek_focused && !reply_empty {
             vec![
-                HintItem::new(send_key, "send"),
+                HintItem::new(send_key, crate::i18n::static_text("send")),
                 HintItem::new(send_open, "send+open"),
                 tab_hint,
                 HintItem::new(esc, "back").pinned(),
@@ -3463,7 +3472,11 @@ fn render_footer(
             // Focused empty: open is on the submit chord (send_key). Unfocused:
             // bare Enter still attaches.
             let open_key = if peek_focused { send_key } else { enter };
-            let mut h = vec![HintItem::new(open_key, "open"), tab_hint, esc_hint];
+            let mut h = vec![
+                HintItem::new(open_key, crate::i18n::static_text("open")),
+                tab_hint,
+                esc_hint,
+            ];
             if stoppable {
                 h.push(HintItem::new(stop, stop_label).pinned());
             }
@@ -3491,9 +3504,9 @@ fn render_footer(
             // on the dashboard), Ctrl+S sends + opens detail,
             // Shift+Tab cycles the dispatch mode.
             vec![
-                HintItem::new(send_key, "send"),
+                HintItem::new(send_key, crate::i18n::static_text("send")),
                 HintItem::new(send_open, "send+open"),
-                HintItem::new(key!(BackTab), "mode"),
+                HintItem::new(key!(BackTab), crate::i18n::static_text("mode")),
             ]
         }
     } else if state.selected_idle_overflow {
@@ -3511,9 +3524,9 @@ fn render_footer(
             ]
         } else {
             vec![
-                HintItem::new(send_key, "send"),
+                HintItem::new(send_key, crate::i18n::static_text("send")),
                 HintItem::new(send_open, "send+open"),
-                HintItem::new(key!(BackTab), "mode"),
+                HintItem::new(key!(BackTab), crate::i18n::static_text("mode")),
             ]
         }
     } else if button_focused {
@@ -3522,18 +3535,21 @@ fn render_footer(
             h.push(HintItem::new(send_key, "create"));
             h.push(HintItem::new(key!(Tab), "list"));
         } else {
-            h.push(HintItem::new(send_key, "send"));
+            h.push(HintItem::new(send_key, crate::i18n::static_text("send")));
             h.push(HintItem::new(send_open, "send+open"));
         }
-        h.push(HintItem::new(key!(BackTab), "mode"));
+        h.push(HintItem::new(
+            key!(BackTab),
+            crate::i18n::static_text("mode"),
+        ));
         h
     } else if row_selected {
         let mut h: Vec<HintItem> = vec![];
         if prompt_empty {
-            h.push(HintItem::new(send_key, "open"));
+            h.push(HintItem::new(send_key, crate::i18n::static_text("open")));
             h.push(HintItem::new(key!(Tab), "list"));
         } else {
-            h.push(HintItem::new(send_key, "send"));
+            h.push(HintItem::new(send_key, crate::i18n::static_text("send")));
             h.push(HintItem::new(send_open, "send+open"));
         }
         if stoppable {

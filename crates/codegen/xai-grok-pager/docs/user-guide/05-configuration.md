@@ -45,6 +45,7 @@ inference_idle_timeout_secs = 600
 stream_tool_calls = true
 
 [ui]
+language = "en-US"                    # display language: "en-US" or "ja-JP" (applies after restart)
 simple_mode = true                      # readline-style prompt editing (default); false = vim editing in the prompt
 vim_mode = false                       # vim-style scrollback navigation keys (default: false)
 max_thoughts_width = 120               # max column width for reasoning display
@@ -77,6 +78,38 @@ load_envrc = true                      # load .envrc environment variables
 [tools]
 respect_gitignore = false              # default: false; set true to make every tool skip gitignored files
 ```
+
+#### Display Language
+
+Set `[ui].language` to `"en-US"` or `"ja-JP"`. Grok resolves the active locale once at startup in this order:
+
+```text
+GROK_LANG > [ui].language > OS locale > en-US
+```
+
+Invalid or unsupported values are skipped so the next source can be used; if no source resolves to a supported locale, Grok falls back to `en-US`. Changes apply after restarting Grok. With no explicit setting, a Japanese OS therefore uses Japanese. To retain the previous always-English behavior, set either `GROK_LANG=en-US` or `[ui].language = "en-US"`.
+
+```toml
+[ui]
+language = "ja-JP"
+```
+
+`GROK_LANG` overrides the config file for that process. To force English:
+
+```powershell
+# PowerShell
+$env:GROK_LANG = "en-US"
+grok
+```
+
+```bash
+# Unix shells
+GROK_LANG=en-US grok
+```
+
+The active locale applies both to the UI and to the built-in guide extracted at startup under `~/.grok/docs/user-guide/`. The numbered Markdown files in that directory are managed by Grok and updated to the active-locale versions on each launch. The model may read this guide when answering questions about using the TUI, so the model-facing guide is locale-dependent as well.
+
+Machine-readable and canonical values are not translated. Command and option names, config keys and values, JSON and protocol fields, and model IDs remain canonical; in particular, changing the guide locale does not change model IDs or protocol values. Scripts that parse human-readable CLI output should set `GROK_LANG=en-US` (or another expected supported locale); prefer a machine-readable output format when one is available.
 
 #### Input Mode
 
@@ -558,7 +591,7 @@ trace_upload = false                                      # disable session/trac
 
 Set these only to point telemetry at your own infrastructure or to turn parts of it off. The built-in endpoint and credentials are managed by Grok; leave them unset to use the defaults.
 
-The same `[telemetry]` table also configures the **external OpenTelemetry stream** — an independent opt-in (it does not require the telemetry toggle above) that ships a curated, content-free usage schema to your *own* OTLP collector. Collector auth is supplied via `OTEL_EXPORTER_OTLP_HEADERS` and is never stored on disk. See [Monitoring & Usage](24-monitoring-usage.md) for the full schema, env vars, and privacy model.
+The same `[telemetry]` table also configures the **external OpenTelemetry stream** — an independent opt-in (it does not require the telemetry toggle above) that ships a curated, content-free usage schema to your *own* OTLP collector. Collector auth is supplied via `OTEL_EXPORTER_OTLP_HEADERS` and is never stored on disk. The external OpenTelemetry guide documents the full schema, environment variables, and privacy model when that guide is included in your documentation distribution.
 
 ```toml
 [telemetry]
@@ -748,6 +781,7 @@ Key environment variables. See the README for the complete list.
 
 | Variable | Description |
 |----------|-------------|
+| `GROK_LANG` | Display language (`en-US` or `ja-JP`); overrides `[ui].language` for the process |
 | `GROK_MEMORY` | Enable (`1`) or disable (`0`) cross-session memory |
 | `GROK_SUBAGENTS` | Enable (`1`) or disable (`0`) subagents |
 | `GROK_WEB_FETCH` | Enable (`1`) or disable (`0`) the web_fetch tool |

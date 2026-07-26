@@ -634,7 +634,10 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
             buf.set_line(
                 content_x,
                 y,
-                &Line::from(Span::styled("Rewind to which turn?", title_style)),
+                &Line::from(Span::styled(
+                    crate::i18n::text("Rewind to which turn?"),
+                    title_style,
+                )),
                 content_w,
             );
             y += 1;
@@ -707,7 +710,10 @@ pub fn render_rewind_overlay(buf: &mut Buffer, area: Rect, phase: &RewindPhase, 
             buf.set_line(
                 content_x,
                 y,
-                &Line::from(Span::styled("A turn is currently running.", title_style)),
+                &Line::from(Span::styled(
+                    crate::i18n::text("A turn is currently running."),
+                    title_style,
+                )),
                 content_w,
             );
             y += 1;
