@@ -54,6 +54,7 @@ jobs:
             echo "Environment secret PR_AGENT_MODEL is configured in PRbot."
           fi
 
+      # Required for arbitrary OpenAI-compatible models not listed in PR-Agent MAX_TOKENS.
       - name: Run PR-Agent
         uses: docker://pragent/pr-agent:0.40.0-github_action@sha256:09c05ab658712c0874ef3fdebf44fa1e104143af506378aefd5e7c422dde11c1
         env:
@@ -62,6 +63,9 @@ jobs:
           OPENAI.API_BASE: ${{ secrets.PR_AGENT_API_BASE }}
           CONFIG.MODEL: ${{ secrets.PR_AGENT_MODEL || 'openai/gpt-4o' }}
           CONFIG.FALLBACK_MODELS: '[]'
+          # custom_model_max_tokens / max_model_tokens (pr-agent v0.40.0 config)
+          CONFIG.CUSTOM_MODEL_MAX_TOKENS: "128000"
+          CONFIG.MAX_MODEL_TOKENS: "32000"
           CONFIG.RESPONSE_LANGUAGE: ja-JP
           CONFIG.RESTRICTED_MODE: 'true'
           CONFIG.REPO_CONTEXT_FILES: '[]'
