@@ -1087,9 +1087,12 @@ impl MvpAgent {
         origin_client: Option<crate::http::OriginClientInfo>,
     ) -> SamplingConfig {
         let preferred = self.cfg.borrow().grok_com_config.preferred_method;
+        let is_xai_model = model.info().provider == crate::provider::ProviderId::Xai;
         let session = match preferred {
             Some(crate::auth::PreferredAuthMethod::ApiKey) => None,
-            _ if self.is_session_based_auth() => self.auth_manager.current_or_expired(),
+            _ if is_xai_model && self.is_session_based_auth() => {
+                self.auth_manager.current_or_expired()
+            }
             _ => None,
         };
         let has_session_key = session.is_some();
@@ -1097,7 +1100,8 @@ impl MvpAgent {
             model,
             session.as_ref().map(|a| a.key.as_str()),
         );
-        if matches!(preferred, Some(crate ::auth::PreferredAuthMethod::Oidc))
+        if is_xai_model
+            && matches!(preferred, Some(crate ::auth::PreferredAuthMethod::Oidc))
             && !model.has_own_credentials()
             && credentials.auth_type == xai_chat_state::AuthType::ApiKey
         {
@@ -1110,7 +1114,9 @@ impl MvpAgent {
             session.as_ref().map(|a| a.key.as_str()),
         );
         if !has_session_key && credentials.auth_type == xai_chat_state::AuthType::ApiKey
-            && !model.has_own_credentials() && self.is_session_based_auth()
+            && !model.has_own_credentials()
+            && is_xai_model
+            && self.is_session_based_auth()
         {
             tracing::info!(
                 model = model.info().model.as_str(),
@@ -1123,7 +1129,7 @@ impl MvpAgent {
             );
             credentials.auth_type = xai_chat_state::AuthType::SessionToken;
         }
-        if !has_session_key && !model.has_own_credentials() {
+        if is_xai_model && !has_session_key && !model.has_own_credentials() {
             tracing::warn!(
                 model = model.info().model.as_str(), is_expired = self.auth_manager
                 .is_expired(), auth_type = ? credentials.auth_type,
@@ -1148,11 +1154,14 @@ impl MvpAgent {
             cfg.endpoints.deployment_key.as_deref(),
         );
         drop(cfg);
-        let user_id = self
-            .auth_manager
-            .current_or_expired()
-            .filter(|a| a.is_xai_auth())
-            .map(|a| a.user_id);
+        let user_id = if is_xai_model {
+            self.auth_manager
+                .current_or_expired()
+                .filter(|a| a.is_xai_auth())
+                .map(|a| a.user_id)
+        } else {
+            None
+        };
         let mut config = crate::agent::config::sampling_config_for_model(
             model,
             credentials,
