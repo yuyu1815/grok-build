@@ -565,6 +565,18 @@ pub fn parse_session_recap_available(meta: Option<&acp::Meta>) -> bool {
         .unwrap_or(false)
 }
 
+fn is_grok_provider_login_method(method: &acp::AuthMethod) -> bool {
+    let id = method.id().0.as_ref();
+    let external_provider = method
+        .meta()
+        .as_ref()
+        .and_then(|meta| meta.get("external_provider"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    external_provider
+        && (id.eq_ignore_ascii_case("grok.com") || method.name().eq_ignore_ascii_case("grok"))
+}
+
 /// Determine whether interactive login is needed based on the advertised auth methods.
 ///
 /// Matches TUI startup behavior: if the first method is `grok.com`, defer auth
@@ -673,6 +685,12 @@ async fn eager_auth_or_login_fallback(
     if auth_methods.is_empty() {
         // preferred_method pin unavailable — fail closed, no invented method.
         return (true, None, None, AuthStartMode::Pending, None);
+    }
+    if needs_login && is_grok_provider_login_method(&auth_methods[0]) {
+        // Grok shell startup is intentionally login-free. Keep the ACP
+        // connection usable so `/auth status`, `/models`, and `/login grok`
+        // remain available; the shell's chat gate stops sampling until login.
+        return (false, login_label, login_method_id, auth_start_mode, None);
     }
     if needs_login {
         return (
