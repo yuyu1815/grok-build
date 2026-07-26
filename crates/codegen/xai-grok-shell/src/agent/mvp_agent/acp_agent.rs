@@ -2002,7 +2002,9 @@ impl acp::Agent for MvpAgent {
             .session_handle_waiting_for_load(&arguments.session_id)
             .await
             .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?;
-        if self.models_manager.allowlist_excludes_all() {
+        let is_provider_status_command =
+            crate::session::slash_commands::is_provider_status_command(&arguments.prompt);
+        if self.models_manager.allowlist_excludes_all() && !is_provider_status_command {
             self.send_model_auto_switched(
                     &arguments.session_id,
                     &acp::ModelId::new(String::new()),
@@ -2018,7 +2020,9 @@ impl acp::Agent for MvpAgent {
             .borrow()
             .get(arguments.session_id.0.as_ref())
             .cloned();
-        if let Some(unavailable_model) = latched_model {
+        if !is_provider_status_command
+            && let Some(unavailable_model) = latched_model
+        {
             let models = self.models_manager.models();
             let available = self.models_manager.available();
             let restore_model_id = selectable_catalog_key_for_persisted(

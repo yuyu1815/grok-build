@@ -15,10 +15,18 @@ impl SlashCommand for LoginCommand {
     }
 
     fn usage(&self) -> &str {
-        "/login"
+        "/login grok | /login provider grok"
     }
 
-    fn run(&self, _ctx: &mut CommandExecCtx, _args: &str) -> CommandResult {
-        CommandResult::Action(Action::Login)
+    fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
+        let accepted = matches!(
+            args.split_whitespace().collect::<Vec<_>>().as_slice(),
+            [] | ["grok"] | ["provider", "grok"]
+        );
+        if accepted {
+            CommandResult::Action(Action::Login)
+        } else {
+            CommandResult::Error("Usage: /login, /login grok, or /login provider grok".to_string())
+        }
     }
 }
