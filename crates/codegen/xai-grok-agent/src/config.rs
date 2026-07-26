@@ -15,6 +15,68 @@ use xai_grok_tools::implementations::opencode;
 use xai_grok_tools::implementations::search_tool;
 use xai_grok_tools::implementations::use_tool;
 use xai_grok_tools::registry::types::{ToolConfig, ToolServerConfig};
+/// Agent-definition effort keeps the historical `max` spelling for role/persona
+/// configuration. Task input uses [`xai_tool_types::ReasoningEffort`] instead,
+/// whose serde representation intentionally exposes only six values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    pub const VALID_VALUES: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+}
+
+impl std::fmt::Display for Effort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Effort {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::XHigh),
+            "max" => Ok(Self::Max),
+            _ => Err(format!(
+                "invalid agent effort: {value:?} (expected one of: {})",
+                Self::VALID_VALUES.join(", ")
+            )),
+        }
+    }
+}
+
+impl From<Effort> for xai_tool_types::ReasoningEffort {
+    fn from(effort: Effort) -> Self {
+        match effort {
+            Effort::Low => Self::Low,
+            Effort::Medium => Self::Medium,
+            Effort::High => Self::High,
+            Effort::XHigh | Effort::Max => Self::Xhigh,
+        }
+    }
+}
 /// Process-global registry of externally-provided toolset presets.
 ///
 /// # Visibility
@@ -976,32 +1038,7 @@ impl PermissionMode {
 }
 const _: () =
     assert!(PermissionMode::VALID_VALUES.len() == <PermissionMode as strum::EnumCount>::COUNT);
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Deserialize,
-    serde::Serialize,
-    IntoStaticStr,
-    strum::EnumCount,
-)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-    #[serde(rename = "xhigh")]
-    #[strum(serialize = "xhigh")]
-    XHigh,
-    Max,
-}
-impl Effort {
-    pub const VALID_VALUES: &[&str] = &["low", "medium", "high", "xhigh", "max"];
-}
-const _: () = assert!(Effort::VALID_VALUES.len() == <Effort as strum::EnumCount>::COUNT);
+
 #[derive(
     Debug,
     Clone,
@@ -2053,6 +2090,17 @@ description: Minimal agent
         );
         assert!(local.is_project_scoped);
     }
+    #[test]
+    fn agent_effort_keeps_max_and_converts_to_common_xhigh() {
+        let content = "---\nname: t\ndescription: t\neffort: max\n---\n";
+        let definition = AgentDefinition::parse(content).unwrap();
+        assert_eq!(definition.effort, Some(Effort::Max));
+        assert_eq!(
+            xai_tool_types::ReasoningEffort::from(Effort::Max),
+            xai_tool_types::ReasoningEffort::Xhigh
+        );
+    }
+
     #[test]
     fn all_new_enum_variants_parse() {
         for effort in Effort::VALID_VALUES {

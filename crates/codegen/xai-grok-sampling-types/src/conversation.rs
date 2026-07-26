@@ -1938,7 +1938,7 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
         .reasoning
         .as_ref()
         .and_then(|r| r.effort.clone())
-        .map(crate::ReasoningEffort::from_responses_api);
+        .map(crate::reasoning_effort_from_responses_api);
 
     let mut items: Vec<ConversationItem> = Vec::with_capacity(response.output.len() + 1);
     let mut content = String::new();
@@ -2148,7 +2148,9 @@ impl From<&ConversationRequest> for rs::CreateResponse {
             prompt_cache_key: None,
             prompt_cache_retention: None,
             reasoning: Some(rs::Reasoning {
-                effort: req.reasoning_effort.map(|e| e.to_responses_api()),
+                effort: req
+                    .reasoning_effort
+                    .map(crate::reasoning_effort_to_responses_api),
                 summary: Some(rs::ReasoningSummary::Concise),
             }),
             safety_identifier: None,
@@ -3231,7 +3233,7 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
 
     let effort = req
         .reasoning_effort
-        .and_then(|e| e.to_messages_api())
+        .and_then(crate::reasoning_effort_to_messages_api)
         .map(|s| s.to_string());
 
     // Faithful native mapping for callers that opt into Anthropic structured

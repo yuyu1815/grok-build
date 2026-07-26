@@ -1,11 +1,13 @@
 //! Canonical, extensible tool types.
 mod ext;
+mod reasoning_effort;
 mod schema_utils;
 pub mod serde_lenient;
 mod task;
 mod types;
 
 pub use ext::Extensions;
+pub use reasoning_effort::ReasoningEffort;
 pub use schema_utils::parse_arguments_from_schema_lossy;
 pub use serde_lenient::{
     deserialize_lenient_bool, deserialize_lenient_option_bool, lenient_bool_from_json,
