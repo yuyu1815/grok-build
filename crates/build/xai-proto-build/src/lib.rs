@@ -1,63 +1,10 @@
 pub mod find_protoc;
+mod protoc_dependency;
 
 use anyhow::Context;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 use std::{fs, iter};
-
-struct DependencyOutput {
-    #[cfg(windows)]
-    _temp_dir: tempfile::TempDir,
-    #[cfg(windows)]
-    path: PathBuf,
-}
-
-#[cfg(unix)]
-fn configure_dependency_output(command: &mut Command) -> anyhow::Result<DependencyOutput> {
-    command
-        .arg("--dependency_out=/dev/stdout")
-        .arg("--descriptor_set_out=/dev/null");
-    Ok(DependencyOutput {})
-}
-
-#[cfg(windows)]
-fn configure_dependency_output(command: &mut Command) -> anyhow::Result<DependencyOutput> {
-    let temp_dir = tempfile::tempdir()?;
-    let path = temp_dir.path().join("protoc-dependencies.d");
-    command
-        .arg(format!("--dependency_out={}", path.display()))
-        .arg("--descriptor_set_out=NUL");
-    Ok(DependencyOutput {
-        _temp_dir: temp_dir,
-        path,
-    })
-}
-
-#[cfg(unix)]
-fn read_dependency_output(
-    _dependency_output: &DependencyOutput,
-    output: Output,
-) -> anyhow::Result<String> {
-    String::from_utf8(output.stdout).context("protoc command output not UTF-8")
-}
-
-#[cfg(windows)]
-fn read_dependency_output(
-    dependency_output: &DependencyOutput,
-    _output: Output,
-) -> anyhow::Result<String> {
-    fs::read_to_string(&dependency_output.path).context("failed to read protoc dependency file")
-}
-
-#[cfg(unix)]
-fn dependency_output_prefix() -> &'static str {
-    "/dev/null:"
-}
-
-#[cfg(windows)]
-fn dependency_output_prefix() -> &'static str {
-    "NUL:"
-}
 
 /// Find the protoc well-known types include directory.
 ///
@@ -169,7 +116,7 @@ impl XaiProtoBuilder {
         // Can only process one input file when using --dependency_out=FILE.
         for proto in protos {
             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
-            let dependency_output = configure_dependency_output(&mut command)?;
+            let dependency_output = protoc_dependency::configure(&mut command)?;
 
             // Add protoc's well-known types include directory first (if found).
             // This is needed for Bazel sandboxed builds where protoc and its
@@ -195,11 +142,11 @@ impl XaiProtoBuilder {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
-            let output = read_dependency_output(&dependency_output, output)?;
+            let output = protoc_dependency::read(&dependency_output, output)?;
 
             let mut lines = output.lines();
             let first_line = lines.next().context("protoc command output is empty")?;
-            let prefix = dependency_output_prefix();
+            let prefix = protoc_dependency::prefix();
             let rem = first_line.strip_prefix(prefix).with_context(|| {
                 format!("protoc command output must start with {prefix} {output:?}")
             })?;
