@@ -44,9 +44,7 @@ use chrono::DateTime;
 #[cfg(test)]
 use enrichment::apply_user_info_enrichment;
 
-#[cfg(test)]
-use super::model::AuthStore;
-use super::model::LEGACY_SCOPE;
+use super::model::{AuthStore, LEGACY_SCOPE};
 
 /// Why a token refresh is being requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +134,8 @@ pub struct AuthManager {
     path: PathBuf,
     /// Inline `GROK_AUTH` is intentionally memory-only.
     read_only: bool,
+    /// Set when an explicitly configured inline credential could not be parsed.
+    invalid_inline_auth: bool,
     scope: String,
     grok_com_config: GrokComConfig,
     proxy_base_url: String,
@@ -286,18 +286,27 @@ impl AuthManager {
 
         // GROK_AUTH: inline JSON credentials (highest priority, read-only).
         if let Ok(inline_json) = std::env::var("GROK_AUTH") {
-            if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
-                return Self::assemble(
-                    Some(auth),
-                    auth_path(grok_home),
-                    true,
-                    scope,
-                    grok_com_config,
-                    proxy_base_url,
-                    None,
-                );
+            let auth = serde_json::from_str::<GrokAuth>(&inline_json)
+                .ok()
+                .or_else(|| {
+                    serde_json::from_str::<AuthStore>(&inline_json)
+                        .ok()
+                        .and_then(|store| lookup_auth(&store, &scope))
+                });
+            if auth.is_none() {
+                tracing::error!("GROK_AUTH is set but contains invalid credentials");
             }
-            tracing::warn!("GROK_AUTH set but failed to parse as JSON, falling back to file");
+            let invalid_inline_auth = auth.is_none();
+            return Self::assemble(
+                auth,
+                auth_path(grok_home),
+                true,
+                invalid_inline_auth,
+                scope,
+                grok_com_config,
+                proxy_base_url,
+                None,
+            );
         }
 
         let path = auth_path(grok_home);
@@ -361,6 +370,7 @@ impl AuthManager {
             auth,
             path,
             false,
+            false,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -380,6 +390,7 @@ impl AuthManager {
         inner: Option<GrokAuth>,
         path: PathBuf,
         read_only: bool,
+        invalid_inline_auth: bool,
         scope: String,
         grok_com_config: GrokComConfig,
         proxy_base_url: String,
@@ -389,6 +400,7 @@ impl AuthManager {
             inner: Arc::new(RwLock::new(inner)),
             path,
             read_only,
+            invalid_inline_auth,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -1271,6 +1283,9 @@ impl AuthManager {
     /// and rejected here, never handed to a consumer.
     #[tracing::instrument(skip(self), fields(token_type = tracing::field::Empty))]
     pub async fn auth(self: &Arc<Self>) -> Result<GrokAuth, AuthError> {
+        if self.invalid_inline_auth {
+            return Err(AuthError::NotLoggedIn);
+        }
         let auth = self.auth_dispatch().await?;
         if let Some(e) = self.cached_token_policy_error(&auth) {
             self.reject_and_clear(&e);
