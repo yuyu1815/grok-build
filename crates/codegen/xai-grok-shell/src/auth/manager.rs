@@ -287,8 +287,10 @@ impl AuthManager {
         );
 
         // GROK_AUTH: inline JSON credentials (highest priority, read-only).
+        // An invalid value is not an alternate authentication mode: warn and
+        // continue with the normal disk-backed lookup below.
         if let Ok(inline_json) = std::env::var("GROK_AUTH") {
-            if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
+            if let Some(auth) = serde_json::from_str::<GrokAuth>(&inline_json).ok() {
                 return Self::assemble(
                     Some(auth),
                     grok_home.join("auth").join("grok.json"),
