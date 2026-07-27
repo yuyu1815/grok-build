@@ -353,18 +353,13 @@ async fn team_login_then_personal_evicts_team_token() {
     assert_eq!(store.get(&base_scope).unwrap().key, "personal-token");
 }
 
-/// Regression test: clear() must only remove the current scope, not the
-/// legacy scope. Previously, logging in with OAuth would also delete the
-/// legacy `https://accounts.x.ai/sign-in` entry from auth.json.
+/// Regression test: clear() removes only the current scope from the
+/// canonical provider auth store.
 #[test]
-fn clear_does_not_remove_legacy_scope() {
+fn clear_removes_current_scope() {
     let dir = tempfile::tempdir().unwrap();
     let auth_path = dir.path().join("auth").join("grok.json");
 
-    let legacy_auth = GrokAuth {
-        key: "legacy-key".into(),
-        ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
-    };
     let oauth_auth = GrokAuth {
         key: "oauth-key".into(),
         ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
@@ -374,19 +369,13 @@ fn clear_does_not_remove_legacy_scope() {
     let scope = cfg.auth_scope();
 
     let mut store = AuthStore::new();
-    store.insert(LEGACY_SCOPE.to_string(), legacy_auth);
     store.insert(scope, oauth_auth);
     write_auth_json(&auth_path, &store).unwrap();
 
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
-    // clear() should only remove the OAuth scope, not legacy
     mgr.clear().unwrap();
 
     let on_disk = read_auth_json(&auth_path).unwrap();
-    assert!(
-        on_disk.contains_key(LEGACY_SCOPE),
-        "legacy scope should be preserved after clear()"
-    );
     assert!(
         !on_disk.contains_key(&mgr.scope),
         "current scope should be removed after clear()"

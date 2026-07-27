@@ -41,7 +41,7 @@ pub(crate) struct AuthFileLock {
 
 impl AuthFileLock {
     /// Returns `true` while this guard still refers to the **live**
-    /// `auth.json.lock` inode.
+    /// canonical auth lock inode.
     ///
     /// A waiter that finds a holder stuck past the stale-lock timeout breaks
     /// the lock by `unlink`ing the file and recreating it on a fresh inode
@@ -53,7 +53,7 @@ impl AuthFileLock {
     /// even though this `AuthFileLock` still exists.
     ///
     /// Callers about to perform an irreversible, lock-protected action
-    /// (sending a refresh token to the IdP, writing `auth.json`) MUST
+    /// (sending a refresh token to the IdP, writing the canonical auth file) MUST
     /// re-validate first; otherwise two processes can spend the same refresh
     /// token and trip token-family revocation.
     ///
@@ -92,7 +92,7 @@ pub fn read_auth_json(auth_file: &Path) -> std::io::Result<AuthStore> {
     Ok(map)
 }
 
-/// Read auth.json, returning an empty map if the file does not exist.
+/// Read the canonical auth file, returning an empty map if it does not exist.
 ///
 /// Non-empty corrupt JSON, permission errors, etc. are returned as errors
 /// so the caller can decide whether to skip the write (to avoid clobbering
@@ -114,7 +114,7 @@ pub(crate) fn read_auth_json_or_empty(auth_file: &Path) -> std::io::Result<AuthS
     }
 }
 
-/// Best-effort backup of a corrupt (unparseable) auth.json.
+/// Best-effort backup of a corrupt (unparseable) canonical auth file.
 ///
 /// If the file exists and `read_auth_json` fails with `InvalidData`,
 /// it is renamed to `auth.json.corrupt.<millis>` (sibling in the same
@@ -176,7 +176,7 @@ pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Read auth.json for an upcoming write, with recovery for corrupt files.
+/// Read the canonical auth file for an upcoming write, with recovery for corrupt files.
 ///
 /// - Missing/empty → empty map (safe to write fresh)
 /// - Valid JSON → parsed map
@@ -359,8 +359,6 @@ fn inline_auth_json() -> Option<String> {
 
 /// Read a single auth token from the resolved auth source by scope key.
 /// Inline `GROK_AUTH` is intentionally read-only and has highest priority.
-/// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key when the
-/// requested scope is not found.
 pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<String> {
     if let Some(json) = inline_auth_json() {
         if let Ok(auth) = serde_json::from_str::<GrokAuth>(&json) {

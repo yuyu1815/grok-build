@@ -288,7 +288,9 @@ impl ConfigReloader {
                 let new_hash = hash_auth_key(&auth.key);
 
                 if new_hash == self.last_auth_key_hash {
-                    debug!("auth.json changed but token key is identical, skipping");
+                    debug!(
+                        "$GROK_HOME/auth/grok.json changed but token key is identical, skipping"
+                    );
                     return Ok(());
                 }
 
@@ -302,7 +304,7 @@ impl ConfigReloader {
                 if self.last_auth_key_hash != 0 {
                     self.last_auth_key_hash = 0;
                     let _ = self.config_update_tx.send(ConfigUpdate::AuthCleared);
-                    info!("auth scope removed from auth.json, sent clear to agent");
+                    info!("auth scope removed from $GROK_HOME/auth/grok.json, sent clear to agent");
                     // AuthCleared makes the agent drop in-memory credentials;
                     // record what the reloader saw so "entry removed" is
                     // distinguishable from "file deleted" (the Err path).

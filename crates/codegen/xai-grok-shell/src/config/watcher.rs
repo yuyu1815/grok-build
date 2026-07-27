@@ -98,9 +98,9 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for `auth/grok.json`, `config.toml`, and `models_cache.json`
-/// changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`,
-/// etc.) provided at startup.
+/// Watches `~/.grok/` for the canonical provider auth file,
+/// `config.toml`, and `models_cache.json` changes, plus any extra paths
+/// (project `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
 ///
 /// Uses `notify-debouncer-mini` for built-in debounce that coalesces rapid
 /// editor writes (including write-then-rename patterns).

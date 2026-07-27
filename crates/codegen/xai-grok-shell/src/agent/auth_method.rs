@@ -923,8 +923,8 @@ mod tests {
     //
     // `grok login --legacy` produces a GrokAuth with `auth_mode: WebLogin`,
     // `oidc_issuer: None`, and no `expires_at` (30-day hardcoded TTL).
-    // When this token is present via the `GROK_AUTH` env var (or via legacy
-    // scope fallback in auth.json), `AuthManager::new` returns it from
+    // When this token is present via the `GROK_AUTH` env var, `AuthManager::new`
+    // returns it from
     // `current()`, feeding `has_cached_token = true` into `build_auth_methods`.
     // This puts `cached_token` first so `startup_auth_metadata()` returns
     // `needs_login = false` -- legacy users get frictionless auth, no login
@@ -1019,8 +1019,9 @@ mod tests {
         );
     }
 
-    /// Negative case for the legacy flow: when auth.json does NOT contain a
-    /// legacy-scope entry, AuthManager::current() is None,
+    /// Negative case for the legacy flow: a legacy-scope entry in the
+    /// canonical auth store is not used for another requested scope, so
+    /// AuthManager::current() is None,
     /// has_cached_token is false, and build_auth_methods advertises only
     /// the login method. This pins the predicate's "no" answer so the test
     /// above isn't trivially passing.
@@ -1033,7 +1034,7 @@ mod tests {
         let _g2 = EnvGuard::unset("GROK_AUTH_PATH");
 
         let dir = tempfile::tempdir().unwrap();
-        // No auth.json in the tempdir.
+        // No canonical `$GROK_HOME/auth/grok.json` in the tempdir.
         let cfg = GrokComConfig::default();
         let mgr = AuthManager::new(dir.path(), cfg);
         assert!(mgr.current().is_none());

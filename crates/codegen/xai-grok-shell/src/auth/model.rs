@@ -7,16 +7,14 @@ use super::is_xai_oauth2_issuer;
 pub(crate) const TOKEN_TTL: Duration = Duration::days(30);
 const DEFAULT_EARLY_INVALIDATION_SECS: u64 = 300; // 5 minutes
 
-/// Legacy auth.json scope key. Fallback for old devbox auth files.
-pub(super) const LEGACY_SCOPE: &str = "https://accounts.x.ai/sign-in";
-
-/// auth.json scope key for plain API key auth (desktop login, `grok login --api-key`).
+/// Canonical `$GROK_HOME/auth/grok.json` scope key for plain API key auth
+/// (desktop login, `grok login --api-key`).
 pub const API_KEY_SCOPE: &str = "xai::api_key";
 
 const BLOCKED_REASON_NO_LOGS: &str = "BLOCKED_REASON_NO_LOGS";
 const BLOCKED_REASON_NO_LOGS_MODERATED: &str = "BLOCKED_REASON_NO_LOGS_MODERATED";
 
-/// Token provenance (debugging/auth.json only -- no code branches on this).
+/// Token provenance (debugging/canonical auth storage only -- no code branches on this).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
@@ -297,20 +295,15 @@ pub(crate) fn token_suffix(t: &str) -> &str {
     if len > 12 { &t[len - 12..] } else { t }
 }
 
-/// Look up auth from the store by scope key.
+/// Look up auth from the canonical `$GROK_HOME/auth/grok.json` store by
+/// exact scope key.
 ///
-/// Legacy `WebLogin` tokens (from the pre-OIDC `grok login --legacy`
-/// flow) are skipped — they are validated via a per-request DB lookup
-/// server-side which fails at high volume.  Skipping them here forces
-/// affected users to re-authenticate via OIDC on next launch.
+/// Legacy `WebLogin` tokens (from the pre-OIDC `grok login --legacy` flow)
+/// are skipped — they are retained only for explicit cleanup and are never a
+/// read fallback. Skipping them here forces affected users to re-authenticate
+/// via OIDC on next launch.
 pub fn lookup_auth(map: &AuthStore, scope: &str) -> Option<GrokAuth> {
-    let auth = map.get(scope).cloned().or_else(|| {
-        if scope == LEGACY_SCOPE {
-            None
-        } else {
-            map.get(LEGACY_SCOPE).cloned()
-        }
-    })?;
+    let auth = map.get(scope).cloned()?;
     if auth.auth_mode == AuthMode::WebLogin {
         tracing::info!("auth: ignoring legacy WebLogin token — re-authentication required");
         return None;
@@ -427,13 +420,6 @@ mod tests {
         let mut map = AuthStore::new();
         map.insert("scope".into(), make_auth(AuthMode::WebLogin));
         assert!(lookup_auth(&map, "scope").is_none());
-    }
-
-    #[test]
-    fn lookup_auth_skips_weblogin_on_legacy_fallback() {
-        let mut map = AuthStore::new();
-        map.insert(LEGACY_SCOPE.into(), make_auth(AuthMode::WebLogin));
-        assert!(lookup_auth(&map, "other-scope").is_none());
     }
 
     #[test]

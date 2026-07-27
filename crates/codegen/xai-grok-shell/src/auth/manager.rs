@@ -46,7 +46,6 @@ use enrichment::apply_user_info_enrichment;
 
 #[cfg(test)]
 use super::model::AuthStore;
-use super::model::LEGACY_SCOPE;
 
 /// Why a token refresh is being requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

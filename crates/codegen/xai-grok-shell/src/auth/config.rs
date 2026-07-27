@@ -44,7 +44,7 @@ fn default_team_oauth2_scopes() -> Vec<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreferredAuthMethod {
-    /// `XAI_API_KEY` / auth.json `xai::api_key` / per-model BYOK (`xai.api_key`).
+    /// `XAI_API_KEY` / `$GROK_HOME/auth/grok.json` `xai::api_key` / per-model BYOK (`xai.api_key`).
     ApiKey,
     /// OIDC / OAuth2 session (`cached_token`, interactive `grok.com` / `oidc`,
     /// including devbox-minted OIDC).
@@ -185,8 +185,8 @@ pub fn xai_oauth2_issuer() -> &'static str {
 pub fn is_xai_oauth2_issuer(issuer: &str) -> bool {
     issuer == XAI_OAUTH2_ISSUER || issuer == XAI_OAUTH2_LOCAL_ISSUER
 }
-/// auth.json scope key used by the pre-OIDC `grok login --legacy` flow.
-/// Matches the key format produced by the original `accounts.x.ai` relay auth.
+/// Legacy scope key used by the pre-OIDC `grok login --legacy` flow.
+/// Retained for explicit cleanup; it is not a fallback in canonical auth storage.
 pub const LEGACY_AUTH_SCOPE: &str = "https://accounts.x.ai/sign-in";
 impl GrokComConfig {
     /// Whether `xai.api_key` auth is disabled. Pinning a team
