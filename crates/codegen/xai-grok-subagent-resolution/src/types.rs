@@ -22,9 +22,7 @@ pub enum ContextSource {
 pub struct EffectiveRuntimeConfig {
     /// Resolved model ID override (if any).
     pub model: Option<String>,
-    /// Resolved reasoning effort (e.g. "low", "medium", "high").
-    // TODO(phase2): consider a typed `ReasoningEffort` enum to prevent typos.
-    // Currently stringly-typed for compatibility with the shell's existing API.
+    /// Resolved reasoning effort, serialized to the shell's existing string boundary.
     pub reasoning_effort: Option<String>,
     /// Resolved capability mode controlling tool access.
     pub capability_mode: Option<xai_tool_types::SubagentCapabilityMode>,

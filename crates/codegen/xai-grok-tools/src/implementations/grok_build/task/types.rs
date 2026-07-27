@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use educe::Educe;
 use tokio::sync::{mpsc, oneshot};
-use xai_tool_types::{SubagentCapabilityMode, SubagentIsolationMode, WaitMode};
+use xai_tool_types::{ReasoningEffort, SubagentCapabilityMode, SubagentIsolationMode, WaitMode};
 
 use crate::register_resource;
 
@@ -87,8 +87,8 @@ pub struct SubagentRuntimeOverrides {
     pub model: Option<String>,
     /// Whether `model` came from a model-facing Task call or internal harness logic.
     pub model_override_provenance: ModelOverrideProvenance,
-    /// Override reasoning effort (e.g. "low", "medium", "high").
-    pub reasoning_effort: Option<String>,
+    /// Override reasoning effort.
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Named persona/SOUL template to apply.
     pub persona: Option<String>,
     /// Capability mode controlling tool access.

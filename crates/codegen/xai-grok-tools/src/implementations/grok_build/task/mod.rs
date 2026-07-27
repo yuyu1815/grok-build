@@ -305,7 +305,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             runtime_overrides: SubagentRuntimeOverrides {
                 model,
                 model_override_provenance: ModelOverrideProvenance::Tool,
-                reasoning_effort: None,
+                reasoning_effort: input.reasoning_effort,
                 persona: None,
                 capability_mode: input.capability_mode,
                 isolation: input.isolation,
@@ -518,6 +518,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -550,6 +551,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -581,6 +583,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -640,6 +643,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -697,6 +701,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -740,6 +745,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -824,6 +830,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: None,
+            reasoning_effort: None,
             task_id: None,
         }
     }
@@ -1198,6 +1205,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: Some("test-model".into()),
+            reasoning_effort: None,
             task_id: Some("task-123".into()),
         };
         let json = serde_json::to_string(&input).unwrap();
@@ -1468,6 +1476,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: None,
+            reasoning_effort: None,
             task_id: None,
         })
         .unwrap();
@@ -1518,6 +1527,7 @@ mod tests {
                 resume_from: None,
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1554,6 +1564,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: None,
+            reasoning_effort: None,
             task_id: None,
         };
         let json = serde_json::to_string(&input).unwrap();
@@ -1601,6 +1612,7 @@ mod tests {
                 resume_from: Some("prev-id".into()),
                 cwd: None,
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1668,6 +1680,7 @@ mod tests {
                     resume_from: Some(sentinel.into()),
                     cwd: None,
                     model: None,
+                    reasoning_effort: None,
                     task_id: None,
                 },
             )
@@ -1714,6 +1727,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: None,
+            reasoning_effort: None,
             task_id: None,
         };
         let json = serde_json::to_string(&input).unwrap();
@@ -1742,6 +1756,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("/tmp".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1797,6 +1812,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1848,6 +1864,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("null".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1899,6 +1916,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("  ".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1953,6 +1971,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("/nonexistent/path/that/does/not/exist".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -1987,6 +2006,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("/nonexistent/path/that/does/not/exist".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -2043,6 +2063,7 @@ mod tests {
                     resume_from: None,
                     cwd: Some(sentinel.into()),
                     model: None,
+                    reasoning_effort: None,
                     task_id: None,
                 },
             )
@@ -2097,6 +2118,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("/tmp".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -2155,6 +2177,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("\"/tmp".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -2208,6 +2231,7 @@ mod tests {
                 resume_from: None,
                 cwd: Some("/tmp".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
@@ -2257,6 +2281,7 @@ mod tests {
                 resume_from: Some("prev-id".into()),
                 cwd: Some("/tmp/some-dir".into()),
                 model: None,
+                reasoning_effort: None,
                 task_id: None,
             },
         )
