@@ -150,8 +150,6 @@ impl ConfigFileWatcher {
         let (tx, rx) = mpsc::unbounded_channel();
         let grok_home_buf = grok_home.to_path_buf();
         let canonical_auth_dir = grok_home_buf.join("auth");
-        let explicit_auth_path = std::env::var_os("GROK_AUTH_PATH").map(PathBuf::from);
-        let explicit_auth_path_for_event = explicit_auth_path.clone();
         // A valid inline `GROK_AUTH` is authoritative and memory-only. Do not
         // even enqueue disk auth events; the reloader also guards application.
         let watch_auth_files = match std::env::var("GROK_AUTH") {
@@ -194,13 +192,6 @@ impl ConfigFileWatcher {
                 let parent = path.parent();
 
                 let change = match name {
-                    _ if watch_auth_files
-                        && explicit_auth_path_for_event
-                            .as_deref()
-                            .is_some_and(|configured| path == configured) =>
-                    {
-                        Some(ConfigChangeEvent::AuthChanged)
-                    }
                     Some("grok.json")
                         if watch_auth_files && parent == Some(canonical_auth_dir.as_path()) =>
                     {
@@ -270,15 +261,6 @@ impl ConfigFileWatcher {
                     )
                 })
                 .ok()?;
-        }
-
-        if let Some(explicit_auth_path) = explicit_auth_path.as_deref()
-            && let Some(parent) = explicit_auth_path.parent()
-            && parent != canonical_auth_dir_for_watch.as_path()
-        {
-            let _ = debouncer
-                .watcher()
-                .watch(parent, RecursiveMode::NonRecursive);
         }
 
         for p in extra_paths {

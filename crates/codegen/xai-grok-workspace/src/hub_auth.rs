@@ -73,9 +73,6 @@ struct AuthEntry {
 }
 
 fn default_auth_path() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("GROK_AUTH_PATH") {
-        return Ok(PathBuf::from(path));
-    }
     let grok = xai_grok_config::user_grok_home()
         .ok_or_else(|| anyhow::anyhow!("no user grok home (set $GROK_HOME or $HOME)"))?;
     Ok(grok.join("auth").join("grok.json"))

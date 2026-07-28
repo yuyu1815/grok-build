@@ -5,12 +5,8 @@ use std::path::{Path, PathBuf};
 use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
 /// Resolve the single provider auth file without reading credential contents.
-/// `GROK_AUTH_PATH` is an explicit read/write override; otherwise the
-/// canonical provider file is `~/.grok/auth/grok.json`.
 pub fn auth_path(grok_home: &Path) -> PathBuf {
-    std::env::var_os("GROK_AUTH_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| grok_home.join("auth").join("grok.json"))
+    grok_home.join("auth").join("grok.json")
 }
 
 /// Create the parent directory for a disk-backed auth file.

@@ -946,7 +946,6 @@ mod tests {
         use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
 
         // Ensure clean slate for "no other auth available".
-        let _g1 = EnvGuard::unset("GROK_AUTH_PATH");
         let _g2 = EnvGuard::unset(XAI_API_KEY_ENV_VAR);
 
         // Construct a legacy-style token exactly as `grok login --legacy`
@@ -1031,7 +1030,6 @@ mod tests {
         use crate::auth::{AuthManager, GrokComConfig};
 
         let _g1 = EnvGuard::unset("GROK_AUTH");
-        let _g2 = EnvGuard::unset("GROK_AUTH_PATH");
 
         let dir = tempfile::tempdir().unwrap();
         // No canonical `$GROK_HOME/auth/grok.json` in the tempdir.

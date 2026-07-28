@@ -2453,18 +2453,10 @@ mod tests {
     /// * `XAI_API_KEY` — would return early from `resolve_api_key`.
     /// * `GROK_AUTH` — inline-JSON credentials override that bypasses
     ///   the on-disk read entirely (`AuthManager::new`).
-    /// * `GROK_AUTH_PATH` — overrides the auth/grok.json path; if set to
-    ///   the operator's real `~/.grok/auth/grok.json`, the test would read
-    ///   live OIDC credentials instead of the scratch fixture.
     /// * `GROK_AUTH_PROVIDER_COMMAND` — selects an external
     ///   refresher that could mint credentials independent of the
     ///   fixture.
-    const ISOLATED_ENV_KEYS: &[&str] = &[
-        "XAI_API_KEY",
-        "GROK_AUTH",
-        "GROK_AUTH_PATH",
-        "GROK_AUTH_PROVIDER_COMMAND",
-    ];
+    const ISOLATED_ENV_KEYS: &[&str] = &["XAI_API_KEY", "GROK_AUTH", "GROK_AUTH_PROVIDER_COMMAND"];
 
     /// Async helper: clear every env var in [`ISOLATED_ENV_KEYS`]
     /// before running `fut`, restoring them after. Callers must be
