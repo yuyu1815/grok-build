@@ -18,7 +18,7 @@ const BLOCKED_REASON_NO_LOGS_MODERATED: &str = "BLOCKED_REASON_NO_LOGS_MODERATED
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
-    /// Deprecated. Kept for deserializing old auth.json files.
+    /// Deprecated. Kept for deserializing old grok.json files.
     #[serde(alias = "grok")]
     WebLogin,
     /// OIDC or OAuth2 interactive login via customer IdP
@@ -70,7 +70,7 @@ pub struct GrokAuth {
     #[serde(default)]
     pub coding_data_retention_opt_out: bool,
 
-    /// Deprecated. Kept for deserializing existing auth.json files.
+    /// Deprecated. Kept for deserializing existing grok.json files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_grok_code_access: Option<bool>,
 
@@ -113,7 +113,7 @@ impl std::fmt::Debug for GrokAuth {
 impl GrokAuth {
     /// Seconds since this credential was minted. Negative when the local
     /// clock stepped back past `create_time` (NTP correction, VM restore, or
-    /// a sibling machine's clock via an adopted auth.json) — `create_time`
+    /// a sibling machine's clock via an adopted grok.json) — `create_time`
     /// is always stamped from the minting machine's local clock.
     pub(crate) fn mint_age_seconds(&self) -> i64 {
         Utc::now()
@@ -299,9 +299,8 @@ pub(crate) fn token_suffix(t: &str) -> &str {
 /// exact scope key.
 ///
 /// Legacy `WebLogin` tokens (from the pre-OIDC `grok login --legacy` flow)
-/// are skipped — they are retained only for explicit cleanup and are never a
-/// read fallback. Skipping them here forces affected users to re-authenticate
-/// via OIDC on next launch.
+/// are not usable through canonical storage. They remain deserializable for
+/// compatibility, but callers must authenticate through a supported method.
 pub fn lookup_auth(map: &AuthStore, scope: &str) -> Option<GrokAuth> {
     let auth = map.get(scope).cloned()?;
     if auth.auth_mode == AuthMode::WebLogin {

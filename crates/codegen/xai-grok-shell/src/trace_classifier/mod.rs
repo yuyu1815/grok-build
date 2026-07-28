@@ -2156,6 +2156,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
+        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
         std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
             .expect("write auth.json");
     }
@@ -2165,6 +2166,7 @@ mod tests {
     /// `non_interactive_auth_key` returns `Ok(None)` →
     /// `resolve_api_key` falls through to the unified error.
     fn write_empty_auth_json(grok_home: &Path) {
+        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
         std::fs::write(grok_home.join("auth").join("grok.json"), "{}").expect("write auth.json");
     }
 
@@ -2186,6 +2188,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
+        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
         std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
             .expect("write auth.json");
     }
@@ -2204,6 +2207,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
+        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
         std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
             .expect("write auth.json");
     }

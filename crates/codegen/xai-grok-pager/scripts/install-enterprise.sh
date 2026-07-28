@@ -114,7 +114,7 @@ json_get() {
 # Read a token from ~/.grok/auth/grok.json for the given scope key.
 # Format: {"scope_url": {"key": "token"}, ...}
 read_grok_token() {
-    local auth_file="$HOME/.grok/auth/grok.json"
+    local auth_file="${GROK_AUTH_PATH:-${GROK_HOME:-$HOME/.grok}/auth/grok.json}"
     local scope="$1"
     [ -f "$auth_file" ] || return 1
     # Flatten to one line then extract: find the scope, then the "key" value after it

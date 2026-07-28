@@ -680,7 +680,8 @@ async fn lock_timeout_falls_through_to_refresh() {
     mgr.hot_swap(expired);
 
     // Hold the lock file externally so the refresher times out.
-    let lock_path = dir.path().join("auth.json.lock");
+    std::fs::create_dir_all(dir.path().join("auth")).unwrap();
+    let lock_path = dir.path().join("auth").join("grok.json.lock");
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

@@ -145,7 +145,7 @@ async fn run_user_info_enrichment(manager: &AuthManager, auth: GrokAuth) {
     let lock_guard = try_lock_auth_file_async(&manager.path, AUTH_LOCK_TIMEOUT).await;
     let lock_wait_ms = lock_started.elapsed().as_millis() as u64;
     if lock_guard.is_none() {
-        tracing::warn!("auth: enrichment proceeding without auth.json.lock");
+        tracing::warn!("auth: enrichment proceeding without grok.json.lock");
     }
 
     let Ok(mut map) = read_auth_json(&manager.path) else {

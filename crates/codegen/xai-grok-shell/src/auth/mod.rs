@@ -15,6 +15,7 @@ pub(crate) mod recovery;
 pub(crate) mod refresh;
 mod storage;
 pub(crate) mod token_type;
+// Retained for the login-flow module's explicit migration cleanup; canonical storage never falls back to it.
 pub(crate) use config::LEGACY_AUTH_SCOPE;
 pub use config::{
     ForceLoginTeam, GrokComConfig, OAuth2ProviderConfig, OidcAuthConfig, PreferredAuthMethod,

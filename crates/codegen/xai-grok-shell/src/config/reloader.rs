@@ -622,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn reloader_detects_auth_cleared() {
         let tmp = tempfile::TempDir::new().unwrap();
-        // Write auth.json with a DIFFERENT scope — our scope is missing
+        // Write grok.json with a DIFFERENT scope — our scope is missing
         let auth = make_auth("other-key");
         let mut store = BTreeMap::new();
         store.insert("https://other.example.com".to_string(), auth);
@@ -683,7 +683,7 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_missing_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        // No auth.json written
+        // No grok.json written
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());

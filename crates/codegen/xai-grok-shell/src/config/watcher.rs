@@ -154,10 +154,14 @@ impl ConfigFileWatcher {
         let explicit_auth_path_for_event = explicit_auth_path.clone();
         // A valid inline `GROK_AUTH` is authoritative and memory-only. Do not
         // even enqueue disk auth events; the reloader also guards application.
-        let watch_auth_files = std::env::var("GROK_AUTH")
-            .ok()
-            .and_then(|json| serde_json::from_str::<crate::auth::GrokAuth>(&json).ok())
-            .is_none();
+        let watch_auth_files = match std::env::var("GROK_AUTH") {
+            Err(_) => true,
+            Ok(json) => serde_json::from_str::<crate::auth::GrokAuth>(&json).is_err()
+                && serde_json::from_str::<std::collections::BTreeMap<String, crate::auth::GrokAuth>>(
+                    &json,
+                )
+                .is_err(),
+        };
         let _ = std::fs::create_dir_all(&canonical_auth_dir);
         // `~/.claude.json` is consumed by **every**
         // session (see `load_claude_json_mcp_servers_as_configs`), so

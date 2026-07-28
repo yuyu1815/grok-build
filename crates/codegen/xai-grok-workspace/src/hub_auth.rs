@@ -256,6 +256,7 @@ mod tests {
 
     fn write_auth_json(dir: &std::path::Path, json: &str) -> PathBuf {
         let path = dir.join("auth").join("grok.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(json.as_bytes()).unwrap();
         path
@@ -303,7 +304,7 @@ mod tests {
 
     #[test]
     fn read_auth_entry_missing_file() {
-        let path = PathBuf::from("/nonexistent/auth.json");
+        let path = PathBuf::from("/nonexistent/auth/grok.json");
         let err = read_auth_entry(&path).unwrap_err();
         assert!(err.to_string().contains("No auth credentials"));
     }

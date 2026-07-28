@@ -29,7 +29,7 @@ pub(crate) fn auth_lock_path(auth_file: &Path) -> PathBuf {
     let file_name = auth_file
         .file_name()
         .map(|name| format!("{}.lock", name.to_string_lossy()))
-        .unwrap_or_else(|| "auth.json.lock".to_owned());
+        .unwrap_or_else(|| "grok.json.lock".to_owned());
     auth_file.with_file_name(file_name)
 }
 
@@ -117,7 +117,7 @@ pub(crate) fn read_auth_json_or_empty(auth_file: &Path) -> std::io::Result<AuthS
 /// Best-effort backup of a corrupt (unparseable) canonical auth file.
 ///
 /// If the file exists and `read_auth_json` fails with `InvalidData`,
-/// it is renamed to `auth.json.corrupt.<millis>` (sibling in the same
+/// it is renamed to `grok.json.corrupt.<millis>` (sibling in the same
 /// directory) and the backup path is returned. Used before recovery
 /// writes so the original bytes are never silently lost.
 pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
@@ -136,7 +136,7 @@ pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "auth.json".to_string());
+        .unwrap_or_else(|| "grok.json".to_string());
 
     let backup_name = format!("{}.corrupt.{}", file_name, ts);
     let backup = path.with_file_name(backup_name);
@@ -146,13 +146,13 @@ pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
             tracing::warn!(
                 original = %path.display(),
                 backup = %backup.display(),
-                "auth: backed up corrupt auth.json before recovery write"
+                "auth: backed up corrupt grok.json before recovery write"
             );
             // Must reach unified.jsonl: the tracing line above is invisible
             // in production captures, and this is the only record of both
             // the corruption and where the original bytes went.
             xai_grok_telemetry::unified_log::error(
-                "auth: corrupt auth.json backed up",
+                "auth: corrupt grok.json backed up",
                 None,
                 Some(serde_json::json!({
                     "original": path.display().to_string(),
@@ -162,9 +162,9 @@ pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
             Some(backup)
         }
         Err(e) => {
-            tracing::warn!(error = %e, "auth: failed to rename corrupt auth.json for backup");
+            tracing::warn!(error = %e, "auth: failed to rename corrupt grok.json for backup");
             xai_grok_telemetry::unified_log::error(
-                "auth: corrupt auth.json backup failed",
+                "auth: corrupt grok.json backup failed",
                 None,
                 Some(serde_json::json!({
                     "original": path.display().to_string(),
@@ -180,7 +180,7 @@ pub(crate) fn backup_corrupt_auth_file(path: &Path) -> Option<PathBuf> {
 ///
 /// - Missing/empty → empty map (safe to write fresh)
 /// - Valid JSON → parsed map
-/// - Non-empty corrupt JSON → backs up to `auth.json.corrupt.<millis>`,
+/// - Non-empty corrupt JSON → backs up to `grok.json.corrupt.<millis>`,
 ///   then returns empty map so the caller can write the new credential.
 ///
 /// Other I/O errors (PermissionDenied, etc.) are still returned as errors.
@@ -295,7 +295,7 @@ fn write_auth_json_atomic(auth_file: &Path, auth_store: &AuthStore) -> std::io::
     Ok(())
 }
 
-/// Non-atomic fallback: truncate and rewrite `auth.json` in place.
+/// Non-atomic fallback: truncate and rewrite `grok.json` in place.
 ///
 /// Used only when [`write_auth_json_atomic`] fails with `StorageFull`.
 /// Opening with truncation first frees the old content's blocks before the
@@ -329,7 +329,7 @@ fn write_auth_json_in_place_with(
             {
                 tracing::warn!(
                     error = %restore_err,
-                    "auth: failed to restore prior auth.json after in-place write failure"
+                    "auth: failed to restore prior grok.json after in-place write failure"
                 );
             }
             Err(e)
@@ -578,8 +578,8 @@ mod write_fallback_tests {
             PathBuf::from("/tmp/auth/grok.json.lock")
         );
         assert_eq!(
-            auth_lock_path(Path::new("/tmp/auth.json")),
-            PathBuf::from("/tmp/auth.json.lock")
+            auth_lock_path(Path::new("/tmp/grok.json")),
+            PathBuf::from("/tmp/grok.json.lock")
         );
     }
 }
