@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use super::AuthManager;
-use super::lock::try_lock_auth_file_async;
 use crate::auth::manager::AUTH_LOCK_TIMEOUT;
 use crate::auth::model::{GrokAuth, UserInfo, lookup_auth};
 use crate::auth::storage::{read_auth_json, write_auth_json};
@@ -142,13 +141,13 @@ async fn run_user_info_enrichment(manager: &AuthManager, auth: GrokAuth) {
     // R-M-W file lock. On timeout, fall through to an unlocked write
     // rather than drop the enrichment.
     let lock_started = std::time::Instant::now();
-    let lock_guard = try_lock_auth_file_async(&manager.path, AUTH_LOCK_TIMEOUT).await;
+    let lock_guard = manager.try_lock_auth_file_async(AUTH_LOCK_TIMEOUT).await;
     let lock_wait_ms = lock_started.elapsed().as_millis() as u64;
     if lock_guard.is_none() {
         tracing::warn!("auth: enrichment proceeding without auth.json.lock");
     }
 
-    let Ok(mut map) = read_auth_json(&manager.path) else {
+    let Ok(mut map) = read_auth_json(manager.paths.auth_path()) else {
         xai_grok_telemetry::unified_log::warn(
             "auth update enrichment skipped",
             None,
@@ -193,7 +192,7 @@ async fn run_user_info_enrichment(manager: &AuthManager, auth: GrokAuth) {
 
     map.insert(manager.scope.clone(), disk.clone());
     let write_started = std::time::Instant::now();
-    if let Err(e) = write_auth_json(&manager.path, &map) {
+    if let Err(e) = write_auth_json(manager.paths.auth_path(), &map) {
         xai_grok_telemetry::unified_log::error(
             "auth update enrichment write failed",
             None,

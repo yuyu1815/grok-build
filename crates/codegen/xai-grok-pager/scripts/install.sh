@@ -2,7 +2,7 @@
 #
 # Grok CLI installer — https://x.ai/cli/install.sh
 #
-# Auth: GROK_DEPLOYMENT_KEY (takes precedence) or ~/.grok/auth.json from `grok login`.
+# Auth: GROK_DEPLOYMENT_KEY (takes precedence) or ~/.grok/auth/grok.json from `grok login`.
 # Env: GROK_CHANNEL (stable|alpha|enterprise, default: stable), GROK_BIN_DIR, GROK_PROXY_URL
 #
 # Usage:
@@ -107,10 +107,10 @@ json_get() {
         | sed -e 's/\\"/"/g' -e 's/\\n/\'$'\n''/g' -e 's/\\t/\'$'\t''/g' -e 's/\\\\/\\/g'
 }
 
-# Read a token from ~/.grok/auth.json for the given scope key.
+# Read a token from ~/.grok/auth/grok.json for the given scope key.
 # Format: {"scope_url": {"key": "token"}, ...}
 read_grok_token() {
-    local auth_file="$HOME/.grok/auth.json"
+    local auth_file="$HOME/.grok/auth/grok.json"
     local scope="$1"
     [ -f "$auth_file" ] || return 1
     # Flatten to one line then extract: find the scope, then the "key" value after it
@@ -130,10 +130,10 @@ else
     LEGACY_TOKEN=$(read_grok_token "$LEGACY_SCOPE" 2>/dev/null) || true
     if [ -n "$OIDC_TOKEN" ]; then
         AUTH_SOURCE="auth.json (oidc)"
-        echo "Auth: using OIDC token from ~/.grok/auth.json." >&2
+        echo "Auth: using OIDC token from ~/.grok/auth/grok.json." >&2
     elif [ -n "$LEGACY_TOKEN" ]; then
         AUTH_SOURCE="auth.json (legacy)"
-        echo "Auth: using legacy token from ~/.grok/auth.json." >&2
+        echo "Auth: using legacy token from ~/.grok/auth/grok.json." >&2
     fi
 fi
 

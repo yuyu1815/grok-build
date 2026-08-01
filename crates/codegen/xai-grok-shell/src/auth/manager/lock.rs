@@ -17,7 +17,7 @@ use std::time::Duration as StdDuration;
 
 use fs2::FileExt;
 
-use crate::auth::storage::AuthFileLock;
+use crate::auth::storage::{AuthFileLock, ensure_auth_parent};
 use crate::unified_log;
 
 /// Maximum age (seconds) of a lock holder before it is considered stuck.
@@ -367,14 +367,14 @@ fn blocking_acquire(lock_path: &Path) -> io::Result<File> {
 /// that observes the flock can identify the holder (and break it once
 /// stale). Taking the flock *without* writing holder info is what used to
 /// leave an empty `auth.json.lock` that defeated stale-lock recovery.
-pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<AuthFileLock> {
-    let lock_path = auth_json_path.with_file_name("auth.json.lock");
+pub(crate) fn try_lock_auth_file_nonblocking(lock_path: &Path) -> Option<AuthFileLock> {
+    ensure_auth_parent(lock_path).ok()?;
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(&lock_path)
+        .open(lock_path)
         .ok()?;
 
     // Non-blocking: bail immediately if another holder has the flock.
@@ -388,7 +388,10 @@ pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<Au
         );
         // Still hold the flock — proceed.
     }
-    Some(AuthFileLock { _file: file })
+    Some(AuthFileLock {
+        _file: file,
+        lock_path: lock_path.to_path_buf(),
+    })
 }
 
 /// Acquire the `auth.json.lock` file lock with three phases:
@@ -403,10 +406,11 @@ pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<Au
 ///    with stale-lock detection (dead PID / age > 60 s).  Breaks the
 ///    stale lock via unlink and retries.
 pub(crate) async fn try_lock_auth_file_async(
-    auth_json_path: &Path,
+    lock_path: &Path,
     timeout: StdDuration,
 ) -> Option<AuthFileLock> {
-    let lock_path = auth_json_path.with_file_name("auth.json.lock");
+    ensure_auth_parent(lock_path).ok()?;
+    let lock_path = lock_path.to_path_buf();
 
     unified_log::debug(
         &format!(
@@ -421,7 +425,12 @@ pub(crate) async fn try_lock_auth_file_async(
 
     // Phase 1: instant non-blocking try.
     match try_acquire_once(&lock_path) {
-        LockAttempt::Acquired(file) => return Some(AuthFileLock { _file: file }),
+        LockAttempt::Acquired(file) => {
+            return Some(AuthFileLock {
+                _file: file,
+                lock_path: lock_path.clone(),
+            });
+        }
         LockAttempt::Failed => return None,
         LockAttempt::StaleUnlinked | LockAttempt::Busy => { /* fall through to Phase 2 */ }
     }
@@ -445,7 +454,12 @@ pub(crate) async fn try_lock_auth_file_async(
 
         match result {
             // Blocking flock succeeded, inode matches.
-            Ok(Ok(Ok(file))) => return Some(AuthFileLock { _file: file }),
+            Ok(Ok(Ok(file))) => {
+                return Some(AuthFileLock {
+                    _file: file,
+                    lock_path: lock_path.clone(),
+                });
+            }
             // Inode mismatch — retry from the top of the loop.
             Ok(Ok(Err(_inode_err))) => continue,
             // spawn_blocking panicked — give up.
@@ -470,7 +484,12 @@ pub(crate) async fn try_lock_auth_file_async(
     );
     for _ in 0..2 {
         match try_acquire_once(&lock_path) {
-            LockAttempt::Acquired(file) => return Some(AuthFileLock { _file: file }),
+            LockAttempt::Acquired(file) => {
+                return Some(AuthFileLock {
+                    _file: file,
+                    lock_path: lock_path.clone(),
+                });
+            }
             LockAttempt::StaleUnlinked => continue, // unlinked stale lock, retry once
             LockAttempt::Busy | LockAttempt::Failed => break,
         }
@@ -495,7 +514,11 @@ mod tests {
     use tempfile::TempDir;
 
     fn auth_json_path(dir: &TempDir) -> std::path::PathBuf {
-        dir.path().join("auth.json")
+        dir.path().join("auth").join("grok.json")
+    }
+
+    fn lock_path_for_auth(auth_path: &Path) -> std::path::PathBuf {
+        auth_path.with_file_name("grok.json.lock")
     }
 
     // ── Pure-function unit tests (no runtime needed) ─────────────────
@@ -586,9 +609,10 @@ mod tests {
         // flock over an empty lock file.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
-        let lock = try_lock_auth_file_nonblocking(&path).expect("uncontended non-blocking acquire");
+        let lock =
+            try_lock_auth_file_nonblocking(&lock_path).expect("uncontended non-blocking acquire");
 
         let content = std::fs::read_to_string(&lock_path).unwrap();
         let (pid, _ts) =
@@ -599,14 +623,25 @@ mod tests {
     }
 
     #[test]
+    fn test_resolved_custom_lock_path_is_used_exactly() {
+        let dir = TempDir::new().unwrap();
+        let lock_path = dir.path().join("auth.json.lock");
+
+        let lock = try_lock_auth_file_nonblocking(&lock_path).expect("acquire custom lock");
+        assert_eq!(&lock.lock_path, &lock_path);
+        assert!(lock_path.exists());
+    }
+
+    #[test]
     fn test_nonblocking_acquire_returns_none_when_held() {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
 
-        let lock1 = try_lock_auth_file_nonblocking(&path).expect("first acquire");
+        let lock1 =
+            try_lock_auth_file_nonblocking(&lock_path_for_auth(&path)).expect("first acquire");
         // Same process, different FD → WouldBlock. Non-blocking acquire
         // must not wait and must not break a live lock.
-        let lock2 = try_lock_auth_file_nonblocking(&path);
+        let lock2 = try_lock_auth_file_nonblocking(&lock_path_for_auth(&path));
         assert!(lock2.is_none(), "must return None when the lock is held");
         drop(lock1);
     }
@@ -738,11 +773,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
 
-        let lock = try_lock_auth_file_nonblocking(&path).expect("acquire");
-        assert!(lock.still_live(&path), "freshly acquired lock must be live");
+        let lock = try_lock_auth_file_nonblocking(&lock_path_for_auth(&path)).expect("acquire");
+        assert!(lock.still_live(), "freshly acquired lock must be live");
 
         // Simulate the stale-recovery break performed by another process.
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
         std::fs::remove_file(&lock_path).unwrap();
         OpenOptions::new()
             .read(true)
@@ -753,7 +788,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            !lock.still_live(&path),
+            !lock.still_live(),
             "after unlink+recreate the held guard must report not-live"
         );
     }
@@ -765,11 +800,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
 
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(1)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(1)).await;
         assert!(lock.is_some(), "should acquire lock");
 
         // Verify lock file has holder info.
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
         let content = std::fs::read_to_string(&lock_path).unwrap();
         let (pid, _ts) = parse_holder_info(&content).unwrap();
         assert_eq!(pid, std::process::id());
@@ -778,7 +814,8 @@ mod tests {
         drop(lock);
 
         // Re-acquire should succeed.
-        let lock2 = try_lock_auth_file_async(&path, StdDuration::from_secs(1)).await;
+        let lock2 =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(1)).await;
         assert!(lock2.is_some(), "should re-acquire after release");
     }
 
@@ -787,12 +824,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
 
-        let lock1 = try_lock_auth_file_async(&path, StdDuration::from_secs(1)).await;
+        let lock1 =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(1)).await;
         assert!(lock1.is_some());
 
         // Second acquire should time out (same process, different FD —
         // WouldBlock but holder is alive + recent).
-        let lock2 = try_lock_auth_file_async(&path, StdDuration::from_millis(500)).await;
+        let lock2 =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_millis(500))
+                .await;
         assert!(lock2.is_none(), "should time out when lock is held");
 
         drop(lock1);
@@ -803,12 +843,13 @@ mod tests {
     async fn test_async_acquire_after_leftover_dead_pid_file() {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let dead_pid: u32 = i32::MAX as u32;
         std::fs::write(&lock_path, format!("{dead_pid}:9999999999")).unwrap();
 
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(1)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(1)).await;
         assert!(lock.is_some(), "should acquire over leftover dead-PID file");
 
         let content = std::fs::read_to_string(&lock_path).unwrap();
@@ -950,7 +991,7 @@ mod tests {
         // detects stale via timestamp, unlinks, acquires on fresh inode.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 120);
         let child_pid = child.id();
@@ -958,7 +999,8 @@ mod tests {
         assert!(is_process_alive(child_pid));
 
         let start = tokio::time::Instant::now();
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(5)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(5)).await;
         let elapsed = start.elapsed();
 
         assert!(lock.is_some(), "should break stale lock held by child");
@@ -988,14 +1030,15 @@ mod tests {
         // the holder process is still running.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child =
             spawn_lock_holder_subprocess(&lock_path, "empty", STALE_LOCK_TIMEOUT_SECS + 30);
         assert!(is_process_alive(child.id()));
 
         let start = tokio::time::Instant::now();
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(5)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(5)).await;
         let elapsed = start.elapsed();
 
         assert!(lock.is_some(), "should break old empty lock held by child");
@@ -1020,11 +1063,13 @@ mod tests {
         // in the sub-ms set_len(0)->write window) must NOT be broken.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "empty", 0); // fresh mtime
 
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_millis(800)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_millis(800))
+                .await;
         assert!(
             lock.is_none(),
             "must not break a fresh empty lock (holder may be mid-write)"
@@ -1041,7 +1086,7 @@ mod tests {
         // process death. Parent acquires immediately.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
         let child_pid = child.id();
@@ -1063,7 +1108,8 @@ mod tests {
 
         // Acquire should succeed immediately.
         let start = tokio::time::Instant::now();
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(2)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(2)).await;
         let elapsed = start.elapsed();
 
         assert!(lock.is_some(), "should acquire after child killed");
@@ -1084,7 +1130,7 @@ mod tests {
         // (Phase 2) wakes immediately on release — no poll lag.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
 
@@ -1097,7 +1143,8 @@ mod tests {
         });
 
         let start = tokio::time::Instant::now();
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(10)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(10)).await;
         let elapsed = start.elapsed();
 
         assert!(lock.is_some(), "should acquire after child exits");
@@ -1155,7 +1202,7 @@ mod tests {
         // than a 200ms poll loop would guarantee.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
 
@@ -1167,7 +1214,8 @@ mod tests {
         });
 
         let start = tokio::time::Instant::now();
-        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(10)).await;
+        let lock =
+            try_lock_auth_file_async(&lock_path_for_auth(&path), StdDuration::from_secs(10)).await;
         let elapsed = start.elapsed();
 
         assert!(lock.is_some(), "should acquire via blocking flock");
