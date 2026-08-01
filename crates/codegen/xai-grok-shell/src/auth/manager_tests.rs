@@ -98,6 +98,54 @@ fn auth_scope_uses_oauth2_when_present() {
     );
 }
 
+#[test]
+fn legacy_scope_fallback_reads_old_auth_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let auth_path = dir.path().join("auth").join("grok.json");
+
+    // Write auth.json with the legacy scope key (as `x setup` copies from
+    // a machine that was authenticated with an older grok version).
+    let legacy_auth = make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now());
+    let mut store = AuthStore::new();
+    store.insert(LEGACY_SCOPE.to_string(), legacy_auth);
+    write_auth_json(&auth_path, &store).unwrap();
+
+    // AuthManager uses the new OAuth2 scope, but should still find the
+    // token under the legacy key.
+    let cfg = GrokComConfig::default();
+    let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
+    let current = mgr.current();
+    assert!(current.is_some(), "should fall back to legacy scope key");
+    assert_eq!(current.unwrap().key, "test-key");
+}
+
+#[test]
+fn new_scope_takes_precedence_over_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let auth_path = dir.path().join("auth").join("grok.json");
+
+    let legacy_auth = GrokAuth {
+        key: "legacy-key".into(),
+        ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
+    };
+    let new_auth = GrokAuth {
+        key: "new-key".into(),
+        ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
+    };
+
+    let cfg = GrokComConfig::default();
+    let scope = cfg.auth_scope();
+
+    let mut store = AuthStore::new();
+    store.insert(LEGACY_SCOPE.to_string(), legacy_auth);
+    store.insert(scope, new_auth);
+    write_auth_json(&auth_path, &store).unwrap();
+
+    let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
+    let current = mgr.current().expect("should find auth");
+    assert_eq!(current.key, "new-key", "new scope should take precedence");
+}
+
 // -- Near-expiry (5-minute buffer) behavior ------------------------
 
 /// Regression test: a token within the 5-minute early-invalidation buffer
@@ -353,13 +401,18 @@ async fn team_login_then_personal_evicts_team_token() {
     assert_eq!(store.get(&base_scope).unwrap().key, "personal-token");
 }
 
-/// Regression test: clear() removes only the current scope from the
-/// canonical provider auth store.
+/// Regression test: clear() must only remove the current scope, not the
+/// legacy scope. Previously, logging in with OAuth would also delete the
+/// legacy `https://accounts.x.ai/sign-in` entry from auth.json.
 #[test]
-fn clear_removes_current_scope() {
+fn clear_does_not_remove_legacy_scope() {
     let dir = tempfile::tempdir().unwrap();
     let auth_path = dir.path().join("auth").join("grok.json");
 
+    let legacy_auth = GrokAuth {
+        key: "legacy-key".into(),
+        ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
+    };
     let oauth_auth = GrokAuth {
         key: "oauth-key".into(),
         ..make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now())
@@ -369,13 +422,19 @@ fn clear_removes_current_scope() {
     let scope = cfg.auth_scope();
 
     let mut store = AuthStore::new();
+    store.insert(LEGACY_SCOPE.to_string(), legacy_auth);
     store.insert(scope, oauth_auth);
     write_auth_json(&auth_path, &store).unwrap();
 
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
+    // clear() should only remove the OAuth scope, not legacy
     mgr.clear().unwrap();
 
     let on_disk = read_auth_json(&auth_path).unwrap();
+    assert!(
+        on_disk.contains_key(LEGACY_SCOPE),
+        "legacy scope should be preserved after clear()"
+    );
     assert!(
         !on_disk.contains_key(&mgr.scope),
         "current scope should be removed after clear()"

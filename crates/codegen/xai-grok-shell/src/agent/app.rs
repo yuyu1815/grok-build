@@ -1399,13 +1399,14 @@ pub async fn run_leader(
                 watch_paths.push(home.join(".claude.json"));
             }
             let auth_scope = agent_config.grok_com_config.auth_scope();
-            let auth_read_only = auth_manager_for_config.is_read_only();
-            // Gated on user_grok_home() so a cwd-relative .grok/auth/grok.json is never
-            // read as the user auth store when no home resolves.
-            let initial_auth_key_hash = xai_grok_config::user_grok_home()
-                .map(|g| crate::auth::auth_path(&g))
-                .and_then(|auth_path| crate::auth::read_auth_json(&auth_path).ok())
-                .and_then(|store| {
+            let resolved_auth_path = crate::auth::auth_path(&grok_home::grok_home());
+            // Preserve the no-home guard for the default path while allowing an
+            // explicit GROK_AUTH_PATH to work without a resolvable user home.
+            let initial_auth_key_hash = (std::env::var_os("GROK_AUTH_PATH").is_some()
+                || xai_grok_config::user_grok_home().is_some())
+            .then(|| crate::auth::read_auth_json(&resolved_auth_path).ok())
+            .flatten()
+            .and_then(|store| {
                     crate::auth::lookup_auth(&store, &auth_scope)
                         .map(|a| crate::config::reloader::hash_auth_key(&a.key))
                 })
@@ -1425,6 +1426,7 @@ pub async fn run_leader(
             let _config_watcher = if let Some((watcher, events_rx)) =
                 crate::config::watcher::ConfigFileWatcher::start(
                     &grok_home::grok_home(),
+                    &resolved_auth_path,
                     &watch_paths,
                     watcher_cwd,
                     None,
@@ -1461,11 +1463,10 @@ pub async fn run_leader(
                 let initial_config = crate::config::load_effective_config()
                     .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()));
                 let reloader = crate::config::reloader::ConfigReloader::new(
-                    grok_home::grok_home(),
+                    resolved_auth_path.clone(),
                     initial_auth_key_hash,
                     initial_config,
                     auth_scope,
-                    auth_read_only,
                     remote_settings_for_reloader,
                     config_update_tx,
                     agent_config.cli_experimental_memory,

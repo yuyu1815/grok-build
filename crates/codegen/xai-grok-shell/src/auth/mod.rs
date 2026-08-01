@@ -15,7 +15,6 @@ pub(crate) mod recovery;
 pub(crate) mod refresh;
 mod storage;
 pub(crate) mod token_type;
-// Retained for the login-flow module's explicit migration cleanup; canonical storage never falls back to it.
 pub(crate) use config::LEGACY_AUTH_SCOPE;
 pub use config::{
     ForceLoginTeam, GrokComConfig, OAuth2ProviderConfig, OidcAuthConfig, PreferredAuthMethod,
@@ -23,8 +22,8 @@ pub use config::{
 };
 pub(crate) use external_auth::{parse_output, refresh_with_command};
 pub(crate) use flow::{
-    AuthChannels, StderrCallback, run_auth_flow, run_auth_flow_interactive,
-    run_auth_flow_with_stderr_bridge, try_ensure_session_noninteractive,
+    AuthChannels, run_auth_flow, run_auth_flow_with_stderr_bridge,
+    try_ensure_session_noninteractive,
 };
 pub use flow::{
     AuthUrlInfo, AuthUrlMode, LoginTransportOverride, LogoutResult, ensure_authenticated,
@@ -39,7 +38,6 @@ pub use meta::{AuthMeta, GateInfo};
 pub use model::{AuthMode, GrokAuth, lookup_auth};
 pub(crate) use model::{TOKEN_TTL, UserInfo, is_expired, token_suffix};
 pub(crate) use refresh::DiagnosticUploader;
-pub use storage::auth_path;
 pub use storage::{
-    clear_api_key, read_api_key, read_auth_json, read_token_by_scope, store_api_key,
+    auth_path, clear_api_key, read_api_key, read_auth_json, read_token_by_scope, store_api_key,
 };

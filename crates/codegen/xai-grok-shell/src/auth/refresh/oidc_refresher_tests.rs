@@ -460,6 +460,7 @@ async fn oidc_refresher_e2e_invalid_client_adopts_valid_sibling_disk_token() {
     let mut store = std::collections::BTreeMap::new();
     store.insert(scope, disk_auth);
     let json = serde_json::to_string_pretty(&store).unwrap();
+    std::fs::create_dir_all(dir.path().join("auth")).unwrap();
     std::fs::write(dir.path().join("auth").join("grok.json"), json).unwrap();
 
     // In-memory auth has the OLD client_id that the server rejects.
@@ -680,8 +681,7 @@ async fn lock_timeout_falls_through_to_refresh() {
     mgr.hot_swap(expired);
 
     // Hold the lock file externally so the refresher times out.
-    std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-    let lock_path = dir.path().join("auth").join("grok.json.lock");
+    let lock_path = dir.path().join("auth.json.lock");
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

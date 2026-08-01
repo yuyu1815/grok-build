@@ -7,18 +7,20 @@ use super::is_xai_oauth2_issuer;
 pub(crate) const TOKEN_TTL: Duration = Duration::days(30);
 const DEFAULT_EARLY_INVALIDATION_SECS: u64 = 300; // 5 minutes
 
-/// Canonical `$GROK_HOME/auth/grok.json` scope key for plain API key auth
-/// (desktop login, `grok login --api-key`).
+/// Legacy auth.json scope key. Fallback for old devbox auth files.
+pub(super) const LEGACY_SCOPE: &str = "https://accounts.x.ai/sign-in";
+
+/// auth.json scope key for plain API key auth (desktop login, `grok login --api-key`).
 pub const API_KEY_SCOPE: &str = "xai::api_key";
 
 const BLOCKED_REASON_NO_LOGS: &str = "BLOCKED_REASON_NO_LOGS";
 const BLOCKED_REASON_NO_LOGS_MODERATED: &str = "BLOCKED_REASON_NO_LOGS_MODERATED";
 
-/// Token provenance (debugging/canonical auth storage only -- no code branches on this).
+/// Token provenance (debugging/auth.json only -- no code branches on this).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
-    /// Deprecated. Kept for deserializing old grok.json files.
+    /// Deprecated. Kept for deserializing old auth.json files.
     #[serde(alias = "grok")]
     WebLogin,
     /// OIDC or OAuth2 interactive login via customer IdP
@@ -70,7 +72,7 @@ pub struct GrokAuth {
     #[serde(default)]
     pub coding_data_retention_opt_out: bool,
 
-    /// Deprecated. Kept for deserializing existing grok.json files.
+    /// Deprecated. Kept for deserializing existing auth.json files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_grok_code_access: Option<bool>,
 
@@ -113,7 +115,7 @@ impl std::fmt::Debug for GrokAuth {
 impl GrokAuth {
     /// Seconds since this credential was minted. Negative when the local
     /// clock stepped back past `create_time` (NTP correction, VM restore, or
-    /// a sibling machine's clock via an adopted grok.json) — `create_time`
+    /// a sibling machine's clock via an adopted auth.json) — `create_time`
     /// is always stamped from the minting machine's local clock.
     pub(crate) fn mint_age_seconds(&self) -> i64 {
         Utc::now()
@@ -295,14 +297,20 @@ pub(crate) fn token_suffix(t: &str) -> &str {
     if len > 12 { &t[len - 12..] } else { t }
 }
 
-/// Look up auth from the canonical `$GROK_HOME/auth/grok.json` store by
-/// exact scope key.
+/// Look up auth from the store by scope key.
 ///
-/// Legacy `WebLogin` tokens (from the pre-OIDC `grok login --legacy` flow)
-/// are not usable through canonical storage. They remain deserializable for
-/// compatibility, but callers must authenticate through a supported method.
+/// Legacy `WebLogin` tokens (from the pre-OIDC `grok login --legacy`
+/// flow) are skipped — they are validated via a per-request DB lookup
+/// server-side which fails at high volume.  Skipping them here forces
+/// affected users to re-authenticate via OIDC on next launch.
 pub fn lookup_auth(map: &AuthStore, scope: &str) -> Option<GrokAuth> {
-    let auth = map.get(scope).cloned()?;
+    let auth = map.get(scope).cloned().or_else(|| {
+        if scope == LEGACY_SCOPE {
+            None
+        } else {
+            map.get(LEGACY_SCOPE).cloned()
+        }
+    })?;
     if auth.auth_mode == AuthMode::WebLogin {
         tracing::info!("auth: ignoring legacy WebLogin token — re-authentication required");
         return None;
@@ -419,6 +427,13 @@ mod tests {
         let mut map = AuthStore::new();
         map.insert("scope".into(), make_auth(AuthMode::WebLogin));
         assert!(lookup_auth(&map, "scope").is_none());
+    }
+
+    #[test]
+    fn lookup_auth_skips_weblogin_on_legacy_fallback() {
+        let mut map = AuthStore::new();
+        map.insert(LEGACY_SCOPE.into(), make_auth(AuthMode::WebLogin));
+        assert!(lookup_auth(&map, "other-scope").is_none());
     }
 
     #[test]

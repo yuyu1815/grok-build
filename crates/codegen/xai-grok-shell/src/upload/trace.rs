@@ -1621,6 +1621,12 @@ fn sort_session_files_by_priority(files: &mut [crate::session::persistence::Copi
 mod tests {
     use super::*;
     use crate::session::persistence::CopiedSessionFile;
+
+    fn auth_path(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("auth").join("grok.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        path
+    }
     use prod_mc_cli_chat_proxy_types::PromptMetadata;
     fn bare_prompt_metadata() -> PromptMetadata {
         PromptMetadata {
@@ -1764,8 +1770,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope.clone(), initial_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(
             dir.path(),
             grok_com_config.clone(),
@@ -1803,8 +1808,7 @@ mod tests {
         };
         store.insert(scope, refreshed_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         auth_manager.force_reload_from_disk();
         assert_eq!(
             provider.snapshot().token.as_deref(),
@@ -1836,8 +1840,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope.clone(), expired_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(
             dir.path(),
             grok_com_config.clone(),
@@ -1867,8 +1870,7 @@ mod tests {
         };
         store.insert(scope, fresh_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         auth_manager.force_reload_from_disk();
         let provider = resolver
             .proxy_credentials()
@@ -1900,8 +1902,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope, expired_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(dir.path(), grok_com_config));
         let resolver = DynamicResolver {
             auth_manager,
@@ -1947,8 +1948,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope, valid_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(dir.path(), grok_com_config));
         let resolver = DynamicResolver {
             auth_manager,
@@ -2000,8 +2000,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope, expired_auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(dir.path(), grok_com_config));
         struct FreshRefresher;
         #[async_trait::async_trait]
@@ -2170,8 +2169,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert(scope, auth);
         let auth_json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-        std::fs::write(dir.path().join("auth").join("grok.json"), &auth_json).unwrap();
+        std::fs::write(auth_path(dir.path()), &auth_json).unwrap();
         let auth_manager = Arc::new(crate::auth::AuthManager::new(dir.path(), grok_com_config));
         let base_config = TraceExportConfig {
             bucket_url: Some("gs://bucket".into()),

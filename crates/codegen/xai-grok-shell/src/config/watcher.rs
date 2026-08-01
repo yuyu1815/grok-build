@@ -98,15 +98,15 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for the canonical provider auth file,
-/// `config.toml`, and `models_cache.json` changes, plus any extra paths
-/// (project `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
+/// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json`
+/// changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`,
+/// etc.) provided at startup.
 ///
 /// Uses `notify-debouncer-mini` for built-in debounce that coalesces rapid
 /// editor writes (including write-then-rename patterns).
 ///
 /// Self-write suppression is intentionally omitted. When the agent writes
-/// `auth/grok.json` or `config.toml`, the watcher will fire and the
+/// `auth.json` or `config.toml`, the watcher will fire and the
 /// [`ConfigReloader`](super::reloader::ConfigReloader) will re-read the file.
 /// The reloader's own content-based deduplication (auth key hash, toml value
 /// comparison) skips the update when nothing actually changed, so the
@@ -142,6 +142,7 @@ impl ConfigFileWatcher {
     /// directories.
     pub fn start(
         grok_home: &Path,
+        auth_path: &Path,
         extra_paths: &[PathBuf],
         cwd: Option<&Path>,
         debounce: Option<Duration>,
@@ -149,18 +150,10 @@ impl ConfigFileWatcher {
         let debounce = debounce.unwrap_or(DEFAULT_DEBOUNCE);
         let (tx, rx) = mpsc::unbounded_channel();
         let grok_home_buf = grok_home.to_path_buf();
-        let canonical_auth_dir = grok_home_buf.join("auth");
-        // A valid inline `GROK_AUTH` is authoritative and memory-only. Do not
-        // even enqueue disk auth events; the reloader also guards application.
-        let watch_auth_files = match std::env::var("GROK_AUTH") {
-            Err(_) => true,
-            Ok(json) => serde_json::from_str::<crate::auth::GrokAuth>(&json).is_err()
-                && serde_json::from_str::<std::collections::BTreeMap<String, crate::auth::GrokAuth>>(
-                    &json,
-                )
-                .is_err(),
-        };
-        let _ = std::fs::create_dir_all(&canonical_auth_dir);
+        let auth_path_buf = auth_path.to_path_buf();
+        if let Some(parent) = auth_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         // `~/.claude.json` is consumed by **every**
         // session (see `load_claude_json_mcp_servers_as_configs`), so
         // a write to it must broadcast through the unit
@@ -180,7 +173,6 @@ impl ConfigFileWatcher {
         // canonicalized in `parent_is_dir`.
         let user_home_buf: Option<PathBuf> =
             dirs::home_dir().map(|h| dunce::canonicalize(&h).unwrap_or(h));
-        let canonical_auth_dir_for_watch = canonical_auth_dir.clone();
 
         let mut debouncer = new_filtered_debouncer(debounce, move |res: DebounceEventResult| {
             let Ok(events) = res else { return };
@@ -192,11 +184,7 @@ impl ConfigFileWatcher {
                 let parent = path.parent();
 
                 let change = match name {
-                    Some("grok.json")
-                        if watch_auth_files && parent == Some(canonical_auth_dir.as_path()) =>
-                    {
-                        Some(ConfigChangeEvent::AuthChanged)
-                    }
+                    _ if path == &auth_path_buf => Some(ConfigChangeEvent::AuthChanged),
                     Some("config.toml") if parent == Some(grok_home_buf.as_path()) => {
                         Some(ConfigChangeEvent::GlobalConfigChanged)
                     }
@@ -249,15 +237,17 @@ impl ConfigFileWatcher {
             })
             .ok()?;
 
-        if canonical_auth_dir_for_watch.is_dir() {
+        if let Some(parent) = auth_path.parent()
+            && parent != grok_home
+        {
             debouncer
                 .watcher()
-                .watch(&canonical_auth_dir_for_watch, RecursiveMode::NonRecursive)
+                .watch(parent, RecursiveMode::NonRecursive)
                 .map_err(|e| {
                     tracing::warn!(
-                        path = %canonical_auth_dir_for_watch.display(),
+                        path = %parent.display(),
                         error = %e,
-                        "failed to watch canonical auth directory"
+                        "failed to watch auth directory"
                     )
                 })
                 .ok()?;
@@ -682,21 +672,22 @@ mod tests {
         target_os = "macos",
         ignore = "flaky on macOS: FSEvents does not reliably deliver events in test harness"
     )]
-    fn watcher_detects_canonical_auth_change() {
+    fn watcher_detects_auth_json_change() {
         let tmp = TempDir::new().unwrap();
-        let auth_dir = tmp.path().join("auth");
-        fs::create_dir_all(&auth_dir).unwrap();
-        fs::write(auth_dir.join("grok.json"), "{}").unwrap();
+        let auth_path = tmp.path().join("auth").join("grok.json");
+        fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        fs::write(&auth_path, "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
-                .expect("watcher should start");
-
-        fs::write(
-            tmp.path().join("auth").join("grok.json"),
-            r#"{"new":"token"}"#,
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
         )
-        .unwrap();
+        .expect("watcher should start");
+
+        fs::write(&auth_path, r#"{"new":"token"}"#).unwrap();
         wait_ms(300);
 
         let mut found = false;
@@ -705,7 +696,7 @@ mod tests {
                 found = true;
             }
         }
-        assert!(found, "should detect canonical auth file change");
+        assert!(found, "should detect auth.json change");
     }
 
     /// Regression test for the MCP/skills reload storm (feedback loop):
@@ -721,12 +712,18 @@ mod tests {
     fn watcher_ignores_reads_of_watched_files() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("config.toml"), "a = 1").unwrap();
-        fs::create_dir_all(tmp.path().join("auth")).unwrap();
-        fs::write(tmp.path().join("auth").join("grok.json"), "{}").unwrap();
+        let auth_path = tmp.path().join("auth").join("grok.json");
+        fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        fs::write(&auth_path, "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
-                .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
         wait_ms(150);
         while rx.try_recv().is_ok() {} // drain any startup noise
 
@@ -734,7 +731,7 @@ mod tests {
         // files. Repeatedly, to defeat any incidental coalescing.
         for _ in 0..5 {
             let _ = fs::read(tmp.path().join("config.toml")).unwrap();
-            let _ = fs::read(tmp.path().join("auth").join("grok.json")).unwrap();
+            let _ = fs::read(&auth_path).unwrap();
             wait_ms(20);
         }
         wait_ms(300);
@@ -770,9 +767,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("config.toml"), "").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
-                .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(tmp.path().join("config.toml"), "[ui]\ntheme = \"dark\"").unwrap();
         wait_ms(300);
@@ -798,9 +800,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("models_cache.json"), "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
-                .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(
             tmp.path().join("models_cache.json"),
@@ -823,9 +830,14 @@ mod tests {
     fn watcher_ignores_unrelated_files() {
         let tmp = TempDir::new().unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
-                .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(tmp.path().join("leader.log"), "log line").unwrap();
         fs::write(tmp.path().join("leader.lock"), "12345").unwrap();
@@ -843,9 +855,14 @@ mod tests {
 
         // Use a long debounce (500ms) so all rapid writes (50ms total)
         // land in a single debounce window regardless of platform.
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(500)))
-                .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &tmp.path().join("auth").join("grok.json"),
+            &[],
+            None,
+            Some(Duration::from_millis(500)),
+        )
+        .expect("watcher should start");
 
         wait_ms(200);
 
@@ -889,6 +906,7 @@ mod tests {
 
         let (_w, mut rx) = ConfigFileWatcher::start(
             grok_home.path(),
+            &grok_home.path().join("auth").join("grok.json"),
             &[],
             Some(cwd.path()),
             Some(Duration::from_millis(100)),
@@ -935,6 +953,7 @@ mod tests {
 
         let (_w, mut rx) = ConfigFileWatcher::start(
             grok_home.path(),
+            &grok_home.path().join("auth").join("grok.json"),
             &[],
             Some(cwd.path()),
             Some(Duration::from_millis(100)),
@@ -983,6 +1002,7 @@ mod tests {
 
         let (_w, mut rx) = ConfigFileWatcher::start(
             grok_home.path(),
+            &grok_home.path().join("auth").join("grok.json"),
             &[],
             Some(cwd.path()),
             Some(Duration::from_millis(100)),
@@ -1025,6 +1045,7 @@ mod tests {
 
         let (mut watcher, mut rx) = ConfigFileWatcher::start(
             grok_home.path(),
+            &grok_home.path().join("auth").join("grok.json"),
             &[],
             None,
             Some(Duration::from_millis(100)),
@@ -1067,6 +1088,7 @@ mod tests {
         let cwd = TempDir::new().unwrap();
         let Some((mut watcher, _rx)) = ConfigFileWatcher::start(
             grok_home.path(),
+            &grok_home.path().join("auth").join("grok.json"),
             &[],
             None,
             Some(Duration::from_millis(100)),

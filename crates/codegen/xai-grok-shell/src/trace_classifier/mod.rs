@@ -2146,6 +2146,12 @@ mod tests {
     /// `AuthManager` reads). `auth_mode: api_key` skips the refresh
     /// path entirely — useful for "plain key, no refresh wanted"
     /// fixtures.
+    fn auth_json_path(grok_home: &Path) -> std::path::PathBuf {
+        let path = grok_home.join("auth").join("grok.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        path
+    }
+
     fn write_auth_json(grok_home: &Path, key: &str) {
         let scope = crate::auth::GrokComConfig::default().auth_scope();
         let body = serde_json::json!({
@@ -2156,9 +2162,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
-            .expect("write auth.json");
+        std::fs::write(auth_json_path(grok_home), body.to_string()).expect("write auth.json");
     }
 
     /// `auth.json` with no scope entries — equivalent to "user never
@@ -2166,8 +2170,7 @@ mod tests {
     /// `non_interactive_auth_key` returns `Ok(None)` →
     /// `resolve_api_key` falls through to the unified error.
     fn write_empty_auth_json(grok_home: &Path) {
-        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
-        std::fs::write(grok_home.join("auth").join("grok.json"), "{}").expect("write auth.json");
+        std::fs::write(auth_json_path(grok_home), "{}").expect("write auth.json");
     }
 
     /// Write a non-expired OIDC entry (`expires_at` 1 hour in the
@@ -2188,9 +2191,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
-            .expect("write auth.json");
+        std::fs::write(auth_json_path(grok_home), body.to_string()).expect("write auth.json");
     }
 
     /// Write an expired OIDC entry with NO `refresh_token`. The
@@ -2207,9 +2208,7 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::create_dir_all(grok_home.join("auth")).expect("create auth directory");
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
-            .expect("write auth.json");
+        std::fs::write(auth_json_path(grok_home), body.to_string()).expect("write auth.json");
     }
 
     /// F20: `resolve_api_key` precedence (flag > env > error). Now
@@ -2453,10 +2452,18 @@ mod tests {
     /// * `XAI_API_KEY` — would return early from `resolve_api_key`.
     /// * `GROK_AUTH` — inline-JSON credentials override that bypasses
     ///   the on-disk read entirely (`AuthManager::new`).
+    /// * `GROK_AUTH_PATH` — overrides the auth/grok.json path; if set to
+    ///   the operator's real `~/.grok/auth/grok.json`, the test would read
+    ///   live OIDC credentials instead of the scratch fixture.
     /// * `GROK_AUTH_PROVIDER_COMMAND` — selects an external
     ///   refresher that could mint credentials independent of the
     ///   fixture.
-    const ISOLATED_ENV_KEYS: &[&str] = &["XAI_API_KEY", "GROK_AUTH", "GROK_AUTH_PROVIDER_COMMAND"];
+    const ISOLATED_ENV_KEYS: &[&str] = &[
+        "XAI_API_KEY",
+        "GROK_AUTH",
+        "GROK_AUTH_PATH",
+        "GROK_AUTH_PROVIDER_COMMAND",
+    ];
 
     /// Async helper: clear every env var in [`ISOLATED_ENV_KEYS`]
     /// before running `fut`, restoring them after. Callers must be

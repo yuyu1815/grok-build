@@ -34,12 +34,6 @@ fn auth_json_source() -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    if let Some(p) = std::env::var_os("GROK_AUTH_PATH") {
-        let pb = PathBuf::from(p);
-        if pb.is_file() {
-            return Some(pb);
-        }
-    }
     dirs_next_home()
         .map(|h| h.join(".grok/auth").join("grok.json"))
         .filter(|p| p.is_file())

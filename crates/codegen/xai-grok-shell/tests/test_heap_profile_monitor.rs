@@ -125,6 +125,7 @@ fn seed_auth_json(home: &Path, token: &str) {
         ..Default::default()
     };
     let store = serde_json::json!({ scope: auth });
+    std::fs::create_dir_all(home.join("auth")).expect("create auth directory");
     std::fs::write(
         home.join("auth").join("grok.json"),
         serde_json::to_vec(&store).expect("serialize auth.json"),

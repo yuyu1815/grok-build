@@ -88,10 +88,8 @@ pub struct ConfigReloader {
     /// to diff (the dedup lives in `ModelsManager::reload_from_disk_cache`),
     /// mtime-only touches (see `hash_project_mcp_config`).
     last_project_mcp_hashes: HashMap<PathBuf, u64>,
-    grok_home: PathBuf,
+    auth_path: PathBuf,
     auth_scope: String,
-    /// Inline `GROK_AUTH` is authoritative and must ignore disk watcher events.
-    auth_read_only: bool,
     remote_settings: Option<crate::util::config::RemoteSettings>,
     config_update_tx: mpsc::UnboundedSender<ConfigUpdate>,
     /// Whether --experimental-memory was passed at startup. Persists across config reloads.
@@ -102,11 +100,10 @@ pub struct ConfigReloader {
 
 impl ConfigReloader {
     pub fn new(
-        grok_home: PathBuf,
+        auth_path: PathBuf,
         initial_auth_key_hash: u64,
         initial_config: toml::Value,
         auth_scope: String,
-        auth_read_only: bool,
         remote_settings: Option<crate::util::config::RemoteSettings>,
         config_update_tx: mpsc::UnboundedSender<ConfigUpdate>,
         experimental_memory: bool,
@@ -116,9 +113,8 @@ impl ConfigReloader {
             last_auth_key_hash: initial_auth_key_hash,
             last_global_config: initial_config,
             last_project_mcp_hashes: HashMap::new(),
-            grok_home,
+            auth_path,
             auth_scope,
-            auth_read_only,
             remote_settings,
             config_update_tx,
             experimental_memory,
@@ -177,9 +173,7 @@ impl ConfigReloader {
             // `McpServersChanged` that swept every session).
             let project_cwds = collect_project_cwds(&batch);
 
-            if has_auth && self.auth_read_only {
-                debug!("ignoring auth file change because inline GROK_AUTH is authoritative");
-            } else if has_auth {
+            if has_auth {
                 let result =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.reload_auth()));
                 match result {
@@ -188,9 +182,9 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = crate::auth::auth_path(&self.grok_home);
+                        let path = self.auth_path.clone();
                         xai_grok_telemetry::unified_log::error(
-                            "auth reload: auth file unreadable, keeping previous credentials",
+                            "auth reload: auth.json unreadable, keeping previous credentials",
                             None,
                             Some(serde_json::json!({
                                 "error": e.to_string(),
@@ -280,17 +274,14 @@ impl ConfigReloader {
     }
 
     fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = crate::auth::auth_path(&self.grok_home);
-        let store = read_auth_json(&auth_path)?;
+        let store = read_auth_json(&self.auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {
             Some(auth) => {
                 let new_hash = hash_auth_key(&auth.key);
 
                 if new_hash == self.last_auth_key_hash {
-                    debug!(
-                        "$GROK_HOME/auth/grok.json changed but token key is identical, skipping"
-                    );
+                    debug!("auth.json changed but token key is identical, skipping");
                     return Ok(());
                 }
 
@@ -304,7 +295,7 @@ impl ConfigReloader {
                 if self.last_auth_key_hash != 0 {
                     self.last_auth_key_hash = 0;
                     let _ = self.config_update_tx.send(ConfigUpdate::AuthCleared);
-                    info!("auth scope removed from $GROK_HOME/auth/grok.json, sent clear to agent");
+                    info!("auth scope removed from auth.json, sent clear to agent");
                     // AuthCleared makes the agent drop in-memory credentials;
                     // record what the reloader saw so "entry removed" is
                     // distinguishable from "file deleted" (the Err path).
@@ -562,17 +553,16 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let initial_hash = hash_auth_key("same-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             initial_hash,
             empty_config,
             scope,
-            false,
             None,
             tx,
             false,
@@ -594,17 +584,16 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("old-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             old_hash,
             empty_config,
             scope,
-            false,
             None,
             tx,
             false,
@@ -622,22 +611,21 @@ mod tests {
     #[tokio::test]
     async fn reloader_detects_auth_cleared() {
         let tmp = tempfile::TempDir::new().unwrap();
-        // Write grok.json with a DIFFERENT scope — our scope is missing
+        // Write auth.json with a DIFFERENT scope — our scope is missing
         let auth = make_auth("other-key");
         let mut store = BTreeMap::new();
         store.insert("https://other.example.com".to_string(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(tmp.path().join("auth").join("grok.json"), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("had-a-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             old_hash,
             empty_config,
             "https://test.example.com".to_string(),
-            false,
             None,
             tx,
             false,
@@ -652,20 +640,15 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_malformed_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join("auth").join("grok.json"),
-            "not valid json{{{",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("auth.json"), "not valid json{{{").unwrap();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             0,
             empty_config,
             "https://test.example.com".to_string(),
-            false,
             None,
             tx,
             false,
@@ -683,16 +666,15 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_missing_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        // No grok.json written
+        // No auth.json written
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             0,
             empty_config,
             "https://test.example.com".to_string(),
-            false,
             None,
             tx,
             false,
@@ -707,47 +689,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn inline_auth_ignores_disk_watcher_reload() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let scope = "https://test.example.com".to_string();
-        let disk_auth = make_auth("disk-key");
-        let mut store = BTreeMap::new();
-        store.insert(scope.clone(), disk_auth);
-        std::fs::create_dir_all(tmp.path().join("auth")).unwrap();
-        std::fs::write(
-            tmp.path().join("auth").join("grok.json"),
-            serde_json::to_string_pretty(&store).unwrap(),
-        )
-        .unwrap();
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
-            hash_auth_key("inline-key"),
-            toml::Value::Table(toml::map::Map::new()),
-            scope,
-            true,
-            None,
-            tx,
-            false,
-            false,
-        );
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
-        let handle = tokio::spawn(reloader.run(event_rx, cancel.clone()));
-
-        event_tx.send(ConfigChangeEvent::AuthChanged).unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "disk auth must not replace or clear authoritative inline GROK_AUTH"
-        );
-
-        cancel.cancel();
-        let _ = handle.await;
-    }
-
     /// `ModelsCacheChanged` is a pure pass-through: the reloader has no toml
     /// so the event must surface as `ConfigUpdate::ModelsCacheChanged`
     /// (walked to the git root by the loaders), not just files directly
@@ -758,11 +699,10 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             0,
             empty_config,
             "https://test.example.com".to_string(),
-            false,
             None,
             tx,
             false,
@@ -800,11 +740,10 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let reloader = ConfigReloader::new(
-            tmp.path().to_path_buf(),
+            tmp.path().join("auth.json"),
             0,
             empty_config,
             "https://test.example.com".to_string(),
-            false,
             None,
             tx,
             false,

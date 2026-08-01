@@ -55,6 +55,9 @@ fn test_home() -> &'static PathBuf {
 }
 
 fn reset(home: &std::path::Path) {
+    let auth_dir = home.join("auth");
+    let _ = std::fs::remove_dir_all(&auth_dir);
+    std::fs::create_dir_all(&auth_dir).unwrap();
     for f in [
         "config.toml",
         "auth.json",
