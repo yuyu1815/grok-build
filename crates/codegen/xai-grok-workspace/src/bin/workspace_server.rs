@@ -181,16 +181,10 @@ fn main() -> anyhow::Result<()> {
         eprintln!("{msg}");
         std::process::exit(EXIT_SERVER_ID_INVALID);
     }
-    let startup_cwd = std::env::current_dir()?;
     let cwd = match args.cwd {
         Some(ref p) => dunce::canonicalize(p)?,
-        None => startup_cwd.clone(),
+        None => std::env::current_dir()?,
     };
-    let auth_path = xai_grok_workspace::hub_auth::resolve_auth_path(
-        args.auth_config.as_deref(),
-        &cwd,
-        &startup_cwd,
-    )?;
     let _pidfile_guard = if args.daemonize {
         let anchor = |p: PathBuf| if p.is_absolute() { p } else { cwd.join(p) };
         args.log_file = anchor(std::mem::take(&mut args.log_file));
@@ -200,6 +194,7 @@ fn main() -> anyhow::Result<()> {
         {
             args.diag_socket = anchor(std::mem::take(&mut args.diag_socket));
         }
+        args.auth_config = args.auth_config.take().map(anchor);
         daemonize::daemonize(&args.log_file)?;
         match daemonize::PidFile::acquire_or_take_over(&args.pid_file, daemonize::TAKEOVER_GRACE)? {
             Some(guard) => Some(guard),
@@ -211,9 +206,9 @@ fn main() -> anyhow::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run(args, cwd, auth_path))
+        .block_on(run(args, cwd))
 }
-async fn run(args: Args, cwd: PathBuf, auth_path: PathBuf) -> anyhow::Result<()> {
+async fn run(args: Args, cwd: PathBuf) -> anyhow::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     use tracing_subscriber::layer::SubscriberExt as _;
     use tracing_subscriber::util::SubscriberInitExt as _;
@@ -289,7 +284,7 @@ async fn run(args: Args, cwd: PathBuf, auth_path: PathBuf) -> anyhow::Result<()>
             );
         }
     }
-    let auth_provider = xai_grok_workspace::hub_auth::provider(&url, &auth_path)?;
+    let auth_provider = xai_grok_workspace::hub_auth::provider(&url, args.auth_config.as_deref())?;
     tracing::info!(hub_url = % url, cwd = % cwd.display(), "Starting workspace server");
     let cwd_display = cwd.display().to_string();
     let session_id = std::env::var("GROK_SESSION_ID").ok();

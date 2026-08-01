@@ -33,7 +33,7 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, auth_path, ensure_auth_parent, read_auth_json,
+    AuthFileLock, default_auth_path, ensure_auth_parent, read_auth_json,
     read_auth_json_or_empty_recovering_corrupt, write_auth_json,
 };
 
@@ -133,6 +133,7 @@ pub struct AuthManager {
     /// so the spawned `/user` enrichment task can write back.
     inner: Arc<RwLock<Option<GrokAuth>>>,
     path: PathBuf,
+    explicit_auth_path: bool,
     scope: String,
     grok_com_config: GrokComConfig,
     proxy_base_url: String,
@@ -283,7 +284,8 @@ impl AuthManager {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    auth_path(grok_home),
+                    default_auth_path(grok_home),
+                    false,
                     scope,
                     grok_com_config,
                     proxy_base_url,
@@ -294,7 +296,10 @@ impl AuthManager {
         }
 
         // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth/grok.json).
-        let path = auth_path(grok_home);
+        let (path, explicit_auth_path) = match std::env::var("GROK_AUTH_PATH") {
+            Ok(path) => (PathBuf::from(path), true),
+            Err(_) => (default_auth_path(grok_home), false),
+        };
         if let Err(e) = ensure_auth_parent(&path) {
             tracing::warn!(
                 path = %path.display(),
@@ -317,7 +322,9 @@ impl AuthManager {
                     // Best-effort cleanup under advisory lock (consistent with
                     // other auth.json writers). Non-blocking: if the lock is
                     // held by a concurrent process, skip — retried next launch.
-                    if let Some(_lock) = lock::try_lock_auth_file_nonblocking(&path) {
+                    if let Some(_lock) =
+                        lock::try_lock_auth_file_nonblocking(&path, explicit_auth_path)
+                    {
                         let mut cleaned = map.clone();
                         cleaned.remove(LEGACY_SCOPE);
                         let _ = write_auth_json(&path, &cleaned);
@@ -368,6 +375,7 @@ impl AuthManager {
         let manager = Self::assemble(
             auth,
             path,
+            explicit_auth_path,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -386,6 +394,7 @@ impl AuthManager {
     fn assemble(
         inner: Option<GrokAuth>,
         path: PathBuf,
+        explicit_auth_path: bool,
         scope: String,
         grok_com_config: GrokComConfig,
         proxy_base_url: String,
@@ -394,6 +403,7 @@ impl AuthManager {
         Self {
             inner: Arc::new(RwLock::new(inner)),
             path,
+            explicit_auth_path,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -458,7 +468,9 @@ impl AuthManager {
     }
 
     fn remove_scope_impl(&self, scope: &str) -> std::io::Result<()> {
-        let disk_mutation = if let Some(_lock) = lock::try_lock_auth_file_nonblocking(&self.path) {
+        let disk_mutation = if let Some(_lock) =
+            lock::try_lock_auth_file_nonblocking(&self.path, self.explicit_auth_path)
+        {
             self.write_scope_removal(scope)? // lock released on drop
         } else {
             ScopeRemoval::SkippedLockUnavailable
@@ -1179,7 +1191,7 @@ impl AuthManager {
         &self,
         timeout: StdDuration,
     ) -> Option<AuthFileLock> {
-        try_lock_auth_file_async(&self.path, timeout).await
+        try_lock_auth_file_async(&self.path, self.explicit_auth_path, timeout).await
     }
 
     // ── Refresher setup ─────────────────────────────────────────────
@@ -1708,7 +1720,7 @@ impl AuthManager {
         file_lock: AuthFileLock,
         reason: RefreshReason,
     ) -> Result<LockOutcome, AuthError> {
-        if file_lock.still_live(&self.path) {
+        if file_lock.still_live() {
             return Ok(LockOutcome::Held(file_lock));
         }
         xai_grok_telemetry::unified_log::warn(

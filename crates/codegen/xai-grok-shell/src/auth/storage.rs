@@ -4,12 +4,9 @@ use std::path::{Path, PathBuf};
 
 use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
-/// Resolve the auth file path. `GROK_AUTH_PATH` remains an explicit override;
-/// otherwise use the canonical provider credential location.
-pub fn auth_path(grok_home: &Path) -> PathBuf {
-    std::env::var_os("GROK_AUTH_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| grok_home.join("auth").join("grok.json"))
+/// Canonical on-disk auth path under the Grok home.
+pub fn default_auth_path(grok_home: &Path) -> PathBuf {
+    grok_home.join("auth").join("grok.json")
 }
 
 /// Create the parent directory before any lock or write operation.
@@ -20,12 +17,16 @@ pub(crate) fn ensure_auth_parent(auth_file: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Return the advisory lock path next to the resolved auth file.
-pub(crate) fn auth_lock_path(auth_file: &Path) -> PathBuf {
-    let file_name = auth_file
-        .file_name()
-        .map(|name| format!("{}.lock", name.to_string_lossy()))
-        .unwrap_or_else(|| "auth.json.lock".to_owned());
+/// Return the advisory lock path for an AuthManager-backed auth file.
+///
+/// Explicit `GROK_AUTH_PATH` keeps the PR-base fixed sibling filename
+/// `auth.json.lock`; the canonical default uses `auth/grok.json.lock`.
+pub(crate) fn auth_lock_path(auth_file: &Path, explicit_override: bool) -> PathBuf {
+    let file_name = if explicit_override {
+        "auth.json.lock"
+    } else {
+        "grok.json.lock"
+    };
     auth_file.with_file_name(file_name)
 }
 
@@ -33,6 +34,7 @@ pub(crate) fn auth_lock_path(auth_file: &Path) -> PathBuf {
 /// The lock is released when the inner `File` is dropped (closing the FD).
 pub(crate) struct AuthFileLock {
     pub(super) _file: File,
+    pub(super) lock_path: PathBuf,
 }
 
 impl AuthFileLock {
@@ -55,10 +57,10 @@ impl AuthFileLock {
     ///
     /// Non-Unix has no inode concept, so this conservatively returns `true`.
     #[cfg(unix)]
-    pub(crate) fn still_live(&self, auth_json_path: &Path) -> bool {
+    pub(crate) fn still_live(&self) -> bool {
         use std::os::unix::fs::MetadataExt;
-        let lock_path = auth_lock_path(auth_json_path);
-        let (Ok(fd_meta), Ok(path_meta)) = (self._file.metadata(), std::fs::metadata(&lock_path))
+        let (Ok(fd_meta), Ok(path_meta)) =
+            (self._file.metadata(), std::fs::metadata(&self.lock_path))
         else {
             // Lock file gone or unreadable → we no longer hold the live lock.
             return false;
@@ -67,7 +69,7 @@ impl AuthFileLock {
     }
 
     #[cfg(not(unix))]
-    pub(crate) fn still_live(&self, _auth_json_path: &Path) -> bool {
+    pub(crate) fn still_live(&self) -> bool {
         true
     }
 }
@@ -351,7 +353,7 @@ fn restore_prior_bytes(auth_file: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key
 /// when the requested scope is not found (devbox auth.json migration).
 pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<String> {
-    let path = auth_path(grok_home);
+    let path = default_auth_path(grok_home);
     let store =
         read_auth_json(&path).map_err(|_| anyhow::anyhow!("Not logged in. Run `grok login`."))?;
     lookup_auth(&store, scope).map(|a| a.key).ok_or_else(|| {
@@ -361,7 +363,7 @@ pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<Stri
 
 /// Read the API key from the `xai::api_key` scope in auth.json.
 pub fn read_api_key(grok_home: &Path) -> Option<String> {
-    let path = auth_path(grok_home);
+    let path = default_auth_path(grok_home);
     let map = read_auth_json(&path).ok()?;
     map.get(API_KEY_SCOPE).map(|a| a.key.clone())
 }
@@ -371,7 +373,7 @@ pub fn read_api_key(grok_home: &Path) -> Option<String> {
 /// Uses the corrupt-recovery reader so a malformed auth.json (e.g. from a
 /// previous crash) can be healed when the user sets an API key.
 pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
-    let path = auth_path(grok_home);
+    let path = default_auth_path(grok_home);
     let mut map = read_auth_json_or_empty_recovering_corrupt(&path)?;
     map.insert(
         API_KEY_SCOPE.to_owned(),
@@ -386,7 +388,7 @@ pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
 
 /// Remove the `xai::api_key` scope from auth.json.
 pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
-    let path = auth_path(grok_home);
+    let path = default_auth_path(grok_home);
     if let Ok(mut map) = read_auth_json(&path) {
         map.remove(API_KEY_SCOPE);
         if map.is_empty() {

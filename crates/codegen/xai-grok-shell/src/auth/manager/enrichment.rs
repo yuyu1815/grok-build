@@ -142,7 +142,9 @@ async fn run_user_info_enrichment(manager: &AuthManager, auth: GrokAuth) {
     // R-M-W file lock. On timeout, fall through to an unlocked write
     // rather than drop the enrichment.
     let lock_started = std::time::Instant::now();
-    let lock_guard = try_lock_auth_file_async(&manager.path, AUTH_LOCK_TIMEOUT).await;
+    let lock_guard =
+        try_lock_auth_file_async(&manager.path, manager.explicit_auth_path, AUTH_LOCK_TIMEOUT)
+            .await;
     let lock_wait_ms = lock_started.elapsed().as_millis() as u64;
     if lock_guard.is_none() {
         tracing::warn!("auth: enrichment proceeding without auth.json.lock");

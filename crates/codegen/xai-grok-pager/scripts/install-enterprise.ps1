@@ -94,12 +94,7 @@ function Download-File([string]$Url, [string]$OutFile) {
 }
 
 function Read-GrokToken([string]$Scope) {
-    $authFile = if ($env:GROK_AUTH_PATH) {
-        $env:GROK_AUTH_PATH
-    } else {
-        $authRoot = if ($env:GROK_HOME) { $env:GROK_HOME } else { $GrokDir }
-        Join-Path (Join-Path $authRoot 'auth') 'grok.json'
-    }
+    $authFile = Join-Path (Join-Path $GrokDir 'auth') 'grok.json'
     if (-not (Test-Path $authFile)) { return $null }
     try {
         $auth = Get-Content -Raw $authFile | ConvertFrom-Json

@@ -7,12 +7,9 @@
 //! `LeaderAuthProvider`) to avoid racing the leader's own auth.json writer.
 
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fs2::FileExt;
 use url::Url;
 use xai_computer_hub_sdk::{
     AuthCredential, AuthIdentity, AuthProvider, OidcAuthProviderBuilder, RefreshEvent,
@@ -21,7 +18,7 @@ use xai_computer_hub_sdk::{
 /// Plain bearer provider that also carries the owner identity parsed from the
 /// same auth.json entry. Used for the loopback / local-dev path (no OIDC
 /// refresh) so the workspace can still derive `WorkspaceIdentity` from the auth
-/// provider — without a second auth store read.
+/// provider — without a second auth.json read.
 struct BearerWithIdentity {
     token: String,
     identity: AuthIdentity,
@@ -46,7 +43,7 @@ impl AuthProvider for BearerWithIdentity {
     }
 }
 
-/// Owner identity parsed from an auth store entry, for the [`AuthProvider`]s
+/// Owner identity parsed from an auth.json entry, for the [`AuthProvider`]s
 /// built here to surface via [`AuthProvider::identity`].
 fn identity_from_entry(entry: &AuthEntry) -> AuthIdentity {
     AuthIdentity {
@@ -76,71 +73,9 @@ struct AuthEntry {
 }
 
 fn default_auth_path() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("GROK_AUTH_PATH") {
-        return Ok(PathBuf::from(path));
-    }
     let grok = xai_grok_config::user_grok_home()
         .ok_or_else(|| anyhow::anyhow!("no user grok home (set $GROK_HOME or $HOME)"))?;
     Ok(grok.join("auth").join("grok.json"))
-}
-
-/// Resolve the standalone workspace auth path once, before daemonization can
-/// change the process cwd. An explicit `--auth-config` wins over the environment
-/// and retains its existing `--cwd` anchor; an environment override is anchored
-/// to the process startup cwd, matching shell relative-path semantics.
-pub fn resolve_auth_path(
-    auth_config: Option<&Path>,
-    workspace_cwd: &Path,
-    startup_cwd: &Path,
-) -> anyhow::Result<PathBuf> {
-    let (path, anchor) = match auth_config {
-        Some(path) => (path.to_path_buf(), workspace_cwd),
-        None => (default_auth_path()?, startup_cwd),
-    };
-    Ok(if path.is_absolute() {
-        path
-    } else {
-        anchor.join(path)
-    })
-}
-
-/// Return the advisory lock path next to the resolved auth file.
-fn auth_lock_path(auth_path: &Path) -> PathBuf {
-    let file_name = auth_path
-        .file_name()
-        .map(|name| format!("{}.lock", name.to_string_lossy()))
-        .unwrap_or_else(|| "auth.json.lock".to_owned());
-    auth_path.with_file_name(file_name)
-}
-
-/// Hold the same sibling advisory lock used by shell auth writers.
-struct AuthFileLock {
-    _file: File,
-}
-
-fn lock_auth_file(auth_path: &Path) -> anyhow::Result<AuthFileLock> {
-    ensure_auth_parent(auth_path)?;
-    let lock_path = auth_lock_path(auth_path);
-    let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .map_err(|e| anyhow::anyhow!("failed to open auth lock {}: {e}", lock_path.display()))?;
-    file.lock_exclusive()
-        .map_err(|e| anyhow::anyhow!("failed to acquire auth lock {}: {e}", lock_path.display()))?;
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    file.set_len(0)?;
-    file.seek(std::io::SeekFrom::Start(0))?;
-    write!(file, "{}:{timestamp}", std::process::id())?;
-    file.sync_all()?;
-
-    Ok(AuthFileLock { _file: file })
 }
 
 /// Read the active OIDC entry and its scope key. The key is threaded to the
@@ -209,7 +144,6 @@ fn build_oidc_provider(
 }
 
 fn write_refreshed_token(path: &Path, scope_key: &str, event: &RefreshEvent) -> anyhow::Result<()> {
-    let _lock = lock_auth_file(path)?;
     let content = std::fs::read_to_string(path)?;
     let mut raw: serde_json::Value = serde_json::from_str(&content)?;
 
@@ -272,22 +206,16 @@ fn write_json_atomic(path: &Path, value: &serde_json::Value) -> anyhow::Result<(
     Ok(())
 }
 
-/// Initialize the parent directory for a disk-backed hub auth path.
-fn ensure_auth_parent(auth_path: &Path) -> anyhow::Result<()> {
-    if let Some(parent) = auth_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to initialize auth storage parent {}: {e}",
-                parent.display()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-/// Build a hub auth provider for `hub_url` using an already resolved auth path.
-pub fn provider(hub_url: &Url, auth_path: &Path) -> anyhow::Result<Arc<dyn AuthProvider>> {
-    ensure_auth_parent(auth_path)?;
+/// Build a hub auth provider for `hub_url`. `auth_config` overrides
+/// the default credential path (`~/.grok/auth/grok.json`).
+pub fn provider(
+    hub_url: &Url,
+    auth_config: Option<&Path>,
+) -> anyhow::Result<Arc<dyn AuthProvider>> {
+    let auth_path = match auth_config {
+        Some(p) => p.to_path_buf(),
+        None => default_auth_path()?,
+    };
     let (scope_key, entry) = read_auth_entry(&auth_path)?;
 
     let is_loopback = hub_url.scheme() == "ws"
@@ -300,7 +228,7 @@ pub fn provider(hub_url: &Url, auth_path: &Path) -> anyhow::Result<Arc<dyn AuthP
             token: entry.key.clone(),
         }))
     } else {
-        build_oidc_provider(scope_key, &entry, auth_path.to_path_buf())
+        build_oidc_provider(scope_key, &entry, auth_path)
     }
 }
 
@@ -544,72 +472,6 @@ mod tests {
     }
 
     #[test]
-    fn grok_auth_path_overrides_grok_home_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let custom = dir.path().join("custom").join("credentials.json");
-        let grok_home = dir.path().join("grok-home");
-        let _env = crate::LockedTestEnv::lock()
-            .set("GROK_HOME", &grok_home)
-            .set("GROK_AUTH_PATH", &custom);
-
-        assert_eq!(default_auth_path().unwrap(), custom);
-    }
-
-    #[test]
-    fn resolve_auth_path_anchors_relative_env_path_to_startup_cwd() {
-        let dir = tempfile::tempdir().unwrap();
-        let relative = Path::new("nested").join("credentials.json");
-        let _env = crate::LockedTestEnv::lock().set("GROK_AUTH_PATH", &relative);
-
-        assert_eq!(
-            resolve_auth_path(None, Path::new("/workspace"), dir.path()).unwrap(),
-            dir.path().join(relative)
-        );
-    }
-
-    #[test]
-    fn resolve_auth_path_retains_auth_config_workspace_anchor() {
-        let workspace_cwd = Path::new("/workspace");
-        let startup_cwd = Path::new("/launcher");
-
-        assert_eq!(
-            resolve_auth_path(
-                Some(Path::new("config/auth.json")),
-                workspace_cwd,
-                startup_cwd,
-            )
-            .unwrap(),
-            workspace_cwd.join("config/auth.json")
-        );
-    }
-
-    #[test]
-    fn custom_auth_filename_uses_sibling_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("credentials.custom");
-        let _lock = lock_auth_file(&path).unwrap();
-
-        assert_eq!(
-            auth_lock_path(&path),
-            dir.path().join("credentials.custom.lock")
-        );
-        assert!(dir.path().join("credentials.custom.lock").exists());
-    }
-
-    #[test]
-    fn ensure_auth_parent_creates_nested_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir
-            .path()
-            .join("deep")
-            .join("nested")
-            .join("credentials.json");
-
-        ensure_auth_parent(&path).unwrap();
-        assert!(path.parent().unwrap().is_dir());
-    }
-
-    #[test]
     fn provider_loopback_uses_bearer() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_auth_json(
@@ -617,7 +479,7 @@ mod tests {
             r#"{ "oidc": { "key": "eyJ.tok", "user_id": "u1", "refresh_token": "rt", "oidc_issuer": "https://auth.x.ai", "oidc_client_id": "c1" } }"#,
         );
         let url = Url::parse("ws://localhost:9988/v1/tools").unwrap();
-        let auth = provider(&url, &path).unwrap();
+        let auth = provider(&url, Some(&path)).unwrap();
         match auth.current() {
             AuthCredential::Bearer { token } => assert_eq!(token, "eyJ.tok"),
             _ => panic!("expected Bearer"),

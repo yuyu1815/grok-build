@@ -239,6 +239,7 @@ async fn update_recovers_from_corrupt_auth_json_by_backing_up_old_file() {
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg.clone()));
 
     let bad_content = b"NOT VALID JSON {{{";
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     std::fs::write(&auth_path, bad_content).unwrap();
 
     let new_auth = GrokAuth {
@@ -271,10 +272,10 @@ async fn update_recovers_from_corrupt_auth_json_by_backing_up_old_file() {
     assert!(on_disk.contains_key(&cfg.auth_scope()));
 
     let mut backup_found = None;
-    for entry in std::fs::read_dir(dir.path()).unwrap() {
+    for entry in std::fs::read_dir(auth_path.parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with("auth.json.corrupt.") {
+        if name.starts_with("grok.json.corrupt.") {
             backup_found = Some(entry.path());
             break;
         }
@@ -881,14 +882,12 @@ async fn refresh_persist_failure_is_transient_but_swaps_in_memory() {
         ..GrokAuth::test_default()
     });
 
-    // `write_auth_json_atomic` writes `auth.json.<pid>.tmp` then renames; a
+    // `write_auth_json_atomic` writes `auth/grok.json.<pid>.tmp` then renames; a
     // directory there makes the temp-file open fail with EISDIR (enforced even
     // for root), so the persist fails while the read/lock paths are unaffected.
-    std::fs::create_dir(
-        dir.path()
-            .join(format!("auth.json.{}.tmp", std::process::id())),
-    )
-    .unwrap();
+    let auth_dir = dir.path().join("auth");
+    std::fs::create_dir_all(&auth_dir).unwrap();
+    std::fs::create_dir(auth_dir.join(format!("grok.json.{}.tmp", std::process::id()))).unwrap();
 
     mgr.set_refresher(Arc::new(CountingRefresher {
         call_count: Arc::new(AtomicU32::new(0)),
@@ -2553,6 +2552,7 @@ async fn update_recovers_from_empty_auth_json() {
     let dir = tempfile::tempdir().unwrap();
     let auth_path = dir.path().join("auth").join("grok.json");
     let cfg = GrokComConfig::default();
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     std::fs::write(&auth_path, b"").unwrap();
     assert_eq!(std::fs::metadata(&auth_path).unwrap().len(), 0);
 
@@ -2602,6 +2602,7 @@ async fn update_recovers_from_whitespace_only_auth_json() {
     let dir = tempfile::tempdir().unwrap();
     let auth_path = dir.path().join("auth").join("grok.json");
     let cfg = GrokComConfig::default();
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     std::fs::write(&auth_path, b"  \n\t  ").unwrap();
 
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg.clone()));
