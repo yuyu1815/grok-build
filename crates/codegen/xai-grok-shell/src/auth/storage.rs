@@ -4,10 +4,56 @@ use std::path::{Path, PathBuf};
 
 use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
-/// RAII guard for an exclusive advisory lock on `auth.json.lock`.
+/// Resolved file paths used by a file-backed `AuthManager`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthFilePaths {
+    auth_path: PathBuf,
+    lock_path: PathBuf,
+}
+
+impl AuthFilePaths {
+    /// Resolve the auth and lock paths from one concrete credential path.
+    ///
+    /// Lock identity depends only on credential identity: selecting the same
+    /// file through the default or `GROK_AUTH_PATH` must yield the same lock.
+    pub(crate) fn new(auth_path: PathBuf) -> Self {
+        let lock_path = auth_path.with_file_name(format!(
+            "{}.lock",
+            auth_path.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        Self {
+            auth_path,
+            lock_path,
+        }
+    }
+
+    pub(crate) fn auth_path(&self) -> &Path {
+        &self.auth_path
+    }
+
+    pub(crate) fn lock_path(&self) -> &Path {
+        &self.lock_path
+    }
+}
+
+/// Canonical on-disk auth path under the Grok home.
+pub fn default_auth_path(grok_home: &Path) -> PathBuf {
+    grok_home.join("auth").join("grok.json")
+}
+
+/// Create the parent directory before any lock or write operation.
+pub(crate) fn ensure_auth_parent(auth_file: &Path) -> std::io::Result<()> {
+    if let Some(parent) = auth_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+/// RAII guard for an exclusive advisory lock on the auth file's lock.
 /// The lock is released when the inner `File` is dropped (closing the FD).
 pub(crate) struct AuthFileLock {
     pub(super) _file: File,
+    pub(super) lock_path: PathBuf,
 }
 
 impl AuthFileLock {
@@ -30,10 +76,10 @@ impl AuthFileLock {
     ///
     /// Non-Unix has no inode concept, so this conservatively returns `true`.
     #[cfg(unix)]
-    pub(crate) fn still_live(&self, auth_json_path: &Path) -> bool {
+    pub(crate) fn still_live(&self) -> bool {
         use std::os::unix::fs::MetadataExt;
-        let lock_path = auth_json_path.with_file_name("auth.json.lock");
-        let (Ok(fd_meta), Ok(path_meta)) = (self._file.metadata(), std::fs::metadata(&lock_path))
+        let (Ok(fd_meta), Ok(path_meta)) =
+            (self._file.metadata(), std::fs::metadata(&self.lock_path))
         else {
             // Lock file gone or unreadable → we no longer hold the live lock.
             return false;
@@ -42,7 +88,7 @@ impl AuthFileLock {
     }
 
     #[cfg(not(unix))]
-    pub(crate) fn still_live(&self, _auth_json_path: &Path) -> bool {
+    pub(crate) fn still_live(&self) -> bool {
         true
     }
 }
@@ -234,9 +280,7 @@ fn write_auth_json_with(
 fn write_store_to(path: &Path, auth_store: &AuthStore) -> std::io::Result<()> {
     use crate::util::secure_file::open_secure_file;
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    ensure_auth_parent(path)?;
     let file = open_secure_file(path)?;
     let mut writer = std::io::BufWriter::new(file);
     serde_json::to_writer_pretty(&mut writer, auth_store)
@@ -328,7 +372,7 @@ fn restore_prior_bytes(auth_file: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Falls back to the legacy `https://accounts.x.ai/sign-in` scope key
 /// when the requested scope is not found (devbox auth.json migration).
 pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<String> {
-    let path = grok_home.join("auth.json");
+    let path = default_auth_path(grok_home);
     let store =
         read_auth_json(&path).map_err(|_| anyhow::anyhow!("Not logged in. Run `grok login`."))?;
     lookup_auth(&store, scope).map(|a| a.key).ok_or_else(|| {
@@ -338,7 +382,7 @@ pub fn read_token_by_scope(grok_home: &Path, scope: &str) -> anyhow::Result<Stri
 
 /// Read the API key from the `xai::api_key` scope in auth.json.
 pub fn read_api_key(grok_home: &Path) -> Option<String> {
-    let path = grok_home.join("auth.json");
+    let path = default_auth_path(grok_home);
     let map = read_auth_json(&path).ok()?;
     map.get(API_KEY_SCOPE).map(|a| a.key.clone())
 }
@@ -348,7 +392,7 @@ pub fn read_api_key(grok_home: &Path) -> Option<String> {
 /// Uses the corrupt-recovery reader so a malformed auth.json (e.g. from a
 /// previous crash) can be healed when the user sets an API key.
 pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
-    let path = grok_home.join("auth.json");
+    let path = default_auth_path(grok_home);
     let mut map = read_auth_json_or_empty_recovering_corrupt(&path)?;
     map.insert(
         API_KEY_SCOPE.to_owned(),
@@ -363,7 +407,7 @@ pub fn store_api_key(grok_home: &Path, api_key: &str) -> std::io::Result<()> {
 
 /// Remove the `xai::api_key` scope from auth.json.
 pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
-    let path = grok_home.join("auth.json");
+    let path = default_auth_path(grok_home);
     if let Ok(mut map) = read_auth_json(&path) {
         map.remove(API_KEY_SCOPE);
         if map.is_empty() {
@@ -373,6 +417,45 @@ pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_paths() {
+        let grok_home = Path::new("grok-home");
+        let auth_path = default_auth_path(grok_home);
+        let paths = AuthFilePaths::new(auth_path.clone());
+
+        assert_eq!(paths.auth_path(), auth_path);
+        assert_eq!(paths.lock_path(), grok_home.join("auth/grok.json.lock"));
+    }
+
+    #[test]
+    fn custom_paths_derive_lock_from_credential_name() {
+        let auth_path = PathBuf::from("custom/credentials.json");
+        let paths = AuthFilePaths::new(auth_path.clone());
+
+        assert_eq!(paths.auth_path(), auth_path);
+        assert_eq!(paths.lock_path(), Path::new("custom/credentials.json.lock"));
+    }
+
+    #[test]
+    fn canonical_path_has_one_lock_identity_regardless_of_selection_source() {
+        let grok_home = Path::new("grok-home");
+        let canonical_auth_path = default_auth_path(grok_home);
+        let default_paths = AuthFilePaths::new(default_auth_path(grok_home));
+        let override_paths = AuthFilePaths::new(canonical_auth_path.clone());
+
+        assert_eq!(default_paths.auth_path(), override_paths.auth_path());
+        assert_eq!(default_paths.lock_path(), override_paths.lock_path());
+        assert_eq!(
+            override_paths.lock_path(),
+            grok_home.join("auth/grok.json.lock")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -417,7 +500,7 @@ mod write_fallback_tests {
     #[test]
     fn in_place_write_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         write_auth_json_in_place(&path, &sample_store()).unwrap();
         assert_eq!(read_key(&path).as_deref(), Some("secret-key"));
     }
@@ -427,7 +510,7 @@ mod write_fallback_tests {
     fn in_place_write_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         write_auth_json_in_place(&path, &sample_store()).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "in-place write must stay 0o600");
@@ -438,7 +521,7 @@ mod write_fallback_tests {
     #[test]
     fn falls_back_to_in_place_on_storage_full() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         write_auth_json_with(&path, &sample_store(), fake_storage_full).unwrap();
         assert_eq!(
             read_key(&path).as_deref(),
@@ -452,7 +535,7 @@ mod write_fallback_tests {
     #[test]
     fn propagates_non_storage_full_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         let err = write_auth_json_with(&path, &sample_store(), fake_permission_denied).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         assert!(!path.exists(), "non-ENOSPC failure must not write the file");
@@ -462,7 +545,7 @@ mod write_fallback_tests {
     #[test]
     fn atomic_write_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         write_auth_json(&path, &sample_store()).unwrap();
         assert_eq!(read_key(&path).as_deref(), Some("secret-key"));
     }
@@ -473,7 +556,7 @@ mod write_fallback_tests {
     #[test]
     fn in_place_restores_prior_bytes_on_failure() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         // Seed a valid prior credential.
         write_auth_json_in_place(&path, &sample_store()).unwrap();
         assert_eq!(read_key(&path).as_deref(), Some("secret-key"));
@@ -503,7 +586,7 @@ mod write_fallback_tests {
     fn in_place_restore_is_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
+        let path = dir.path().join("auth").join("grok.json");
         write_auth_json_in_place(&path, &sample_store()).unwrap();
         let _ = write_auth_json_in_place_with(&path, &sample_store(), fake_truncate_then_fail);
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
