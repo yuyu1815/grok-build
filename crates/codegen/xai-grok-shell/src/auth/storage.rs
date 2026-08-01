@@ -4,9 +4,45 @@ use std::path::{Path, PathBuf};
 
 use super::model::{API_KEY_SCOPE, AuthMode, AuthStore, GrokAuth, lookup_auth};
 
+/// Resolved file paths used by a file-backed `AuthManager`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthFilePaths {
+    auth_path: PathBuf,
+    lock_path: PathBuf,
+}
+
+impl AuthFilePaths {
+    /// Resolve the canonical paths under the Grok home.
+    pub(crate) fn canonical(grok_home: &Path) -> Self {
+        let auth_path = grok_home.join("auth").join("grok.json");
+        let lock_path = grok_home.join("auth").join("grok.json.lock");
+        Self {
+            auth_path,
+            lock_path,
+        }
+    }
+
+    /// Resolve an explicit `GROK_AUTH_PATH` using the PR-base lock semantics.
+    pub(crate) fn explicit(auth_path: PathBuf) -> Self {
+        let lock_path = auth_path.with_file_name("auth.json.lock");
+        Self {
+            auth_path,
+            lock_path,
+        }
+    }
+
+    pub(crate) fn auth_path(&self) -> &Path {
+        &self.auth_path
+    }
+
+    pub(crate) fn lock_path(&self) -> &Path {
+        &self.lock_path
+    }
+}
+
 /// Canonical on-disk auth path under the Grok home.
 pub fn default_auth_path(grok_home: &Path) -> PathBuf {
-    grok_home.join("auth").join("grok.json")
+    AuthFilePaths::canonical(grok_home).auth_path
 }
 
 /// Create the parent directory before any lock or write operation.
@@ -15,19 +51,6 @@ pub(crate) fn ensure_auth_parent(auth_file: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     Ok(())
-}
-
-/// Return the advisory lock path for an AuthManager-backed auth file.
-///
-/// Explicit `GROK_AUTH_PATH` keeps the PR-base fixed sibling filename
-/// `auth.json.lock`; the canonical default uses `auth/grok.json.lock`.
-pub(crate) fn auth_lock_path(auth_file: &Path, explicit_override: bool) -> PathBuf {
-    let file_name = if explicit_override {
-        "auth.json.lock"
-    } else {
-        "grok.json.lock"
-    };
-    auth_file.with_file_name(file_name)
 }
 
 /// RAII guard for an exclusive advisory lock on the auth file's lock.
@@ -398,6 +421,39 @@ pub fn clear_api_key(grok_home: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_paths() {
+        let grok_home = Path::new("grok-home");
+        let paths = AuthFilePaths::canonical(grok_home);
+
+        assert_eq!(paths.auth_path(), grok_home.join("auth/grok.json"));
+        assert_eq!(paths.lock_path(), grok_home.join("auth/grok.json.lock"));
+    }
+
+    #[test]
+    fn explicit_custom_paths() {
+        let auth_path = PathBuf::from("custom/credentials.json");
+        let paths = AuthFilePaths::explicit(auth_path.clone());
+
+        assert_eq!(paths.auth_path(), auth_path);
+        assert_eq!(paths.lock_path(), Path::new("custom/auth.json.lock"));
+    }
+
+    #[test]
+    fn explicit_canonical_auth_string_keeps_explicit_lock_semantics() {
+        let grok_home = Path::new("grok-home");
+        let canonical_auth_path = default_auth_path(grok_home);
+        let paths = AuthFilePaths::explicit(canonical_auth_path.clone());
+
+        assert_eq!(paths.auth_path(), canonical_auth_path);
+        assert_eq!(paths.lock_path(), grok_home.join("auth/auth.json.lock"));
+    }
 }
 
 #[cfg(test)]
