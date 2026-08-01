@@ -42,6 +42,7 @@ indexmap = { workspace = true }
 blake3 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sys-locale = "0.3"
 toml = { workspace = true }
 toml_edit = { workspace = true, features = ["serde"] }
 

@@ -83,23 +83,27 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
             let root = grok_home();
 
             let remote_limit = (limit * 3).max(100) as i64;
-            let (local_resp, remote_results) = tokio::join!(execute_search(&root, &req), async {
-                tokio::time::timeout(
+            let (local_resp, remote_results) =
+                tokio::join!(execute_search(&root, &req), async {
+                    tokio::time::timeout(
                     REMOTE_TIMEOUT,
                     client.search(Some(&req.query), remote_limit),
                 )
                 .await
                 .unwrap_or_else(|_| {
                     eprintln!(
-                        "warning: remote session search timed out, showing local results only"
+                        "{}",
+                        crate::tr!(
+                            "warning: remote session search timed out, showing local results only"
+                        )
                     );
                     Ok(Vec::new())
                 })
                 .unwrap_or_else(|e| {
-                    eprintln!("warning: remote session search failed: {e}");
+                    eprintln!("{}", crate::tr!("warning: remote session search failed: {e}", e));
                     Vec::new()
                 })
-            });
+                });
 
             let resp = local_resp?;
             let local_ids: HashSet<&str> =
@@ -107,7 +111,7 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
 
             for hit in &resp.results {
                 let title = if hit.title.is_empty() {
-                    "(untitled)"
+                    crate::i18n::static_text("(untitled)")
                 } else {
                     &hit.title
                 };
@@ -138,7 +142,7 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
                     continue;
                 }
                 let title = if r.summary.is_empty() {
-                    "(untitled)"
+                    crate::i18n::static_text("(untitled)")
                 } else {
                     &r.summary
                 };
@@ -163,7 +167,8 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
                 remote_shown += 1;
             }
 
-            println!("\nTotal: {}", resp.results.len() + remote_shown);
+            let total = resp.results.len() + remote_shown;
+            println!("\n{}", crate::tr!("Total: {total}", total));
         }
         SessionsCommand::Delete { id } => {
             // Always attempt the remote delete when authenticated and not
@@ -187,9 +192,9 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
             .await?;
 
             if deletion.any_removed() {
-                println!("Deleted session {id}");
+                println!("{}", crate::tr!("Deleted session {id}", id));
             } else {
-                println!("No session found with id {id}.");
+                println!("{}", crate::tr!("No session found with id {id}.", id));
             }
         }
     }
@@ -201,7 +206,7 @@ pub async fn run(args: SessionsArgs, agent_config: &AgentConfig) -> Result<()> {
 /// format with a `Label: <label>` header before each group.
 fn print_sessions_grouped(sessions: &[MergedSession]) {
     if sessions.is_empty() {
-        println!("No sessions found.");
+        println!("{}", crate::tr!("No sessions found."));
         return;
     }
 
@@ -217,7 +222,11 @@ fn print_sessions_grouped(sessions: &[MergedSession]) {
 
     let header = format!(
         "{:<36}  {:<10}  {:<10}  {:<10}  {}",
-        "SESSION ID", "CREATED", "UPDATED", "STATUS", "SUMMARY"
+        crate::tr!("SESSION ID"),
+        crate::tr!("CREATED"),
+        crate::tr!("UPDATED"),
+        crate::tr!("STATUS"),
+        crate::tr!("SUMMARY")
     );
 
     // Labeled groups first (alphabetical), then unlabeled last.
@@ -235,7 +244,7 @@ fn print_sessions_grouped(sessions: &[MergedSession]) {
                 first_line = line.trim().to_string();
                 &first_line
             } else {
-                "(no summary)"
+                crate::i18n::static_text("(no summary)")
             };
             let truncated: String = summary.chars().take(50).collect();
             let created = &s.created_at[..s.created_at.len().min(10)];
@@ -248,10 +257,11 @@ fn print_sessions_grouped(sessions: &[MergedSession]) {
     };
 
     for (label, members) in &groups {
-        let line = format!("Label: {}", label.unwrap_or(""));
+        let label = label.unwrap_or("");
+        let line = crate::tr!("Label: {label}", label);
         print_group(&line, members);
     }
     if let Some(members) = &none_group {
-        print_group("(no label)", members);
+        print_group(&crate::tr!("(no label)"), members);
     }
 }

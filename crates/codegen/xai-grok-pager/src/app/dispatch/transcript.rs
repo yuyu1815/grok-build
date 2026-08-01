@@ -65,9 +65,9 @@ pub(super) fn dispatch_copy_assistant_message(app: &mut AppView, n: usize) {
         }
 
         if agent_messages.is_empty() {
-            agent
-                .scrollback
-                .push_block(RenderBlock::system("No assistant messages to copy"));
+            agent.scrollback.push_block(RenderBlock::system(
+                crate::i18n::text("No assistant messages to copy").into_owned(),
+            ));
             return;
         }
 
@@ -86,9 +86,9 @@ pub(super) fn dispatch_copy_assistant_message(app: &mut AppView, n: usize) {
 
         let text = &agent_messages[n - 1];
         if text.is_empty() {
-            agent
-                .scrollback
-                .push_block(RenderBlock::system("Assistant message is empty"));
+            agent.scrollback.push_block(RenderBlock::system(
+                crate::i18n::text("Assistant message is empty").into_owned(),
+            ));
             return;
         }
 
@@ -116,9 +116,9 @@ pub(super) fn dispatch_export_conversation(
         let md = crate::scrollback::export::render_blocks_to_markdown(blocks);
 
         if md.is_empty() {
-            agent
-                .scrollback
-                .push_block(RenderBlock::system("No conversation content to export"));
+            agent.scrollback.push_block(RenderBlock::system(
+                crate::i18n::text("No conversation content to export").into_owned(),
+            ));
             return;
         }
 
@@ -197,7 +197,7 @@ pub(crate) fn dispatch_open_transcript_pager(app: &mut AppView) {
     let Some(content) = md else {
         with_active_agent(app, |agent| {
             agent.scrollback.push_block(RenderBlock::system(
-                "No conversation transcript to view yet",
+                crate::i18n::text("No conversation transcript to view yet").into_owned(),
             ));
         });
         return;
@@ -487,7 +487,7 @@ pub(super) fn dispatch_dump_input_log(app: &mut AppView) -> Vec<Effect> {
     };
 
     if agent.input_log.entry_count() == 0 {
-        agent.show_toast("No input events recorded yet.");
+        agent.show_toast(crate::i18n::text("No input events recorded yet.").as_ref());
         return vec![];
     }
 

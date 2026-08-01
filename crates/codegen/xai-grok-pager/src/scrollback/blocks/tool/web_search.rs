@@ -6,6 +6,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
 use super::TOOL_HEADER_RANGE;
+use crate::i18n::{format as tr_format, text};
 use crate::render::line_utils::truncate_str;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -111,7 +112,10 @@ impl WebSearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = self.label.as_deref().unwrap_or("Web Search ").to_owned();
+        let prefix = self
+            .label
+            .clone()
+            .unwrap_or_else(|| text("Web Search").into_owned() + " ");
 
         match max_width {
             Some(w) => {
@@ -119,8 +123,12 @@ impl WebSearchToolCallBlock {
                 // The fullscreen footer shows raw citation count as "Sources".
                 let site_count = self.unique_domains().len();
                 let suffix = if site_count > 0 {
-                    let s = if site_count == 1 { "" } else { "s" };
-                    format!(" ({site_count} site{s})")
+                    let template = if site_count == 1 {
+                        " ({count} site)"
+                    } else {
+                        " ({count} sites)"
+                    };
+                    tr_format(template, &[("count", site_count.to_string())])
                 } else {
                     String::new()
                 };
@@ -190,7 +198,10 @@ impl WebSearchToolCallBlock {
         let label_style = theme.muted();
         let value_style = theme.primary();
 
-        let mut spans: Vec<Span<'static>> = vec![Span::styled("  Sources: ", label_style)];
+        let mut spans: Vec<Span<'static>> = vec![Span::styled(
+            format!("  {}: ", text("Sources")),
+            label_style,
+        )];
 
         let shown = unique.len().min(MAX_INLINE_SOURCES);
         for (i, domain) in unique.iter().take(shown).enumerate() {
@@ -202,7 +213,10 @@ impl WebSearchToolCallBlock {
 
         let remaining = unique.len().saturating_sub(MAX_INLINE_SOURCES);
         if remaining > 0 {
-            spans.push(Span::styled(format!(" (+{remaining} more)"), label_style));
+            spans.push(Span::styled(
+                tr_format(" (+{count} more)", &[("count", remaining.to_string())]),
+                label_style,
+            ));
         }
 
         Some(Line::from(spans))
@@ -277,7 +291,11 @@ impl BlockContent for WebSearchToolCallBlock {
                             lines.push(
                                 BlockLine::from(Line::from(Span::styled(
                                     format!(
-                                        "{indent}... ({remaining} more lines, press Enter to view)",
+                                        "{indent}{}",
+                                        tr_format(
+                                            "... ({count} more lines, press Enter to view)",
+                                            &[("count", remaining.to_string())]
+                                        )
                                     ),
                                     theme.dim(),
                                 )))
@@ -308,7 +326,13 @@ impl BlockContent for WebSearchToolCallBlock {
                     );
                 } else if !self.is_x_search {
                     lines.push(Line::from("").into());
-                    lines.push(Line::from(Span::styled("  (no content)", theme.muted())).into());
+                    lines.push(
+                        Line::from(Span::styled(
+                            format!("  {}", text("(no content)")),
+                            theme.muted(),
+                        ))
+                        .into(),
+                    );
                 }
 
                 // Sources summary line (after content, matching fullscreen order).

@@ -252,12 +252,18 @@ async fn cmd_rm(
             Ok(r) => {
                 let path = r.resolved_path.as_deref().unwrap_or(id_or_path);
                 if dry_run {
-                    println!("  would remove: {path}");
+                    println!("{}", crate::tr!("  would remove: {path}", path));
                 } else if r.removed {
-                    println!("  removed: {path}");
+                    println!("{}", crate::tr!("  removed: {path}", path));
                 }
             }
-            Err(e) => eprintln!("  error removing {id_or_path}: {e}"),
+            Err(e) => eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  error removing {id}: {error}",
+                    &[("id", id_or_path.to_string()), ("error", e.to_string())],
+                )
+            ),
         }
     }
     Ok(())
@@ -281,7 +287,7 @@ async fn cmd_gc(
     .await?;
 
     if dry_run {
-        println!("Dry run \u{2014} no changes made.");
+        println!("{}", crate::tr!("Dry run — no changes made."));
     }
     display::print_gc(&report);
     Ok(())

@@ -1055,15 +1055,21 @@ impl BlockViewerPane {
             HintItem::new(crate::key!(Esc), "close"),
             HintItem::new(crate::key!('/'), "search"),
             HintItem::new(crate::key!('f'), "filter"),
-            HintItem::new(crate::key!('v'), "select"),
+            HintItem::new(crate::key!('v'), crate::i18n::static_text("select")),
             HintItem::new(crate::key!('w'), "wrap"),
         ];
         match self.kind {
             ViewerKind::Markdown => {
-                hints.push(HintItem::new(crate::key!('r'), "raw"));
+                hints.push(HintItem::new(
+                    crate::key!('r'),
+                    crate::i18n::static_text("raw"),
+                ));
             }
             ViewerKind::Execute => {
-                hints.push(HintItem::new(crate::key!('Y'), "copy cmd"));
+                hints.push(HintItem::new(
+                    crate::key!('Y'),
+                    crate::i18n::static_text("copy cmd"),
+                ));
             }
             ViewerKind::Edit => {
                 hints.push(HintItem::new(crate::key!('Y'), "copy path"));

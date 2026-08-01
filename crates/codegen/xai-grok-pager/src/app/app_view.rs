@@ -4599,7 +4599,9 @@ impl AppView {
                         agent.toast = None;
                     }
                     None => {
-                        agent.show_toast("Video playback requires ffmpeg");
+                        agent.show_toast(
+                            crate::i18n::text("Video playback requires ffmpeg").as_ref(),
+                        );
                     }
                 }
                 needs_redraw = true;

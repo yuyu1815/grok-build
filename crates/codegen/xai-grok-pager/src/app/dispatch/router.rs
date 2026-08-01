@@ -502,8 +502,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::ToggleScrollLog => {
             let msg = match app.scroll_state.toggle_scroll_log() {
-                Some(path) => format!("scroll log: recording to {}", path.display()),
-                None => "scroll log: off".to_string(),
+                Some(path) => crate::i18n::format(
+                    "scroll log: recording to {path}",
+                    &[("path", path.display().to_string())],
+                ),
+                None => crate::i18n::text("scroll log: off").into_owned(),
             };
             if let Some(agent) = get_active_agent_mut(app) {
                 agent
@@ -513,7 +516,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::ShowDebugStatus => {
-            let on = |b: bool| if b { "on" } else { "off" };
+            let on = |b: bool| crate::i18n::text(if b { "on" } else { "off" });
             let msg = format!(
                 "debug toggles: scroll {} \u{00b7} fps {} \u{00b7} log {} \u{2014} toggle with /debug <scroll|fps|log>",
                 on(app.scroll_debug_hud.enabled()),
@@ -965,11 +968,12 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                     .ok()
                     .and_then(|u| u.to_file_path().ok())
                     .is_some_and(|path| crate::app::link_opener::open_path(&path));
-                app.show_toast(if opened {
-                    "Opening in default app\u{2026}"
+                let message = if opened {
+                    crate::i18n::text("Opening in default app…")
                 } else {
-                    "Could not open file"
-                });
+                    crate::i18n::text("Could not open file")
+                };
+                app.show_toast(message.as_ref());
             } else {
                 crate::app::link_opener::open_url_if_safe(&url, SchemeFilter::Standard);
             }
@@ -1032,11 +1036,13 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             }
             if crate::app::foreign_sessions::is_foreign_picker_source(&source) {
-                app.show_toast("External sessions can't be deleted");
+                app.show_toast(crate::i18n::text("External sessions can't be deleted").as_ref());
                 return vec![];
             }
             if source == "conversation" {
-                app.show_toast("Deleting chat conversations isn't supported yet");
+                app.show_toast(
+                    crate::i18n::text("Deleting chat conversations isn't supported yet").as_ref(),
+                );
                 return vec![];
             }
             if !matches!(source.as_str(), "local" | "remote" | "both")
@@ -1044,7 +1050,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             {
                 return vec![];
             }
-            app.show_toast("Deleting session\u{2026}");
+            app.show_toast(crate::i18n::text("Deleting session…").as_ref());
             vec![Effect::DeleteSession {
                 source,
                 session_id,

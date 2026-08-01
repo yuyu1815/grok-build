@@ -98,7 +98,11 @@ pub(super) fn maybe_show_x11_primary_paste_hint(
     if !eligible || completion != ClipboardPasteCompletion::FullMiss {
         return;
     }
-    show_clipboard_toast(target, X11_PRIMARY_PASTE_HINT, app);
+    show_clipboard_toast(
+        target,
+        crate::i18n::text(X11_PRIMARY_PASTE_HINT).as_ref(),
+        app,
+    );
 }
 pub(super) fn show_clipboard_failure(
     target: &ClipboardPasteTarget,
@@ -107,11 +111,15 @@ pub(super) fn show_clipboard_failure(
 ) {
     let message = match failure {
         ClipboardPasteFailure::AlreadyReported => return,
-        ClipboardPasteFailure::TextRead => "Couldn't read clipboard text",
-        ClipboardPasteFailure::AttachmentRead => "Couldn't read clipboard contents",
-        ClipboardPasteFailure::TargetInsertion => "Couldn't paste clipboard contents",
+        ClipboardPasteFailure::TextRead => crate::i18n::text("Couldn't read clipboard text"),
+        ClipboardPasteFailure::AttachmentRead => {
+            crate::i18n::text("Couldn't read clipboard contents")
+        }
+        ClipboardPasteFailure::TargetInsertion => {
+            crate::i18n::text("Couldn't paste clipboard contents")
+        }
     };
-    show_clipboard_toast(target, message, app);
+    show_clipboard_toast(target, message.as_ref(), app);
 }
 fn apply_clipboard_paste_result(
     ctx: ClipboardPasteContext,
@@ -415,7 +423,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                             crate::app::agent::QueueEntryKind::Prompt,
                         )
                     });
-                agent.show_toast(&format!("Send now failed — requeued: {error}"));
+                agent.show_toast(&crate::i18n::format(
+                    "Send now failed — requeued: {error}",
+                    &[("error", error)],
+                ));
             }
             vec![]
         }
@@ -749,7 +760,7 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         }
         TaskResult::DeleteSessionComplete { source, session_id } => {
             remove_session_from_pickers(app, &source, &session_id);
-            app.show_toast("Session deleted");
+            app.show_toast(crate::i18n::text("Session deleted").as_ref());
             vec![]
         }
         TaskResult::DeleteSessionFailed {
@@ -761,7 +772,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 source, session_id = % session_id, error = % error,
                 "session delete failed"
             );
-            app.show_toast(&format!("Couldn't delete session: {error}"));
+            app.show_toast(&crate::i18n::format(
+                "Couldn't delete session: {error}",
+                &[("error", error)],
+            ));
             vec![]
         }
         TaskResult::ContextInfoComplete { agent_id, info } => {
@@ -906,7 +920,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         chip_elements: Vec::new(),
                         skill_token_ranges: Vec::new(),
                     });
-                agent.show_toast(&format!("Interjection failed — requeued: {error}"));
+                agent.show_toast(&crate::i18n::format(
+                    "Interjection failed — requeued: {error}",
+                    &[("error", error)],
+                ));
             }
             vec![]
         }
@@ -968,7 +985,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 return vec![];
             };
             agent.rewind_state = None;
-            app.show_toast(&format!("Undo failed: {error}"));
+            app.show_toast(&crate::i18n::format(
+                "Undo failed: {error}",
+                &[("error", error)],
+            ));
             vec![]
         }
         TaskResult::RewindPreviewComplete {
@@ -1049,7 +1069,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 "setting persist failed; rolled back"
             );
             let scrubbed = scrub_error_for_toast(&error);
-            app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
+            app.show_toast(&crate::i18n::format(
+                "✗ Could not save {key}: {error}",
+                &[("key", key.to_string()), ("error", scrubbed)],
+            ));
             rollback_effects
         }
         TaskResult::SettingPersistFailedBestEffort { key, error } => {
@@ -1058,7 +1081,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                 "setting persist failed (best-effort); in-memory state stays at optimistic value",
             );
             let scrubbed = scrub_error_for_toast(&error);
-            app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
+            app.show_toast(&crate::i18n::format(
+                "✗ Could not save {key}: {error}",
+                &[("key", key.to_string()), ("error", scrubbed)],
+            ));
             vec![]
         }
     }

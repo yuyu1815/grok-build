@@ -148,14 +148,20 @@ pub fn render_new_worktree_dialog(area: Rect, buf: &mut Buffer, state: &NewWorkt
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" = create   ", Style::default().fg(theme.gray)),
+        Span::styled(
+            crate::i18n::text(" = create   "),
+            Style::default().fg(theme.gray),
+        ),
         Span::styled(
             "esc",
             Style::default()
                 .fg(theme.accent_user)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" = cancel", Style::default().fg(theme.gray)),
+        Span::styled(
+            crate::i18n::text(" = cancel"),
+            Style::default().fg(theme.gray),
+        ),
     ]);
     hints.render(Rect::new(inner_x, dialog.y + 3, inner_width, 1), buf);
 }

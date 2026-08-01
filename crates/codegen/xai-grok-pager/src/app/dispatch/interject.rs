@@ -36,7 +36,7 @@ pub(super) fn dispatch_interject(
     agent.ephemeral_tip.clear_on_submit();
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast("No active session");
+        agent.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -58,7 +58,7 @@ pub(super) fn dispatch_interject(
     // text (the InterjectPrompt registry arm) clears it at the call site;
     // every other producer (Send now, edit-interject, plan review comments)
     // carries non-composer text and must keep the user's draft/stash.
-    agent.show_toast("Interjection sent");
+    agent.show_toast(crate::i18n::text("Interjection sent").as_ref());
 
     // Image-bearing interjection: build text + image content blocks via the
     // same helper as the queued-prompt drain path (orphan-placeholder
@@ -115,7 +115,7 @@ pub(super) fn dispatch_send_prompt_now(
                     crate::app::agent::QueueEntryKind::Prompt,
                 )
             });
-        agent.show_toast("Reconnecting, please wait...");
+        agent.show_toast(crate::i18n::text("Reconnecting, please wait...").as_ref());
         return vec![];
     }
 
@@ -123,7 +123,7 @@ pub(super) fn dispatch_send_prompt_now(
     agent.ephemeral_tip.clear_on_submit();
 
     let Some(session_id) = agent.session.session_id.clone() else {
-        agent.show_toast("No active session");
+        agent.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
