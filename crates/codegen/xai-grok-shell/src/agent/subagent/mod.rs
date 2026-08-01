@@ -1471,6 +1471,44 @@ impl Drop for PendingGuard<'_> {
         }
     }
 }
+
+/// Owns a freshly materialized subagent worktree until the child session is
+/// promoted to the active coordinator map.  Cleanup is deliberately explicit:
+/// `Drop` cannot await and must not spawn detached filesystem work.  The
+/// owner calls [`Self::cleanup`] on every pre-promote failure, or
+/// [`Self::promote`] once the active tracker takes responsibility.
+struct SpawnWorktreeGuard {
+    path: Option<PathBuf>,
+    owned: bool,
+}
+
+impl SpawnWorktreeGuard {
+    fn new(path: Option<PathBuf>, owned: bool) -> Self {
+        Self { path, owned }
+    }
+
+    fn promote(&mut self) {
+        self.owned = false;
+    }
+
+    async fn cleanup(&mut self) {
+        if !self.owned {
+            return;
+        }
+        let Some(path) = self.path.take() else {
+            self.owned = false;
+            return;
+        };
+        if let Err(error) = crate::session::worktree::remove_subagent_worktree(&path).await {
+            tracing::warn!(
+                worktree_path = %path.display(),
+                error = %error,
+                "failed to clean up subagent worktree before promotion"
+            );
+        }
+        self.owned = false;
+    }
+}
 /// Resolve the effective working directory for a child session.
 ///
 /// Precedence: worktree path > `override_cwd` (non-empty) > parent cwd. The
@@ -1835,6 +1873,13 @@ fn resume_worktree_action(dir_exists: bool, snapshot_ref: Option<&str>) -> Resum
         ResumeWorktreeAction::Shared
     }
 }
+
+/// Whether a failed resume rehydrate owns its destination and may remove it.
+/// Existing directories are source-owned and must survive a failed attempt;
+/// only a destination created by this invocation is disposable.
+fn rehydrate_destination_cleanup_owned(dir_existed_before: bool) -> bool {
+    !dir_existed_before
+}
 /// The parent session's working directory — the source path for a subagent
 /// worktree. Prefers the reconstructed `SessionInfo` cwd, falling back to
 /// `parent_cwd`.
@@ -2055,8 +2100,8 @@ fn send_failure(request: SubagentRequest, error: &str) {
         ..Default::default()
     });
 }
-/// Fail BEFORE `insert_pending`. Sends via oneshot; for background-mode
-/// requests also records a synthetic `CompletedSubagent` + emits a
+/// Fail BEFORE `insert_pending`. Sends via oneshot; for the effective
+/// background mode also records a synthetic `CompletedSubagent` + emits a
 /// `SubagentFinished` notification (persisted + live).
 fn send_pre_spawn_failure(
     request: SubagentRequest,
@@ -2064,6 +2109,7 @@ fn send_pre_spawn_failure(
     coordinator: &std::cell::RefCell<SubagentCoordinator>,
     ctx: &SubagentSpawnContext,
     gateway: &GatewaySender,
+    effective_run_in_background: bool,
 ) {
     let SubagentRequest {
         id,
@@ -2071,11 +2117,11 @@ fn send_pre_spawn_failure(
         description,
         parent_prompt_id,
         result_tx,
-        run_in_background,
+        run_in_background: _request_run_in_background,
         surface_completion,
         ..
     } = request;
-    if run_in_background {
+    if effective_run_in_background {
         let notification_subagent_id = id.clone();
         coordinator.borrow_mut().record_pre_spawn_failure(
             id,

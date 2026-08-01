@@ -42,6 +42,110 @@ pub(super) fn task_model_override_error(
         is_session_auth,
     )
 }
+fn model_offers_reasoning_effort_from_catalog(
+    entry: &crate::agent::config::ModelEntry,
+    effort: xai_grok_sampling_types::ReasoningEffort,
+) -> bool {
+    if !entry.info().supports_reasoning_effort {
+        return false;
+    }
+    if entry.info().reasoning_efforts.is_empty() {
+        matches!(
+            effort,
+            xai_grok_sampling_types::ReasoningEffort::Low
+                | xai_grok_sampling_types::ReasoningEffort::Medium
+                | xai_grok_sampling_types::ReasoningEffort::High
+                | xai_grok_sampling_types::ReasoningEffort::Xhigh
+        )
+    } else {
+        entry
+            .info()
+            .reasoning_efforts
+            .iter()
+            .any(|option| option.value == effort)
+    }
+}
+
+fn model_catalog_offers_reasoning_effort(
+    models: &indexmap::IndexMap<String, crate::agent::config::ModelEntry>,
+    model_id: &str,
+    effort: xai_grok_sampling_types::ReasoningEffort,
+) -> bool {
+    crate::agent::config::find_model_by_id(models, model_id)
+        .is_some_and(|entry| model_offers_reasoning_effort_from_catalog(entry, effort))
+}
+
+fn task_reasoning_effort_override_error(
+    requested: &str,
+    effective_model_id: &str,
+) -> String {
+    format!(
+        "Task.reasoning_effort '{requested}' is not supported by model \
+         '{effective_model_id}'. Omit `reasoning_effort` to inherit defaults."
+    )
+}
+
+fn effective_run_in_background(request: bool, definition: Option<bool>) -> bool {
+    request || definition.unwrap_or(false)
+}
+
+#[cfg(test)]
+mod preflight_tests {
+    use super::*;
+
+    fn catalog_with_menu() -> indexmap::IndexMap<String, crate::agent::config::ModelEntry> {
+        let mut entry = crate::agent::config::ModelEntry {
+            info: crate::agent::config::ModelInfo::fallback("provider-slug"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        entry.info.supports_reasoning_effort = true;
+        entry.info.reasoning_efforts = vec![xai_grok_sampling_types::ReasoningEffortOption {
+            id: "deep".to_string(),
+            value: xai_grok_sampling_types::ReasoningEffort::High,
+            label: "Deep".to_string(),
+            description: None,
+            default: true,
+        }];
+        [("catalog-key".to_string(), entry)].into_iter().collect()
+    }
+
+    #[test]
+    fn model_effort_preflight_uses_catalog_key_and_provider_slug() {
+        let models = catalog_with_menu();
+        assert!(model_catalog_offers_reasoning_effort(
+            &models,
+            "catalog-key",
+            xai_grok_sampling_types::ReasoningEffort::High,
+        ));
+        assert!(model_catalog_offers_reasoning_effort(
+            &models,
+            "provider-slug",
+            xai_grok_sampling_types::ReasoningEffort::High,
+        ));
+        assert!(!model_catalog_offers_reasoning_effort(
+            &models,
+            "provider-slug",
+            xai_grok_sampling_types::ReasoningEffort::Low,
+        ));
+    }
+
+    #[test]
+    fn tool_effort_error_is_stable() {
+        assert_eq!(
+            task_reasoning_effort_override_error("high", "plain-model"),
+            "Task.reasoning_effort 'high' is not supported by model 'plain-model'. Omit `reasoning_effort` to inherit defaults."
+        );
+    }
+
+    #[test]
+    fn definition_background_is_used_for_preflight_notifications() {
+        assert!(effective_run_in_background(false, Some(true)));
+        assert!(effective_run_in_background(true, Some(false)));
+        assert!(!effective_run_in_background(false, None));
+    }
+}
 /// This is a free async function, NOT a method on MvpAgent. It receives
 /// a `SubagentSpawnContext` with everything it needs, and a mutable
 /// reference to the coordinator for tracking.
@@ -63,23 +167,39 @@ pub(crate) async fn handle_subagent_request(
     gateway: &GatewaySender,
 ) {
     let start = std::time::Instant::now();
-    let mut parent_wait_guard = (!request.run_in_background)
-        .then(|| crate::tools::tool_context::BlockingWaitGuard::enter(
-            ctx.parent_blocking_wait_depth.clone(),
-        ));
+    let mut parent_wait_guard: Option<crate::tools::tool_context::BlockingWaitGuard>;
     let Some(mut definition) = resolve_agent_definition(&request.subagent_type, &ctx)
     else {
         let msg = format!("Unknown subagent type: {}", request.subagent_type);
-        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+        let run_in_background = request.run_in_background;
+        send_pre_spawn_failure(
+            request,
+            &msg,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     };
+    let run_in_background = effective_run_in_background(
+        request.run_in_background,
+        definition.background,
+    );
     match gate_subagent_type(&request.subagent_type, &ctx) {
         SubagentValidateTypeOutcome::Disabled => {
             let msg = format!(
                 "Subagent '{}' is disabled via [subagents.toggle] in config.toml",
                 request.subagent_type
             );
-            send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         SubagentValidateTypeOutcome::NotAllowed { allowed } => {
@@ -87,35 +207,18 @@ pub(crate) async fn handle_subagent_request(
                 "agent can only spawn: {}; '{}' not allowed", allowed.join(", "), request
                 .subagent_type
             );
-            send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway);
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         _ => {}
     }
-    let run_in_background = request.run_in_background
-        || definition.background.unwrap_or(false);
-    let cancel_token = CancellationToken::new();
-    coordinator
-        .borrow_mut()
-        .insert_pending(PendingSubagent {
-            subagent_id: request.id.clone(),
-            subagent_type: request.subagent_type.clone(),
-            description: request.description.clone(),
-            persona: request.runtime_overrides.persona.clone(),
-            parent_prompt_id: request.parent_prompt_id.clone(),
-            parent_session_id: ctx.parent_session_id.clone(),
-            started_at: start,
-            run_in_background,
-            surface_completion: request.surface_completion,
-            color: definition.color,
-            cancel_token: cancel_token.clone(),
-        });
-    let mut pending_guard = PendingGuard {
-        coordinator,
-        id: request.id.clone(),
-        defused: false,
-        error: None,
-    };
     resolve_subagent_toolset(
         &request.subagent_type,
         request.runtime_overrides.harness_agent_type.as_deref(),
@@ -169,8 +272,14 @@ pub(crate) async fn handle_subagent_request(
             subagent_id = % request.id, error = err,
             "Persona resolution failed, aborting subagent spawn"
         );
-        pending_guard.set_error(err.clone());
-        send_failure(request, err);
+        send_pre_spawn_failure(
+            request,
+            err,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     }
     if let Some(ref warn) = effective_runtime.role_prompt_warning {
@@ -178,6 +287,26 @@ pub(crate) async fn handle_subagent_request(
             subagent_id = % request.id, warning = warn,
             "Role prompt_file degraded, continuing without role prompt"
         );
+    }
+    // Keep all caller-visible argument validation ahead of pending/worktree
+    // materialization.  TaskTool performs the same normalization, but the
+    // coordinator is also reachable by internal harness callers.
+    if let Some(raw_cwd) = request.cwd.as_deref() {
+        request.cwd = sanitize_cwd_value(raw_cwd);
+    }
+    if request.cwd.is_some()
+        && effective_runtime.isolation == xai_tool_types::SubagentIsolationMode::Worktree
+        && request.cwd.as_deref().is_some_and(|p| Path::new(p).is_dir())
+    {
+        let msg = "cwd and isolation=\"worktree\" are mutually exclusive. Use cwd to point the subagent at an existing directory, or isolation=\"worktree\" to create a new isolated worktree, but not both.";
+        send_pre_spawn_failure(request, msg, coordinator, &ctx, gateway, run_in_background);
+        return;
+    }
+    if effective_runtime.isolation == xai_tool_types::SubagentIsolationMode::Worktree
+    {
+        // A non-existent cwd is a model-emitted placeholder in this mode;
+        // clear it so the isolated worktree remains authoritative.
+        request.cwd = None;
     }
     let resume_source = if let Some(resume_id) = request
         .resume_from
@@ -191,7 +320,14 @@ pub(crate) async fn handle_subagent_request(
                  Wait for it to complete before resuming."
             );
             drop(coord);
-            send_failure(request, &msg);
+            send_pre_spawn_failure(
+                request,
+                &msg,
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
         match coord
@@ -207,7 +343,14 @@ pub(crate) async fn handle_subagent_request(
                      The subagent may have been evicted or the ID is invalid."
                 );
                 drop(coord);
-                send_failure(request, &msg);
+                send_pre_spawn_failure(
+                    request,
+                    &msg,
+                    coordinator,
+                    &ctx,
+                    gateway,
+                    run_in_background,
+                );
                 return;
             }
         }
@@ -227,7 +370,14 @@ pub(crate) async fn handle_subagent_request(
             request.runtime_overrides.persona.as_deref(),
             source,
         ) {
-            send_failure(request, &e.to_string());
+            send_pre_spawn_failure(
+                request,
+                &e.to_string(),
+                coordinator,
+                &ctx,
+                gateway,
+                run_in_background,
+            );
             return;
         }
     }
@@ -238,10 +388,128 @@ pub(crate) async fn handle_subagent_request(
         &ctx.available_models,
         ctx.auth_manager.current_or_expired().is_some_and(|a| a.is_session_auth()),
     ) {
-        pending_guard.set_error(error.clone());
-        send_failure(request, &error);
+        send_pre_spawn_failure(
+            request,
+            &error,
+            coordinator,
+            &ctx,
+            gateway,
+            run_in_background,
+        );
         return;
     }
+    if let Some(cwd_path) = request.cwd.as_deref()
+        && resume_source.is_none()
+        && !Path::new(cwd_path).is_dir()
+    {
+        let msg = if Path::new(cwd_path).exists() {
+            format!("cwd \"{cwd_path}\" exists but is not a directory")
+        } else {
+            format!("cwd \"{cwd_path}\" does not exist")
+        };
+        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway, run_in_background);
+        return;
+    }
+    // Resolve the model from the immutable spawn-context catalogue before any
+    // worktree is materialized.  The later materialization stage only consumes
+    // this snapshot; no ModelsManager refresh/lock lookup is needed here.
+    if request.fork_context {
+        effective_runtime.model = Some(ctx.model_id.0.to_string());
+    }
+    let (mut effective_sampling_config, mut effective_model_id) =
+        resolve_effective_model_config(
+            effective_runtime.model.as_deref(),
+            &request.subagent_type,
+            &definition.model,
+            &ctx,
+        )
+        .await;
+    let subagent_model_is_unknown = !effective_sampling_config.model.is_empty()
+        && !ctx.available_models.is_empty()
+        && crate::agent::config::find_model_by_id(
+            &ctx.available_models,
+            effective_model_id.0.as_ref(),
+        )
+        .is_none();
+    if subagent_model_is_unknown {
+        let (parent_config, parent_mid) = read_parent_sampling_config(&ctx).await;
+        effective_sampling_config = parent_config;
+        effective_model_id = parent_mid;
+    }
+    if let Some(source_model) = resume_source
+        .as_ref()
+        .and_then(|source| source.model_id.as_deref())
+        && crate::agent::config::find_model_by_id(&ctx.available_models, source_model).is_none()
+    {
+        let source_id = resume_source
+            .as_ref()
+            .map(|source| source.subagent_id.as_str())
+            .unwrap_or_default();
+        let msg = format!(
+            "Cannot resume from subagent '{source_id}': source model '{source_model}' \
+             is no longer available in the model catalogue.",
+        );
+        send_pre_spawn_failure(request, &msg, coordinator, &ctx, gateway, run_in_background);
+        return;
+    }
+    if let Some(raw) = effective_runtime.reasoning_effort.as_deref()
+        && request.runtime_overrides.reasoning_effort_override_provenance
+            == ReasoningEffortOverrideProvenance::Tool
+    {
+        if let Ok(effort) = raw.parse::<xai_grok_sampling_types::ReasoningEffort>() {
+            let preflight_model_id = resume_source
+                .as_ref()
+                .and_then(|source| source.model_id.as_deref())
+                .unwrap_or(effective_model_id.0.as_ref());
+            let supported = model_catalog_offers_reasoning_effort(
+                &ctx.available_models,
+                preflight_model_id,
+                effort,
+            );
+            if !supported {
+                let msg = task_reasoning_effort_override_error(
+                    raw,
+                    preflight_model_id,
+                );
+                send_pre_spawn_failure(
+                    request,
+                    &msg,
+                    coordinator,
+                    &ctx,
+                    gateway,
+                    run_in_background,
+                );
+                return;
+            }
+        }
+    }
+    parent_wait_guard = (!run_in_background).then(|| {
+        crate::tools::tool_context::BlockingWaitGuard::enter(
+            ctx.parent_blocking_wait_depth.clone(),
+        )
+    });
+    let cancel_token = CancellationToken::new();
+    coordinator
+        .borrow_mut()
+        .insert_pending(PendingSubagent {
+            subagent_id: request.id.clone(),
+            subagent_type: request.subagent_type.clone(),
+            description: request.description.clone(),
+            persona: request.runtime_overrides.persona.clone(),
+            parent_prompt_id: request.parent_prompt_id.clone(),
+            parent_session_id: ctx.parent_session_id.clone(),
+            started_at: start,
+            run_in_background,
+            surface_completion: request.surface_completion,
+            color: definition.color,
+            cancel_token: cancel_token.clone(),
+        });
+    let mut pending_guard = PendingGuard {
+        coordinator,
+        id: request.id.clone(),
+        defused: false,
+        error: None,
+    };
     let worktree_path = if let Some(ref source) = resume_source {
         if effective_runtime.isolation != xai_tool_types::SubagentIsolationMode::None
             && source.worktree_path.is_none()
@@ -254,8 +522,9 @@ pub(crate) async fn handle_subagent_request(
         match source.worktree_path.as_deref() {
             None => None,
             Some(dest) => {
+                let dir_existed_before = dest.is_dir();
                 match resume_worktree_action(
-                    dest.is_dir(),
+                    dir_existed_before,
                     source.snapshot_ref.as_deref(),
                 ) {
                     ResumeWorktreeAction::Reuse => Some(dest.to_path_buf()),
@@ -286,6 +555,23 @@ pub(crate) async fn handle_subagent_request(
                                     subagent_id = % request.id, error = % e,
                                     "Failed to rehydrate subagent worktree, falling back to shared workspace"
                                 );
+                                // Rehydration may create the destination before
+                                // restoring session state fails.  Do not leak
+                                // that partial materialization into a later
+                                // resume attempt.
+                                if rehydrate_destination_cleanup_owned(dir_existed_before)
+                                    && dest.is_dir()
+                                    && let Err(cleanup_error) =
+                                        crate::session::worktree::remove_subagent_worktree(dest)
+                                        .await
+                                {
+                                    tracing::warn!(
+                                        subagent_id = % request.id,
+                                        worktree_path = % dest.display(),
+                                        error = % cleanup_error,
+                                        "failed to clean up partially rehydrated worktree"
+                                    );
+                                }
                                 None
                             }
                         }
@@ -364,26 +650,10 @@ pub(crate) async fn handle_subagent_request(
         None
     };
     let worktree_freshly_created = resume_source.is_none() && worktree_path.is_some();
-    if let Some(raw_cwd) = request.cwd.as_deref() {
-        match sanitize_cwd_value(raw_cwd) {
-            Some(cwd_path) => {
-                if worktree_path.is_none() && resume_source.is_none() {
-                    let p = Path::new(&cwd_path);
-                    if !p.is_dir() {
-                        let msg = if p.exists() {
-                            format!("cwd \"{cwd_path}\" exists but is not a directory")
-                        } else {
-                            format!("cwd \"{cwd_path}\" does not exist")
-                        };
-                        send_failure(request, &msg);
-                        return;
-                    }
-                }
-                request.cwd = Some(cwd_path);
-            }
-            None => request.cwd = None,
-        }
-    }
+    let mut worktree_guard = SpawnWorktreeGuard::new(
+        worktree_path.clone(),
+        worktree_freshly_created,
+    );
     if effective_runtime.reasoning_effort.is_some()
         || effective_runtime.capability_mode.is_some()
     {
@@ -417,37 +687,10 @@ pub(crate) async fn handle_subagent_request(
             prune_orphaned_background_task_tools(&mut definition.tool_config);
         }
     }
-    if request.fork_context {
-        effective_runtime.model = Some(ctx.model_id.0.to_string());
-    }
-    let (mut effective_sampling_config, mut effective_model_id) = resolve_effective_model_config(
-            effective_runtime.model.as_deref(),
-            &request.subagent_type,
-            &definition.model,
-            &ctx,
-        )
-        .await;
     let subagent_max_turns = resolve_subagent_max_turns(
         definition.max_turns,
         ctx.parent_max_turns,
     );
-    {
-        let model_str = &effective_sampling_config.model;
-        let model_unknown = !model_str.is_empty() && !ctx.available_models.is_empty()
-            && !ctx.available_models.contains_key(model_str)
-            && !ctx.available_models.values().any(|e| e.info().model == *model_str);
-        if model_unknown {
-            let (parent_config, parent_mid) = read_parent_sampling_config(&ctx).await;
-            tracing::warn!(
-                subagent_id = % request.id, resolved_model = % model_str, parent_model =
-                % parent_config.model,
-                "Resolved subagent model not found in available models — \
-                 falling back to parent model"
-            );
-            effective_sampling_config = parent_config;
-            effective_model_id = parent_mid;
-        }
-    }
     if let Some(ref source) = resume_source
         && let Some(ref source_model) = source.model_id
         && effective_model_id.0.as_ref() != source_model.as_str()
@@ -465,18 +708,37 @@ pub(crate) async fn handle_subagent_request(
                  is no longer available in the model catalogue.",
                 source.subagent_id,
             );
+            worktree_guard.cleanup().await;
             send_failure(request, &msg);
             return;
         }
     }
-    if let Some(raw) = effective_runtime.reasoning_effort.as_deref()
-        && ctx
-            .models_manager
-            .model_supports_reasoning_effort(effective_model_id.0.as_ref())
-    {
-        use xai_grok_sampling_types::ReasoningEffort;
-        match raw.parse::<ReasoningEffort>() {
-            Ok(eff) => effective_sampling_config.reasoning_effort = Some(eff),
+    if let Some(raw) = effective_runtime.reasoning_effort.as_deref() {
+        match raw.parse::<xai_grok_sampling_types::ReasoningEffort>() {
+            Ok(eff) => {
+                let model_id = effective_model_id.0.as_ref();
+                let entry = crate::agent::config::find_model_by_id(&ctx.available_models, model_id);
+                let offers = model_catalog_offers_reasoning_effort(
+                    &ctx.available_models,
+                    model_id,
+                    eff,
+                );
+                if request.runtime_overrides.reasoning_effort_override_provenance
+                    == ReasoningEffortOverrideProvenance::Tool
+                    && !offers
+                {
+                    let msg = task_reasoning_effort_override_error(
+                        raw, model_id,
+                    );
+                    pending_guard.set_error(msg.clone());
+                    worktree_guard.cleanup().await;
+                    send_failure(request, &msg);
+                    return;
+                }
+                if entry.is_some_and(|entry| entry.info().supports_reasoning_effort) {
+                    effective_sampling_config.reasoning_effort = Some(eff);
+                }
+            }
             Err(err) => {
                 tracing::warn!(
                     value = raw, error = % err,
@@ -533,6 +795,7 @@ pub(crate) async fn handle_subagent_request(
                 subagent_id = % request.id, error = % msg,
                 "Resume-copy failed, aborting subagent spawn"
             );
+            worktree_guard.cleanup().await;
             send_failure(request, &msg);
             return;
         }
@@ -674,6 +937,7 @@ pub(crate) async fn handle_subagent_request(
         Err(e) => {
             let msg = format!("Sampling client error: {e}");
             pending_guard.set_error(msg.clone());
+            worktree_guard.cleanup().await;
             fail_subagent(
                 request,
                 &msg,
@@ -702,6 +966,7 @@ pub(crate) async fn handle_subagent_request(
         Err(e) => {
             let msg = format!("Persistence error: {e}");
             pending_guard.set_error(msg.clone());
+            worktree_guard.cleanup().await;
             fail_subagent(
                 request,
                 &msg,
@@ -1191,6 +1456,7 @@ pub(crate) async fn handle_subagent_request(
         Err(e) => {
             let msg = format!("Failed to spawn child session: {e}");
             pending_guard.set_error(msg.clone());
+            worktree_guard.cleanup().await;
             fail_subagent(
                 request,
                 &msg,
@@ -1207,6 +1473,7 @@ pub(crate) async fn handle_subagent_request(
         }
     };
     if cancel_token.is_cancelled() {
+        worktree_guard.promote();
         pending_guard.defuse();
         cancel_pending_subagent_at_promote(
                 request,
@@ -1227,6 +1494,7 @@ pub(crate) async fn handle_subagent_request(
         return;
     }
     pending_guard.defuse();
+    worktree_guard.promote();
     coordinator
         .borrow_mut()
         .insert(SubagentTracker {

@@ -454,6 +454,19 @@ impl ModelsManager {
             .unwrap_or(false)
     }
 
+    /// Whether `model_id` advertises this exact reasoning-effort value.
+    ///
+    /// Uses the server-provided menu when present, otherwise the same legacy
+    /// low/medium/high/xhigh fallback used by the session effort picker.
+    pub fn model_offers_reasoning_effort(&self, model_id: &str, effort: ReasoningEffort) -> bool {
+        self.inner
+            .models
+            .read()
+            .get(model_id)
+            .map(|entry| model_offers_reasoning_effort(&entry.info, effort))
+            .unwrap_or(false)
+    }
+
     /// The catalog default reasoning effort for `model_id`, if the catalog
     /// pins one. Used as the final fallback when neither the session handle
     /// nor the global config sets an explicit effort, so surfaced config stays

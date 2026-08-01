@@ -205,7 +205,9 @@ fn resolve_persona_instructions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xai_grok_tools::implementations::grok_build::task::types::ModelOverrideProvenance;
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        ModelOverrideProvenance, ReasoningEffortOverrideProvenance,
+    };
 
     /// Helper to build an overrides struct with only the fields we care about.
     fn make_overrides(
@@ -219,6 +221,7 @@ mod tests {
             model: model.map(String::from),
             model_override_provenance: ModelOverrideProvenance::Harness,
             reasoning_effort: reasoning_effort.map(String::from),
+            reasoning_effort_override_provenance: ReasoningEffortOverrideProvenance::Harness,
             persona: persona.map(String::from),
             capability_mode,
             isolation,
