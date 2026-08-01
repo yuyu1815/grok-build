@@ -1,5 +1,6 @@
 use crate::agent::auth_method::ModelByok;
 use crate::auth::{AuthManager, GrokComConfig, OidcAuthConfig};
+use crate::provider::ProviderId;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use crate::{config::StorageMode, sampling::ApiBackend, tools::config::ShellToolsetConfig};
 use agent_client_protocol as acp;
@@ -3285,7 +3286,7 @@ fn apply_global_scalar_defaults(
 pub fn default_model_entries(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntry> {
     default_models(endpoints)
         .into_iter()
-        .map(|(key, entry)| (key, ModelEntry::from_config_entry(&entry)))
+        .map(|(key, entry)| (key, ModelEntry::from_xai_config_entry(&entry)))
         .collect()
 }
 /// Resolve a model against the available model map.
@@ -3695,6 +3696,8 @@ pub struct ModelInfo {
     /// Falls back to `model` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub provider: ProviderId,
     /// The routing slug sent in API requests.
     pub model: String,
     /// The base URL of the model (session endpoint). e.g. "https://cli-chat-proxy.grok.com/v1"
@@ -3765,6 +3768,7 @@ impl ModelInfo {
         ModelInfo {
             user_selectable: true,
             id: None,
+            provider: ProviderId::Unknown,
             model: slug.to_owned(),
             base_url: String::new(),
             name: None,
@@ -3800,6 +3804,7 @@ impl ModelInfo {
         ModelInfo {
             user_selectable: true,
             id: entry.id.clone(),
+            provider: ProviderId::Unknown,
             model: entry.model.clone(),
             base_url: entry.base_url.clone(),
             name: entry.name.clone(),
@@ -3893,6 +3898,14 @@ impl ModelEntry {
             env_key: entry.env_key.clone(),
             api_base_url: entry.api_base_url.clone(),
         }
+    }
+
+    /// Built-in and remote Grok catalogs are explicitly xAI. User-defined
+    /// config entries use `from_config_entry` and remain provider-unknown.
+    pub fn from_xai_config_entry(entry: &ModelEntryConfig) -> Self {
+        let mut model = Self::from_config_entry(entry);
+        model.info.provider = ProviderId::Xai;
+        model
     }
     /// The model's own (BYOK) credential: a non-empty `api_key`, else the first
     /// set, non-empty `env_key` value. `None` means the model has no usable own
@@ -4278,24 +4291,33 @@ pub(crate) fn first_own_credential(
 /// When `env_key` lists multiple names, the first set non-empty value is used.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
+    let allow_xai_credentials = info.provider == ProviderId::Xai;
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
         (
             Some(key),
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
         )
-    } else if let Some(key) = session_key {
-        (
-            Some(key.to_owned()),
-            info.base_url.clone(),
-            xai_chat_state::AuthType::SessionToken,
-        )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
-        let url = model
-            .api_base_url
-            .clone()
-            .unwrap_or_else(|| info.base_url.clone());
-        (Some(key), url, xai_chat_state::AuthType::ApiKey)
+    } else if allow_xai_credentials {
+        if let Some(key) = session_key {
+            (
+                Some(key.to_owned()),
+                info.base_url.clone(),
+                xai_chat_state::AuthType::SessionToken,
+            )
+        } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+            let url = model
+                .api_base_url
+                .clone()
+                .unwrap_or_else(|| info.base_url.clone());
+            (Some(key), url, xai_chat_state::AuthType::ApiKey)
+        } else {
+            (
+                None,
+                info.base_url.clone(),
+                xai_chat_state::AuthType::ApiKey,
+            )
+        }
     } else {
         if let Some(ref env_keys) = model.env_key
             && !env_keys.is_empty()
@@ -4478,6 +4500,7 @@ pub fn resolve_aux_model_sampling_config(
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider: ProviderId::Xai,
                 model: catalog_entry
                     .map(|e| e.info.model)
                     .unwrap_or_else(|| model_id.to_owned()),
@@ -4602,11 +4625,13 @@ pub fn sampling_config_for_model(
     let temperature = info.temperature;
     let top_p = info.top_p;
     let mut extra_headers = info.extra_headers.clone();
-    inject_url_derived_headers(
-        &mut extra_headers,
-        alpha_test_key.as_deref(),
-        &credentials.base_url,
-    );
+    if info.provider == ProviderId::Xai {
+        inject_url_derived_headers(
+            &mut extra_headers,
+            alpha_test_key.as_deref(),
+            &credentials.base_url,
+        );
+    }
     let api_backend = info.api_backend.clone();
     SamplerConfig {
         api_key: credentials.api_key,
@@ -4702,6 +4727,7 @@ fn resolve_hidden_default_web_search_sampling_config(
     let entry = ModelEntry {
         info: ModelInfo {
             id: None,
+            provider: ProviderId::Xai,
             model: model_id.to_owned(),
             base_url: endpoints.resolve_inference_base_url(),
             name: None,
@@ -5354,10 +5380,29 @@ reasoning_effort = "low"
         env_key: Option<&str>,
         api_base_url: Option<&str>,
     ) -> ModelEntry {
+        test_model_entry_for_provider(
+            ProviderId::Xai,
+            model,
+            base_url,
+            api_key,
+            env_key,
+            api_base_url,
+        )
+    }
+
+    fn test_model_entry_for_provider(
+        provider: ProviderId,
+        model: &str,
+        base_url: &str,
+        api_key: Option<&str>,
+        env_key: Option<&str>,
+        api_base_url: Option<&str>,
+    ) -> ModelEntry {
         ModelEntry {
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider,
                 model: model.to_string(),
                 base_url: base_url.to_string(),
                 name: None,
@@ -5458,6 +5503,58 @@ reasoning_effort = "low"
         );
         assert_eq!(sampling_config.api_key, Some("fallback-key".to_string()));
     }
+    #[test]
+    fn custom_model_does_not_inherit_xai_credentials_or_headers() {
+        let model = test_model_entry_for_provider(
+            ProviderId::Unknown,
+            "custom-model",
+            crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+            None,
+            None,
+            None,
+        );
+        let credentials = resolve_credentials(&model, Some("grok-session-token"));
+        assert_eq!(credentials.api_key, None);
+        assert_eq!(credentials.auth_type, xai_chat_state::AuthType::ApiKey);
+
+        let sampling = sampling_config_for_model(
+            &model,
+            credentials,
+            Some("alpha-secret".to_owned()),
+            None,
+            None,
+            Some("grok-user".to_owned()),
+        );
+        assert_eq!(sampling.api_key, None);
+        assert!(!sampling.extra_headers.contains_key("X-XAI-Token-Auth"));
+        assert!(
+            !sampling
+                .extra_headers
+                .contains_key("x-authenticateresponse")
+        );
+    }
+
+    #[test]
+    fn configured_models_are_provider_unknown_but_builtins_remain_xai() {
+        let raw_config: toml::Value = toml::from_str(
+            r#"
+            [model.custom]
+            model = "custom-model"
+            base_url = "https://custom.example/v1"
+            context_window = 200000
+            "#,
+        )
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).unwrap();
+        let models = resolve_model_list(&cfg, None);
+        assert_eq!(models["custom"].info.provider, ProviderId::Unknown);
+        assert!(
+            default_model_entries(&EndpointsConfig::default())
+                .values()
+                .all(|entry| entry.info.provider == ProviderId::Xai)
+        );
+    }
+
     #[test]
     fn default_models_dual_endpoint_routing() {
         let endpoints = EndpointsConfig::default();
@@ -10553,6 +10650,7 @@ default = "grok-4.5"
             info: ModelInfo {
                 user_selectable: true,
                 id: None,
+                provider: ProviderId::Xai,
                 model: slug.to_owned(),
                 base_url: "https://test.example.com/v1".to_owned(),
                 name: Some(slug.to_owned()),
