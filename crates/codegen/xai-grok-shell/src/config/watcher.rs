@@ -98,15 +98,15 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json`
-/// changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`,
-/// etc.) provided at startup.
+/// Watches `~/.grok/` for `config.toml` and `models_cache.json`, plus
+/// `~/.grok/auth/` for `grok.json` and any extra paths (project
+/// `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
 ///
 /// Uses `notify-debouncer-mini` for built-in debounce that coalesces rapid
 /// editor writes (including write-then-rename patterns).
 ///
 /// Self-write suppression is intentionally omitted. When the agent writes
-/// `auth.json` or `config.toml`, the watcher will fire and the
+/// `auth/grok.json` or `config.toml`, the watcher will fire and the
 /// [`ConfigReloader`](super::reloader::ConfigReloader) will re-read the file.
 /// The reloader's own content-based deduplication (auth key hash, toml value
 /// comparison) skips the update when nothing actually changed, so the

@@ -12,19 +12,15 @@ pub(crate) struct AuthFilePaths {
 }
 
 impl AuthFilePaths {
-    /// Resolve the canonical paths under the Grok home.
-    pub(crate) fn canonical(grok_home: &Path) -> Self {
-        let auth_path = grok_home.join("auth").join("grok.json");
-        let lock_path = grok_home.join("auth").join("grok.json.lock");
-        Self {
-            auth_path,
-            lock_path,
-        }
-    }
-
-    /// Resolve an explicit `GROK_AUTH_PATH` using the PR-base lock semantics.
-    pub(crate) fn explicit(auth_path: PathBuf) -> Self {
-        let lock_path = auth_path.with_file_name("auth.json.lock");
+    /// Resolve the auth and lock paths from one concrete credential path.
+    ///
+    /// Lock identity depends only on credential identity: selecting the same
+    /// file through the default or `GROK_AUTH_PATH` must yield the same lock.
+    pub(crate) fn new(auth_path: PathBuf) -> Self {
+        let lock_path = auth_path.with_file_name(format!(
+            "{}.lock",
+            auth_path.file_name().unwrap_or_default().to_string_lossy()
+        ));
         Self {
             auth_path,
             lock_path,
@@ -42,7 +38,7 @@ impl AuthFilePaths {
 
 /// Canonical on-disk auth path under the Grok home.
 pub fn default_auth_path(grok_home: &Path) -> PathBuf {
-    AuthFilePaths::canonical(grok_home).auth_path
+    grok_home.join("auth").join("grok.json")
 }
 
 /// Create the parent directory before any lock or write operation.
@@ -430,29 +426,35 @@ mod path_tests {
     #[test]
     fn canonical_paths() {
         let grok_home = Path::new("grok-home");
-        let paths = AuthFilePaths::canonical(grok_home);
+        let auth_path = default_auth_path(grok_home);
+        let paths = AuthFilePaths::new(auth_path.clone());
 
-        assert_eq!(paths.auth_path(), grok_home.join("auth/grok.json"));
+        assert_eq!(paths.auth_path(), auth_path);
         assert_eq!(paths.lock_path(), grok_home.join("auth/grok.json.lock"));
     }
 
     #[test]
-    fn explicit_custom_paths() {
+    fn custom_paths_derive_lock_from_credential_name() {
         let auth_path = PathBuf::from("custom/credentials.json");
-        let paths = AuthFilePaths::explicit(auth_path.clone());
+        let paths = AuthFilePaths::new(auth_path.clone());
 
         assert_eq!(paths.auth_path(), auth_path);
-        assert_eq!(paths.lock_path(), Path::new("custom/auth.json.lock"));
+        assert_eq!(paths.lock_path(), Path::new("custom/credentials.json.lock"));
     }
 
     #[test]
-    fn explicit_canonical_auth_string_keeps_explicit_lock_semantics() {
+    fn canonical_path_has_one_lock_identity_regardless_of_selection_source() {
         let grok_home = Path::new("grok-home");
         let canonical_auth_path = default_auth_path(grok_home);
-        let paths = AuthFilePaths::explicit(canonical_auth_path.clone());
+        let default_paths = AuthFilePaths::new(default_auth_path(grok_home));
+        let override_paths = AuthFilePaths::new(canonical_auth_path.clone());
 
-        assert_eq!(paths.auth_path(), canonical_auth_path);
-        assert_eq!(paths.lock_path(), grok_home.join("auth/auth.json.lock"));
+        assert_eq!(default_paths.auth_path(), override_paths.auth_path());
+        assert_eq!(default_paths.lock_path(), override_paths.lock_path());
+        assert_eq!(
+            override_paths.lock_path(),
+            grok_home.join("auth/grok.json.lock")
+        );
     }
 }
 

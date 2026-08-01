@@ -33,7 +33,7 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, AuthFilePaths, ensure_auth_parent, read_auth_json,
+    AuthFileLock, AuthFilePaths, default_auth_path, ensure_auth_parent, read_auth_json,
     read_auth_json_or_empty_recovering_corrupt, write_auth_json,
 };
 
@@ -291,7 +291,7 @@ impl AuthManager {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    AuthFilePaths::canonical(grok_home),
+                    AuthFilePaths::new(default_auth_path(grok_home)),
                     scope,
                     grok_com_config,
                     proxy_base_url,
@@ -302,9 +302,8 @@ impl AuthManager {
         }
 
         // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth/grok.json).
-        let paths = auth_path_override
-            .map(AuthFilePaths::explicit)
-            .unwrap_or_else(|| AuthFilePaths::canonical(grok_home));
+        let auth_path = auth_path_override.unwrap_or_else(|| default_auth_path(grok_home));
+        let paths = AuthFilePaths::new(auth_path);
         let auth_path = paths.auth_path();
         if let Err(e) = ensure_auth_parent(auth_path) {
             tracing::warn!(
