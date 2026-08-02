@@ -1,4 +1,5 @@
 //! `/model` (alias `/m`) — switch model + (optionally) reasoning effort.
+//! Use `/models` to open the interactive model picker.
 //! Chained autocomplete: pick a reasoning-supported model → trailing space
 //! re-opens the dropdown into a `low|medium|high|xhigh` sub-menu.
 
@@ -45,10 +46,6 @@ impl SlashCommand for ModelCommand {
     }
 
     fn args_required(&self) -> bool {
-        false
-    }
-
-    fn executes_empty_args_on_enter(&self) -> bool {
         true
     }
 
@@ -71,12 +68,12 @@ impl SlashCommand for ModelCommand {
     fn run(&self, ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
         let trimmed = args.trim();
         if trimmed.is_empty() {
-            return CommandResult::Action(Action::OpenModelPicker);
+            return CommandResult::Error("Usage: /model <name> [effort]".into());
         }
 
         if matches!(trimmed, "help" | "-h" | "--help") {
             return CommandResult::Message(
-                "Run /model to open the model selection menu, or /model [modelName] to set the model."
+                "Run /models to open the model selection menu, or /model [modelName] to set the model."
                     .into(),
             );
         }
@@ -545,12 +542,12 @@ mod tests {
     }
 
     #[test]
-    fn no_args_opens_picker() {
+    fn no_args_returns_usage_error() {
         let state = ModelState::default();
         let mut ctx = dummy_exec_ctx(&state);
         assert!(matches!(
             ModelCommand.run(&mut ctx, ""),
-            CommandResult::Action(Action::OpenModelPicker)
+            CommandResult::Error(ref message) if message == "Usage: /model <name> [effort]"
         ));
     }
 
@@ -565,7 +562,7 @@ mod tests {
             assert!(matches!(
                 ModelCommand.run(&mut ctx, alias),
                 CommandResult::Message(ref msg)
-                    if msg == "Run /model to open the model selection menu, or /model [modelName] to set the model."
+                    if msg == "Run /models to open the model selection menu, or /model [modelName] to set the model."
             ));
         }
     }

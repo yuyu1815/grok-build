@@ -176,7 +176,7 @@ Claude 固有で non-scope の表示を除き、次の文言を保持する。
 | cancel | `Kept model as <model>` |
 | success | `Set model to <model> [with <effort> effort]` |
 | current | `Current model: <model> [(effort: <effort>)]` |
-| help | `Run /model to open the model selection menu, or /model [modelName] to set the model.` |
+| help | `Run /models to open the model selection menu, or /model [modelName] to set the model.` |
 
 角括弧部分の `with <effort> effort` は、effort を表示する場合の条件付き部分を表す。
 

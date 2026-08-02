@@ -36,6 +36,7 @@ pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
 pub mod model;
+pub mod models;
 pub mod multiline;
 pub mod new;
 pub mod personas;
@@ -89,6 +90,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::minimal()),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::fullscreen()),
         Arc::new(model::ModelCommand),
+        Arc::new(models::ModelsCommand),
         Arc::new(effort::EffortCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
         Arc::new(auto::AutoCommand),
@@ -193,6 +195,7 @@ mod tests {
         assert!(reg.get("new").is_some());
         assert!(reg.get("compact").is_some());
         assert!(reg.get("model").is_some());
+        assert!(reg.get("models").is_some());
         assert!(reg.get("home").is_some());
         assert!(reg.get("view-plan").is_some());
         reg.set_available_tools(std::collections::HashSet::from([
@@ -394,22 +397,22 @@ mod tests {
         }
     }
     #[test]
-    fn model_empty_arg_opens_picker() {
+    fn model_empty_arg_returns_usage_error() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "");
         assert!(matches!(
             result,
-            CommandResult::Action(Action::OpenModelPicker)
+            CommandResult::Error(ref message) if message == "Usage: /model <name> [effort]"
         ));
     }
     #[test]
-    fn model_whitespace_only_arg_opens_picker() {
+    fn models_empty_arg_opens_picker() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "   ");
+        let cmd = models::ModelsCommand;
+        let result = cmd.run(&mut ctx, "");
         assert!(matches!(
             result,
             CommandResult::Action(Action::OpenModelPicker)

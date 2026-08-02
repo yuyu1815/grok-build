@@ -1012,6 +1012,20 @@ fn slash_model_no_args_produces_scrollback_error() {
     assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
 }
 #[test]
+fn slash_models_opens_model_picker() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+
+    let effects = dispatch(Action::SendPrompt("/models".into()), &mut app);
+
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::ModelPicker { .. })
+    ));
+    assert!(app.agents[&id].prompt.text().is_empty());
+}
+#[test]
 fn slash_hooks_opens_modal() {
     let mut app = test_app_with_agent();
     app.appearance.disable_plugins = false;
