@@ -228,6 +228,33 @@ pub fn load_effective_config() -> std::io::Result<toml::Value> {
     Ok(effective)
 }
 
+/// Preview the effective config that would result from clearing the user's
+/// `models.default` choice. This mirrors [`persist_models_default(None, None)`]
+/// without writing: remove only the user-layer value, dismiss campaigns that
+/// touch the field, then re-merge lower and higher-authority layers normally.
+pub fn load_effective_config_after_models_default_clear() -> std::io::Result<toml::Value> {
+    let mut layers = ConfigLayers::load()?;
+    if let Some(models) = layers
+        .user
+        .get_mut("models")
+        .and_then(toml::Value::as_table_mut)
+    {
+        models.remove("default");
+        models.remove("default_reasoning_effort");
+    }
+
+    let remote = cached_remote_campaigns();
+    let mut dismissed = load_dismissed_ids();
+    dismissed.extend(ids_touching_paths(
+        &resolve_dismissable_campaigns(),
+        &[MODELS_DEFAULT_PATH],
+    ));
+    let mut effective = layers.effective_config_base();
+    let active = resolve_active_campaigns_from_layers(&layers, &effective, &remote, &dismissed);
+    layers.apply_campaign_overrides(&mut effective, &active);
+    Ok(effective)
+}
+
 /// Effective config with **disk campaigns only** — no remote cache, no
 /// `GROK_CAMPAIGNS_OVERRIDE`. For one-shot CLI entrypoints that never fetch
 /// remote settings: calling [`load_effective_config`] there would silently
@@ -406,6 +433,8 @@ pub async fn persist_models_default(
         cfg.models.default = if s.is_empty() { None } else { Some(s) };
         if let Some(effort) = reasoning_effort {
             cfg.models.default_reasoning_effort = Some(effort);
+        } else if cfg.models.default.is_none() {
+            cfg.models.default_reasoning_effort = None;
         }
     })
     .await

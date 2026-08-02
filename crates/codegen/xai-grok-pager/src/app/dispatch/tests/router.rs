@@ -665,6 +665,164 @@ fn switch_model_dispatch_produces_effect_and_sets_pending() {
     assert!(app.agents[&id].session.model_switch_pending);
     assert!(app.agents[&id].session.state.is_idle());
 }
+
+#[test]
+fn model_command_switches_before_persisting() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("model-command-target"));
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .available
+        .insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Model Command Target"),
+        );
+    let old_model = app.agents[&id].session.models.current.clone();
+
+    let effects = dispatch(
+        Action::SetModelFromCommand {
+            model_id: model_id.clone(),
+            effort: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+        },
+        &mut app,
+    );
+
+    assert_eq!(effects.len(), 1, "persistence must wait for switch success");
+    assert!(matches!(
+        &effects[0],
+        Effect::SwitchModel {
+            model_id: mid,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+            ..
+        } if mid == &model_id
+    ));
+    assert_eq!(app.agents[&id].session.models.current, old_model);
+    assert!(app.agents[&id].session.model_switch_pending);
+}
+
+#[test]
+fn model_picker_preserves_explicit_effort_when_target_supports_effort() {
+    use xai_grok_shell::sampling::types::ReasoningEffort;
+
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("reasoning-target"));
+    let mut meta = serde_json::Map::new();
+    meta.insert("supportsReasoningEffort".into(), serde_json::json!(true));
+    meta.insert(
+        "reasoningEfforts".into(),
+        serde_json::json!(["low", "medium", "high"]),
+    );
+    app.agents
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .models
+        .available
+        .insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Reasoning Target")
+                .meta(serde_json::Value::Object(meta).as_object().cloned()),
+        );
+    let models = &mut app.agents.get_mut(&id).unwrap().session.models;
+    models.reasoning_effort = Some(ReasoningEffort::Medium);
+    models.reasoning_effort_explicit = true;
+
+    let effects = dispatch(
+        Action::SetModelFromCommand {
+            model_id: model_id.clone(),
+            effort: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+        },
+        &mut app,
+    );
+
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::SwitchModel {
+            model_id: target,
+            effort: Some(ReasoningEffort::Medium),
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+            ..
+        }] if target == &model_id
+    ));
+}
+
+#[test]
+fn model_command_rejects_id_outside_session_catalog() {
+    let mut app = test_app_with_agent();
+    let effects = dispatch(
+        Action::SetModelFromCommand {
+            model_id: acp::ModelId::new(std::sync::Arc::from("not-allowlisted")),
+            effort: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+        },
+        &mut app,
+    );
+    assert!(effects.is_empty());
+    assert!(!app.agents[&AgentId(0)].session.model_switch_pending);
+}
+
+#[test]
+fn model_command_accepts_current_id_outside_catalog_as_noop_success() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let legacy = acp::ModelId::new(std::sync::Arc::from("legacy-current"));
+    app.agents.get_mut(&id).unwrap().session.models.current = Some(legacy.clone());
+    let initial_scrollback = app.agents[&id].scrollback.len();
+
+    let effects = dispatch(
+        Action::SetModelFromCommand {
+            model_id: legacy,
+            effort: None,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandSet,
+        },
+        &mut app,
+    );
+
+    assert!(effects.is_empty());
+    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
+    assert!(!app.agents[&id].session.model_switch_pending);
+}
+
+#[test]
+fn model_default_uses_cli_precedence_instead_of_catalog_order() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let first = acp::ModelId::new(std::sync::Arc::from("first-model"));
+    let cli = acp::ModelId::new(std::sync::Arc::from("cli-model"));
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.models.available.clear();
+        agent
+            .session
+            .models
+            .available
+            .insert(first.clone(), acp::ModelInfo::new(first, "First Model"));
+        agent
+            .session
+            .models
+            .available
+            .insert(cli.clone(), acp::ModelInfo::new(cli.clone(), "CLI Model"));
+    }
+    app.cli_model_override = Some(cli.clone());
+
+    let effects = dispatch(Action::ResetModelFromCommand, &mut app);
+
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::SwitchModel {
+            model_id,
+            intent: crate::app::actions::ModelSwitchIntent::ModelCommandClear,
+            ..
+        }] if model_id == &cli
+    ));
+}
 #[test]
 fn switch_model_allowed_when_agent_chat_kind() {
     let mut app = test_app_with_agent();
@@ -852,6 +1010,20 @@ fn slash_model_no_args_produces_scrollback_error() {
     let effects = dispatch(Action::SendPrompt("/model".into()), &mut app);
     assert!(effects.is_empty());
     assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
+}
+#[test]
+fn slash_models_opens_model_picker() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+
+    let effects = dispatch(Action::SendPrompt("/models".into()), &mut app);
+
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::ModelPicker { .. })
+    ));
+    assert!(app.agents[&id].prompt.text().is_empty());
 }
 #[test]
 fn slash_hooks_opens_modal() {

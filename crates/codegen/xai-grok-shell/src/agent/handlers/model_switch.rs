@@ -119,11 +119,21 @@ pub(crate) async fn apply(
             .models_manager
             .model_supports_reasoning_effort(model_id.0.as_ref())
         {
+            let applied_effort = agent
+                .models_manager
+                .applied_reasoning_effort_for_model(model_id.0.as_ref(), eff);
+            if applied_effort != eff {
+                tracing::info!(
+                    session_id = % session_id.0, model_id = % model_id.0,
+                    requested_effort = % eff, applied_effort = % applied_effort,
+                    "set_session_model: downgraded unsupported max effort at API boundary"
+                );
+            }
             tracing::info!(
-                session_id = % session_id.0, effort = % eff,
+                session_id = % session_id.0, effort = % applied_effort,
                 "set_session_model: applying reasoning_effort override from meta"
             );
-            model_sampling.reasoning_effort = Some(eff);
+            model_sampling.reasoning_effort = Some(applied_effort);
         } else {
             tracing::warn!(
                 session_id = % session_id.0, model_id = % model_id.0, effort = % eff,

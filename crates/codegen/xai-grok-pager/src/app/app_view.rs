@@ -851,6 +851,9 @@ pub struct AppView {
     /// `AgentSession.deferred_model_switch` so the model is applied once
     /// the session is created.
     pub cli_model_override: Option<acp::ModelId>,
+    /// Latest server-provided default-model hint, retained so `/model default`
+    /// can use the shell's canonical resolver without duplicating precedence.
+    pub remote_default_model: Option<String>,
     /// CLI effort token (`--reasoning-effort` / `--effort`). Applied on session create.
     pub cli_effort_token: Option<String>,
     /// Default YOLO for new sessions, seeded at startup from `effective_yolo_for_launch`.
@@ -1249,6 +1252,7 @@ impl AppView {
             welcome_tick: 0,
             welcome_shimmer_frame: 0,
             cli_model_override: None,
+            remote_default_model: None,
             cli_effort_token: None,
             default_yolo: false,
             permission_mode_from_soft_default: true,
@@ -5074,6 +5078,7 @@ pub(crate) mod tests {
             tips: Vec::new(),
             tip: None,
             cli_model_override: None,
+            remote_default_model: None,
             cli_effort_token: None,
             default_yolo: false,
             permission_mode_from_soft_default: true,

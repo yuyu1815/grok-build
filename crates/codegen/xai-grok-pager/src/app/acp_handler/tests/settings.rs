@@ -2,6 +2,37 @@
     use super::*;
 
     #[test]
+    fn settings_update_default_model_is_presence_aware() {
+        let mut app = make_app_with_agent("sess-default-model");
+        app.remote_default_model = Some("old-model".into());
+
+        let update = |value: serde_json::Value| {
+            acp::ExtNotification::new(
+                "x.ai/settings/update",
+                serde_json::value::to_raw_value(&value).unwrap().into(),
+            )
+        };
+
+        assert!(handle_ext_notification(
+            &update(serde_json::json!({"sharing_enabled": true})),
+            &mut app
+        ));
+        assert_eq!(app.remote_default_model.as_deref(), Some("old-model"));
+
+        assert!(handle_ext_notification(
+            &update(serde_json::json!({"default_model": null})),
+            &mut app
+        ));
+        assert_eq!(app.remote_default_model, None);
+
+        assert!(handle_ext_notification(
+            &update(serde_json::json!({"default_model": "new-model"})),
+            &mut app
+        ));
+        assert_eq!(app.remote_default_model.as_deref(), Some("new-model"));
+    }
+
+    #[test]
     fn voice_kill_switch_clears_pending_spawn() {
         // A `/voice` queued a lazy spawn; then the remote flag turns off. The
         // teardown must drop the queued spawn so the event loop won't consume it

@@ -4,7 +4,7 @@ use super::load::dispatch_load_session;
 use super::modal::remove_agent_and_cleanup;
 use crate::acp::model_state::{EffortTokenError, ModelState};
 use crate::acp::tracker::AcpUpdateTracker;
-use crate::app::actions::{Action, Effect, SwitchModelError};
+use crate::app::actions::{Action, Effect, ModelSwitchIntent, SwitchModelError};
 use crate::app::agent::{AgentCommand, AgentId, AgentSession, AgentState};
 use crate::app::agent_view::{ActivePane, AgentView, McpInitProgress};
 use crate::app::app_view::{ActiveView, AppView, TrustState};
@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(
@@ -869,6 +865,7 @@ pub(in crate::app::dispatch) fn handle_session_created(
                 model_id,
                 effort,
                 prev_model_id: None,
+                intent: ModelSwitchIntent::Existing,
             });
         }
         if let Some(mode) = deferred_mode {
@@ -959,6 +956,7 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
                 model_id,
                 effort,
                 prev_model_id: None,
+                intent: ModelSwitchIntent::Existing,
             });
         }
         if let Some(mode) = deferred_mode {
@@ -1040,12 +1038,18 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
     effort: Option<ReasoningEffort>,
     result: Result<(), SwitchModelError>,
     prev_model_id: Option<acp::ModelId>,
+    intent: ModelSwitchIntent,
 ) -> Vec<Effect> {
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.session.model_switch_pending = false;
         let mut effects = match result {
             Ok(()) => {
-                agent.session.user_model_preference = Some(model_id.clone());
+                agent.session.user_model_preference = match intent {
+                    ModelSwitchIntent::ModelCommandClear => None,
+                    ModelSwitchIntent::Existing | ModelSwitchIntent::ModelCommandSet => {
+                        Some(model_id.clone())
+                    }
+                };
                 let display_name = agent
                     .session
                     .models
@@ -1055,20 +1059,47 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     .unwrap_or_else(|| model_id.0.to_string());
                 let prev_model = agent.session.models.current.clone();
                 let prev_effort = agent.session.models.reasoning_effort;
+                let effort_explicit = match intent {
+                    ModelSwitchIntent::ModelCommandClear => false,
+                    _ => effort.is_some() || agent.session.models.reasoning_effort_explicit,
+                };
                 agent.session.models.set_current(model_id.clone(), effort);
+                agent.session.models.reasoning_effort_explicit = effort_explicit;
+                if app.models.available.contains_key(&model_id) {
+                    app.models.set_current(model_id.clone(), effort);
+                    app.models.reasoning_effort_explicit = effort_explicit;
+                }
                 let resolved_effort = agent.session.models.reasoning_effort;
                 let unchanged =
                     prev_model.as_ref() == Some(&model_id) && prev_effort == resolved_effort;
-                if !unchanged {
-                    let msg = if let Some(eff) = resolved_effort {
-                        format!("Switched to {display_name} ({eff} effort)")
-                    } else {
-                        format!("Switched to {display_name}")
+                let command_intent = !matches!(intent, ModelSwitchIntent::Existing);
+                let displayed_effort = if command_intent {
+                    effort
+                } else {
+                    resolved_effort
+                };
+                if !unchanged || command_intent {
+                    let msg = match (command_intent, displayed_effort) {
+                        (true, Some(eff)) => {
+                            format!("Set model to {display_name} with {eff} effort")
+                        }
+                        (true, None) => format!("Set model to {display_name}"),
+                        (false, Some(eff)) => {
+                            format!("Switched to {display_name} ({eff} effort)")
+                        }
+                        (false, None) => format!("Switched to {display_name}"),
                     };
                     agent.scrollback.push_block(RenderBlock::system(msg));
                 }
-                if unchanged {
+                if unchanged && !command_intent {
                     vec![]
+                } else if matches!(intent, ModelSwitchIntent::ModelCommandClear) {
+                    vec![Effect::ClearModelCommandPreference]
+                } else if command_intent {
+                    vec![Effect::PersistModelCommandPreference {
+                        model_id: model_id.clone(),
+                        reasoning_effort: effort,
+                    }]
                 } else {
                     vec![Effect::PersistPreferredModel {
                         model_id: model_id.clone(),
@@ -1076,13 +1107,21 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     }]
                 }
             }
-            Err(SwitchModelError::IncompatibleAgent { .. }) => {
+            Err(SwitchModelError::IncompatibleAgent { error, .. }) => {
                 if let Some(ref prev) = prev_model_id {
                     agent.session.models.set_current(prev.clone(), None);
                 }
                 agent.active_modal = None;
-                let display_name = agent.session.models.display_name_for(&model_id);
-                return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
+                if !matches!(intent, ModelSwitchIntent::Existing) {
+                    agent.scrollback.push_block(RenderBlock::system(format!(
+                        "Couldn't switch model: {}",
+                        error.user_message()
+                    )));
+                    vec![]
+                } else {
+                    let display_name = agent.session.models.display_name_for(&model_id);
+                    return open_agent_type_mismatch_question(app, model_id, effort, &display_name);
+                }
             }
             Err(SwitchModelError::Other(msg)) => {
                 agent

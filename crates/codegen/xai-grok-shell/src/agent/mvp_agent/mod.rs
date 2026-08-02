@@ -486,6 +486,7 @@ pub(crate) fn build_prompt_response_meta(
 /// contract safety between the shell and the pager deserializer.
 #[derive(serde::Serialize)]
 struct SettingsUpdateNotification {
+    default_model: Option<String>,
     show_resolved_model: Option<bool>,
     sharing_enabled: Option<bool>,
     session_picker_grouped: Option<bool>,
@@ -2051,6 +2052,7 @@ impl MvpAgent {
             let cfg = self.cfg.borrow();
             let rs = cfg.remote_settings.as_ref();
             SettingsUpdateNotification {
+                default_model: rs.and_then(|s| s.default_model.clone()),
                 show_resolved_model: rs.and_then(|s| s.show_resolved_model),
                 sharing_enabled: rs.and_then(|s| s.sharing_enabled),
                 session_picker_grouped: rs.and_then(|s| s.session_picker_grouped),

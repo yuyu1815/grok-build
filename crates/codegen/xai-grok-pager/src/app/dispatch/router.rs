@@ -109,7 +109,7 @@ use super::turn::{
     dispatch_demote_to_background, dispatch_kill_bg_task, dispatch_kill_subagent,
 };
 use super::voice::{dispatch_enable_voice_mode, dispatch_voice_stop, dispatch_voice_toggle};
-use crate::app::actions::{Action, Effect};
+use crate::app::actions::{Action, Effect, ModelSwitchIntent};
 use crate::app::agent_view::ActivePane;
 use crate::app::app_view::{ActiveView, AppView, AuthState};
 use crate::scrollback::types::DisplayMode;
@@ -795,6 +795,136 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             }]
         }
         Action::NextModel => vec![],
+        Action::OpenModelPicker => {
+            let ActiveView::Agent(id) = app.active_view else {
+                return vec![];
+            };
+            let Some(agent) = app.agents.get_mut(&id) else {
+                return vec![];
+            };
+            match crate::views::model_picker::ModelPickerState::new(&agent.session.models) {
+                Some(state) => {
+                    agent.active_modal = Some(crate::views::modal::ActiveModal::ModelPicker {
+                        state,
+                        window: crate::views::modal_window::ModalWindowState::new(),
+                    });
+                }
+                None => {
+                    agent
+                        .scrollback
+                        .push_block(crate::scrollback::block::RenderBlock::system(
+                            "No available models",
+                        ));
+                }
+            }
+            vec![]
+        }
+        Action::ResetModelFromCommand => {
+            let ActiveView::Agent(id) = app.active_view else {
+                return vec![];
+            };
+            let Some(agent) = app.agents.get(&id) else {
+                return vec![];
+            };
+            let resolved = xai_grok_shell::agent::models::resolve_default_model_after_user_clear(
+                app.cli_model_override.as_ref().map(|id| id.0.as_ref()),
+                app.remote_default_model.as_deref(),
+                &agent.session.models.available,
+            );
+            match resolved {
+                Ok(model_id) => dispatch(
+                    Action::SetModelFromCommand {
+                        model_id,
+                        effort: None,
+                        intent: ModelSwitchIntent::ModelCommandClear,
+                    },
+                    app,
+                ),
+                Err(error) => {
+                    if let Some(agent) = app.agents.get_mut(&id) {
+                        agent
+                            .scrollback
+                            .push_block(crate::scrollback::block::RenderBlock::system(error));
+                    }
+                    vec![]
+                }
+            }
+        }
+        Action::SetModelFromCommand {
+            model_id,
+            effort,
+            intent,
+        } => {
+            let ActiveView::Agent(id) = app.active_view else {
+                return vec![];
+            };
+            let Some(agent) = app.agents.get_mut(&id) else {
+                return vec![];
+            };
+            let current_outside_catalog = agent.session.models.current.as_ref() == Some(&model_id)
+                && !agent.session.models.available.contains_key(&model_id);
+            let valid =
+                agent.session.models.available.contains_key(&model_id) || current_outside_catalog;
+            if !valid {
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(format!(
+                        "Unknown model: {}",
+                        model_id.0
+                    )));
+                return vec![];
+            }
+            if current_outside_catalog {
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(format!(
+                        "Set model to {}",
+                        model_id.0
+                    )));
+                return vec![];
+            }
+            // The picker deliberately sends `None` until Left/Right toggles
+            // effort.  When the current session already has an explicit
+            // effort preference, preserve that picker-wide value across a
+            // model move so the server/API boundary applies it to the target
+            // model (including its max/xhigh downgrade rule).  A catalog
+            // default is not provenance: `reasoning_effort_explicit` must be
+            // true, and unsupported targets remain `None`.
+            let effort = if matches!(intent, ModelSwitchIntent::ModelCommandSet) && effort.is_none()
+            {
+                let models = &agent.session.models;
+                models
+                    .reasoning_effort_explicit
+                    .then(|| models.reasoning_effort)
+                    .flatten()
+                    .filter(|_| !models.reasoning_effort_options_for(&model_id).is_empty())
+            } else {
+                effort
+            };
+            let Some(session_id) = agent.session.session_id.clone() else {
+                // Preserve the existing pre-session `/model` behavior. There is
+                // no active session to order before persistence yet; stash the
+                // switch and persist the preference used to create the next one.
+                agent.session.deferred_model_switch = Some((model_id.clone(), effort));
+                return if matches!(intent, ModelSwitchIntent::ModelCommandClear) {
+                    vec![Effect::ClearModelCommandPreference]
+                } else {
+                    vec![Effect::PersistModelCommandPreference {
+                        model_id,
+                        reasoning_effort: effort,
+                    }]
+                };
+            };
+            agent.session.model_switch_pending = true;
+            vec![Effect::SwitchModel {
+                agent_id: id,
+                session_id,
+                model_id,
+                effort,
+                prev_model_id: None,
+                intent,
+            }]
+        }
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];
@@ -813,6 +943,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 model_id,
                 effort,
                 prev_model_id: None,
+                intent: ModelSwitchIntent::Existing,
             }]
         }
         Action::AnnouncementsHide => {

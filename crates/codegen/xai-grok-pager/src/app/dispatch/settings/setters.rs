@@ -1566,6 +1566,7 @@ pub(in crate::app::dispatch) fn set_default_model(
             model_id: new_id,
             effort: None,
             prev_model_id: prev_id.clone(),
+            intent: crate::app::actions::ModelSwitchIntent::Existing,
         });
     } else if let Some(agent) = app.agents.get_mut(&aid) {
         // No session id yet — stash for

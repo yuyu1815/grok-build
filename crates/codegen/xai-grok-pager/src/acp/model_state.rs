@@ -52,6 +52,12 @@ pub struct ModelState {
     pub available: IndexMap<acp::ModelId, acp::ModelInfo>,
     pub current: Option<acp::ModelId>,
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Whether `reasoning_effort` originates from an explicit user/session
+    /// preference rather than the focused model's catalog default. The ACP
+    /// model payload exposes the effective value only, so the pager seeds this
+    /// provenance from its user config / CLI source and preserves it across
+    /// model changes that do not explicitly replace the effort.
+    pub reasoning_effort_explicit: bool,
     /// External override for the context window size (tokens).
     /// When set, `get_context_window()` returns this instead of
     /// reading from the current model's metadata. Used for subagent
@@ -154,12 +160,13 @@ impl ModelState {
         // The models/update broadcast carries each model's static default effort,
         // not this session's choice; only re-derive when the model changed so a
         // catalog refresh can't clobber a user-set effort.
-        if self.current != previous_current_model {
+        if self.current != previous_current_model || !self.reasoning_effort_explicit {
             self.reasoning_effort = self
                 .current
                 .as_ref()
                 .and_then(|id| self.available.get(id))
                 .and_then(|info| parse_reasoning_effort_meta(info.meta.as_ref()));
+            self.reasoning_effort_explicit = false;
         }
     }
 
@@ -175,6 +182,7 @@ impl ModelState {
                 .get(&model_id)
                 .and_then(|info| parse_reasoning_effort_meta(info.meta.as_ref()))
         });
+        self.reasoning_effort_explicit = effort_override.is_some();
     }
 
     /// The reasoning-effort menu for the current model. Gate-first: an unset or
@@ -324,6 +332,7 @@ impl From<Option<acp::SessionModelState>> for ModelState {
                     available: models,
                     current: current_model,
                     reasoning_effort,
+                    reasoning_effort_explicit: false,
                     context_window_override: None,
                 }
             })
@@ -436,6 +445,24 @@ mod tests {
 
         assert_eq!(state.current, Some(id_b));
         assert_eq!(state.reasoning_effort, Some(ReasoningEffort::Low));
+    }
+
+    #[test]
+    fn update_catalog_rederives_non_explicit_effort_when_current_is_unchanged() {
+        let id = acp::ModelId::new(Arc::from("model"));
+        let mut state = ModelState::default();
+        state
+            .available
+            .insert(id.clone(), model_with_effort("model", "Model", "high"));
+        state.set_current(id.clone(), None);
+        assert_eq!(state.reasoning_effort, Some(ReasoningEffort::High));
+
+        let mut refreshed = IndexMap::new();
+        refreshed.insert(id.clone(), model_with_effort("model", "Model", "low"));
+        state.update_catalog(refreshed, Some(id));
+
+        assert_eq!(state.reasoning_effort, Some(ReasoningEffort::Low));
+        assert!(!state.reasoning_effort_explicit);
     }
 
     fn state_with_meta(meta: Option<serde_json::Value>) -> ModelState {

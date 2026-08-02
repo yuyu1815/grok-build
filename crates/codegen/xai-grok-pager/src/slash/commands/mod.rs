@@ -36,6 +36,7 @@ pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
 pub mod model;
+pub mod models;
 pub mod multiline;
 pub mod new;
 pub mod personas;
@@ -77,7 +78,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
         Arc::new(new::NewCommand),
-        
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
@@ -90,6 +90,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::minimal()),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::fullscreen()),
         Arc::new(model::ModelCommand),
+        Arc::new(models::ModelsCommand),
         Arc::new(effort::EffortCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
         Arc::new(auto::AutoCommand),
@@ -115,7 +116,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(mcps::McpsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
-        
         Arc::new(terminal_setup::TerminalSetupCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
@@ -195,6 +195,7 @@ mod tests {
         assert!(reg.get("new").is_some());
         assert!(reg.get("compact").is_some());
         assert!(reg.get("model").is_some());
+        assert!(reg.get("models").is_some());
         assert!(reg.get("home").is_some());
         assert!(reg.get("view-plan").is_some());
         reg.set_available_tools(std::collections::HashSet::from([
@@ -311,7 +312,7 @@ mod tests {
             other => panic!("expected QueueCommand, got {other:?}"),
         }
     }
-    /// Bare `/model <name>` → `SetDefaultModel` (switch + persist).
+    /// Bare `/model <name>` → `SetModelFromCommand` (switch + persist).
     /// `/model <name> <effort>` → `SwitchModel` (session-scoped).
     #[test]
     fn model_resolves_by_display_name() {
@@ -320,10 +321,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "Grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.5");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]
@@ -333,10 +343,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "grok-4.3");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.3");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.3");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]
@@ -346,10 +365,19 @@ mod tests {
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "grok 4.5");
         match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
+            CommandResult::Action(Action::SetModelFromCommand {
+                model_id,
+                effort,
+                intent,
+            }) => {
+                assert_eq!(model_id.0.as_ref(), "grok-4.5");
+                assert_eq!(effort, None);
+                assert_eq!(
+                    intent,
+                    crate::app::actions::ModelSwitchIntent::ModelCommandSet
+                );
             }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
+            other => panic!("expected Action(SetModelFromCommand), got {other:?}"),
         }
     }
     #[test]
@@ -369,20 +397,26 @@ mod tests {
         }
     }
     #[test]
-    fn model_empty_arg_returns_error() {
+    fn model_empty_arg_returns_usage_error() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
         let cmd = model::ModelCommand;
         let result = cmd.run(&mut ctx, "");
-        assert!(matches!(result, CommandResult::Error(_)));
+        assert!(matches!(
+            result,
+            CommandResult::Error(ref message) if message == "Usage: /model <name> [effort]"
+        ));
     }
     #[test]
-    fn model_whitespace_only_arg_returns_error() {
+    fn models_empty_arg_opens_picker() {
         let models = sample_models();
         let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "   ");
-        assert!(matches!(result, CommandResult::Error(_)));
+        let cmd = models::ModelsCommand;
+        let result = cmd.run(&mut ctx, "");
+        assert!(matches!(
+            result,
+            CommandResult::Action(Action::OpenModelPicker)
+        ));
     }
     #[test]
     fn model_suggest_args_returns_available_models() {

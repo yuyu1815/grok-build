@@ -106,6 +106,7 @@ fn test_app() -> AppView {
         tips: Vec::new(),
         tip: None,
         cli_model_override: None,
+        remote_default_model: None,
         cli_effort_token: None,
         default_yolo: false,
         permission_mode_from_soft_default: true,

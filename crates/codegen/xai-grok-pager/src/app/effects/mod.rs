@@ -1604,6 +1604,7 @@ pub(crate) fn execute(
             model_id,
             effort,
             prev_model_id,
+            intent,
         } => {
             let tx = acp_tx.clone();
             tasks
@@ -1647,6 +1648,7 @@ pub(crate) fn execute(
                         effort,
                         result,
                         prev_model_id,
+                        intent,
                     }
                 });
         }
@@ -1845,6 +1847,35 @@ pub(crate) fn execute(
                         result,
                     }
                 });
+        }
+        Effect::PersistModelCommandPreference {
+            model_id,
+            reasoning_effort,
+        } => {
+            let model_id_str = model_id.0.to_string();
+            tasks.spawn(async move {
+                let result = xai_grok_shell::util::config::persist_models_default(
+                    Some(model_id_str),
+                    reasoning_effort,
+                )
+                .await
+                .map_err(|e| e.to_string());
+                if let Err(ref e) = result {
+                    tracing::warn!("failed to save default model preference: {e}");
+                }
+                TaskResult::ModelCommandPreferencePersisted { result }
+            });
+        }
+        Effect::ClearModelCommandPreference => {
+            tasks.spawn(async move {
+                let result = xai_grok_shell::util::config::persist_models_default(None, None)
+                    .await
+                    .map_err(|e| e.to_string());
+                if let Err(ref e) = result {
+                    tracing::warn!("failed to save default model preference: {e}");
+                }
+                TaskResult::ModelCommandPreferencePersisted { result }
+            });
         }
         Effect::PersistPermissionMode { canonical, session_id, persist } => {
             let tx = acp_tx.clone();
