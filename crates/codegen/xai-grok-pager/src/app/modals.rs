@@ -527,7 +527,7 @@ impl AgentView {
             } else {
                 (entry.effort_index + entry.efforts.len() - 1) % entry.efforts.len()
             };
-            state.effort_touched = true;
+            entry.effort_touched = true;
             return InputOutcome::Changed;
         }
 
@@ -583,11 +583,11 @@ impl AgentView {
                     return InputOutcome::Changed;
                 };
                 let model_id = entry.model_id.clone();
-                let effort_selection = state
+                let effort_selection = entry
                     .effort_touched
                     .then(|| entry.efforts.get(entry.effort_index).cloned())
                     .flatten();
-                let effort_touched = state.effort_touched;
+                let effort_touched = entry.effort_touched;
 
                 if !self.session.models.available.contains_key(&model_id) {
                     self.active_modal = None;
@@ -606,9 +606,9 @@ impl AgentView {
                                 return InputOutcome::Changed;
                             }
                         },
-                        // Effort was touched on a prior model, but the currently
-                        // selected snapshot model never offered effort options:
-                        // preserve the model-only `/model <name>` action.
+                        // Defensive fallback for an inconsistent touched entry
+                        // with no selected snapshot effort: preserve the
+                        // model-only `/model <name>` action.
                         None => None,
                     }
                 } else {
@@ -2909,20 +2909,27 @@ mod models_picker_tests {
     }
 
     #[test]
-    fn opens_on_current_model_and_cancel_is_noop() {
+    fn pending_effort_change_is_discarded_on_cancel() {
         let mut agent = open_picker();
+        let original_effort = agent.session.models.reasoning_effort;
         let Some(ActiveModal::ModelsPicker { state, .. }) = agent.active_modal.as_ref() else {
             panic!("expected models picker");
         };
         assert_eq!(state.picker.selected, 0);
+
+        agent.handle_modal_key(&key(KeyCode::Right));
+        assert_eq!(agent.session.models.reasoning_effort, original_effort);
+
         let outcome = agent.handle_modal_key(&key(KeyCode::Esc));
         assert!(matches!(outcome, InputOutcome::Changed));
         assert!(agent.active_modal.is_none());
+        assert_eq!(agent.session.models.reasoning_effort, original_effort);
     }
 
     #[test]
-    fn enter_without_effort_touch_returns_set_default_model() {
+    fn effort_touch_on_first_model_does_not_affect_second_model_confirmation() {
         let mut agent = open_picker();
+        agent.handle_modal_key(&key(KeyCode::Right));
         agent.handle_modal_key(&key(KeyCode::Down));
         let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
         assert!(matches!(
@@ -2941,14 +2948,30 @@ mod models_picker_tests {
             panic!("expected models picker");
         };
         assert_eq!(state.picker.query_cursor, 2);
-        assert!(!state.effort_touched);
+        assert!(state.entries.iter().all(|entry| !entry.effort_touched));
 
         agent.handle_modal_key(&key(KeyCode::Left));
         let Some(ActiveModal::ModelsPicker { state }) = agent.active_modal.as_ref() else {
             panic!("expected models picker");
         };
         assert_eq!(state.picker.query_cursor, 1);
-        assert!(!state.effort_touched);
+        assert!(state.entries.iter().all(|entry| !entry.effort_touched));
+    }
+
+    #[test]
+    fn returning_to_touched_model_retains_its_pending_effort() {
+        let mut agent = open_picker();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        agent.handle_modal_key(&key(KeyCode::Down));
+        agent.handle_modal_key(&key(KeyCode::Up));
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SwitchModel {
+                ref model_id,
+                effort: Some(ReasoningEffort::High),
+            }) if model_id.0.as_ref() == "first"
+        ));
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub struct ModelPickerEntry {
     pub description: String,
     pub efforts: Vec<ModelPickerEffort>,
     pub effort_index: usize,
+    pub effort_touched: bool,
     pub current: bool,
 }
 
@@ -33,7 +34,6 @@ pub struct ModelPickerState {
     pub entries: Vec<ModelPickerEntry>,
     /// Visible picker index -> stable snapshot entry index.
     pub filtered_indices: Vec<usize>,
-    pub effort_touched: bool,
     pub window: ModalWindowState,
 }
 
@@ -63,6 +63,7 @@ impl ModelPickerState {
                         })
                         .collect(),
                     effort_index,
+                    effort_touched: false,
                     current,
                 }
             })
@@ -79,7 +80,6 @@ impl ModelPickerState {
             picker,
             entries,
             filtered_indices,
-            effort_touched: false,
             window: ModalWindowState::new(),
         }
     }
