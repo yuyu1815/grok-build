@@ -1,6 +1,6 @@
-//! UI-only state for the one-screen `/models` picker.
+//! UI-only state for the one-screen `/models` model selection panel.
 //!
-//! The picker snapshots typed model IDs and display metadata when it opens. A
+//! The panel snapshots typed model IDs and display metadata when it opens. A
 //! live catalog refresh can therefore neither reorder the visible rows nor
 //! silently retarget a pending confirmation.
 
@@ -12,34 +12,34 @@ use crate::views::modal_window::ModalWindowState;
 use crate::views::picker::PickerState;
 
 #[derive(Debug, Clone)]
-pub struct ModelPickerEffort {
+pub struct EffortOption {
     pub id: String,
     pub label: String,
     pub value: ReasoningEffort,
 }
 
 #[derive(Debug, Clone)]
-pub struct ModelPickerEntry {
+pub struct Entry {
     pub model_id: acp::ModelId,
     pub name: String,
     pub description: String,
-    pub efforts: Vec<ModelPickerEffort>,
+    pub efforts: Vec<EffortOption>,
     pub effort_index: usize,
     pub effort_touched: bool,
     pub current: bool,
 }
 
-pub struct ModelPickerState {
+pub struct State {
     pub picker: PickerState,
-    pub entries: Vec<ModelPickerEntry>,
+    pub entries: Vec<Entry>,
     /// Visible picker index -> stable snapshot entry index.
     pub filtered_indices: Vec<usize>,
     pub window: ModalWindowState,
 }
 
-impl ModelPickerState {
+impl State {
     pub fn new(models: &ModelState) -> Self {
-        let entries: Vec<ModelPickerEntry> = models
+        let entries: Vec<Entry> = models
             .available
             .iter()
             .map(|(model_id, info)| {
@@ -50,13 +50,13 @@ impl ModelPickerState {
                     .and_then(|effort| options.iter().position(|option| option.value == effort))
                     .or_else(|| options.iter().position(|option| option.default))
                     .unwrap_or(0);
-                ModelPickerEntry {
+                Entry {
                     model_id: model_id.clone(),
                     name: info.name.clone(),
                     description: info.description.clone().unwrap_or_default(),
                     efforts: options
                         .into_iter()
-                        .map(|option| ModelPickerEffort {
+                        .map(|option| EffortOption {
                             id: option.id,
                             label: option.label,
                             value: option.value,
@@ -104,13 +104,13 @@ impl ModelPickerState {
             .min(self.filtered_indices.len().saturating_sub(1));
     }
 
-    pub fn visible_entry(&self, visible_index: usize) -> Option<&ModelPickerEntry> {
+    pub fn visible_entry(&self, visible_index: usize) -> Option<&Entry> {
         self.filtered_indices
             .get(visible_index)
             .and_then(|&entry_index| self.entries.get(entry_index))
     }
 
-    pub fn visible_entry_mut(&mut self, visible_index: usize) -> Option<&mut ModelPickerEntry> {
+    pub fn visible_entry_mut(&mut self, visible_index: usize) -> Option<&mut Entry> {
         let entry_index = *self.filtered_indices.get(visible_index)?;
         self.entries.get_mut(entry_index)
     }
@@ -131,7 +131,7 @@ mod tests {
                 .available
                 .insert(id.clone(), acp::ModelInfo::new(id, name.to_string()));
         }
-        let mut state = ModelPickerState::new(&models);
+        let mut state = State::new(&models);
         state.picker.query = "bet".into();
         state.refresh_filter();
         assert_eq!(state.filtered_indices, vec![1]);

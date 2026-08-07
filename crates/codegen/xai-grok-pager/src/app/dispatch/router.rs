@@ -795,7 +795,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             }]
         }
         Action::NextModel => vec![],
-        Action::OpenModelsPicker => {
+        Action::OpenModelSelectionPanel => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];
             };
@@ -810,7 +810,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                     ));
                 return vec![];
             }
-            agent.open_models_picker();
+            agent.open_model_selection_panel();
             vec![]
         }
         Action::SwitchModel { model_id, effort } => {

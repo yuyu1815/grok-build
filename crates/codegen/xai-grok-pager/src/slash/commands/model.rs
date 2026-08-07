@@ -10,7 +10,7 @@ use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
 
-/// Open the one-screen model and reasoning-effort picker.
+/// Open the one-screen model selection panel.
 pub struct ModelsCommand;
 
 impl SlashCommand for ModelsCommand {
@@ -19,7 +19,7 @@ impl SlashCommand for ModelsCommand {
     }
 
     fn description(&self) -> &str {
-        "Pick model and reasoning effort"
+        "Select model and reasoning effort"
     }
 
     fn usage(&self) -> &str {
@@ -34,7 +34,7 @@ impl SlashCommand for ModelsCommand {
         if !args.trim().is_empty() {
             return CommandResult::Error("Usage: /models".into());
         }
-        CommandResult::Action(Action::OpenModelsPicker)
+        CommandResult::Action(Action::OpenModelSelectionPanel)
     }
 }
 
@@ -285,7 +285,7 @@ mod tests {
             let result = ModelsCommand.run(&mut ctx, args);
             assert!(matches!(
                 result,
-                CommandResult::Action(Action::OpenModelsPicker)
+                CommandResult::Action(Action::OpenModelSelectionPanel)
             ));
         }
         let result = ModelsCommand.run(&mut ctx, "ignored");

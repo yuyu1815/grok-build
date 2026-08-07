@@ -34,9 +34,9 @@ fn seed_foreign_resume_hint(
     );
 }
 #[test]
-fn open_models_picker_with_empty_catalog_reports_system_message() {
+fn open_model_selection_panel_with_empty_catalog_reports_system_message() {
     let mut app = test_app_with_agent();
-    let effects = dispatch(Action::OpenModelsPicker, &mut app);
+    let effects = dispatch(Action::OpenModelSelectionPanel, &mut app);
     assert!(effects.is_empty());
     let agent = app.agents.get(&AgentId(0)).unwrap();
     assert!(agent.active_modal.is_none());

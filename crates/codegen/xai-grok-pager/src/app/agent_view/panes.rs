@@ -481,7 +481,7 @@ impl AgentView {
         if let Some(ref mut modal) = self.active_modal {
             use crate::views::modal::ActiveModal;
             match modal {
-                ActiveModal::ModelsPicker { state } => {
+                ActiveModal::ModelSelectionPanel { state } => {
                     let delta = lines.unsigned_abs() as usize;
                     let current = state.picker.scroll_offset.unwrap_or(0);
                     let new_offset = if lines > 0 {
