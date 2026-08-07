@@ -380,6 +380,8 @@ pub enum Action {
     },
     /// Cycle to next model.
     NextModel,
+    /// Open the one-screen model and reasoning-effort picker.
+    OpenModelsPicker,
     /// Switch active model.
     SwitchModel {
         model_id: acp::ModelId,

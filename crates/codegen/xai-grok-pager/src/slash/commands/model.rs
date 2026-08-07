@@ -10,6 +10,34 @@ use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 use crate::slash::commands::effort_levels::build_effort_arg_items;
 
+/// Open the one-screen model and reasoning-effort picker.
+pub struct ModelsCommand;
+
+impl SlashCommand for ModelsCommand {
+    fn name(&self) -> &str {
+        "models"
+    }
+
+    fn description(&self) -> &str {
+        "Pick model and reasoning effort"
+    }
+
+    fn usage(&self) -> &str {
+        "/models"
+    }
+
+    fn session_scoped(&self) -> bool {
+        true
+    }
+
+    fn run(&self, _ctx: &mut CommandExecCtx, args: &str) -> CommandResult {
+        if !args.trim().is_empty() {
+            return CommandResult::Error("Usage: /models".into());
+        }
+        CommandResult::Action(Action::OpenModelsPicker)
+    }
+}
+
 /// Switch the active model (and optionally its reasoning effort).
 pub struct ModelCommand;
 
@@ -247,6 +275,24 @@ mod tests {
                 ..crate::settings::PagerLocalSnapshot::default()
             },
         }
+    }
+
+    #[test]
+    fn models_command_accepts_only_whitespace_arguments() {
+        let state = ModelState::default();
+        let mut ctx = dummy_exec_ctx(&state);
+        for args in ["", "   "] {
+            let result = ModelsCommand.run(&mut ctx, args);
+            assert!(matches!(
+                result,
+                CommandResult::Action(Action::OpenModelsPicker)
+            ));
+        }
+        let result = ModelsCommand.run(&mut ctx, "ignored");
+        assert!(matches!(
+            result,
+            CommandResult::Error(ref message) if message == "Usage: /models"
+        ));
     }
 
     #[test]
