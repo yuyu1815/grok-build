@@ -1899,7 +1899,7 @@ impl AgentView {
                     })
                     .collect();
                 let compact = self.scrollback.appearance().prompt.compact;
-                let shortcuts = [
+                let mut shortcuts = vec![
                     mw::Shortcut {
                         label: "↑/↓ model",
                         clickable: false,
@@ -1921,6 +1921,7 @@ impl AgentView {
                         id: 0,
                     },
                 ];
+                mw::push_vim_nav_search_hint(&mut shortcuts, state.picker.search_active);
                 let modal_config = ModalWindowConfig {
                     title: "Model selection",
                     tabs: None,
