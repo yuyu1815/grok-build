@@ -30,18 +30,14 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn display_label(&self) -> String {
+    pub fn effort_label(&self) -> String {
         let effort = self
             .efforts
             .get(self.effort_index)
             .map(|effort| effort.label.as_str())
             .unwrap_or("effort unavailable");
-        let pending = if self.effort_touched {
-            " (pending)"
-        } else {
-            ""
-        };
-        format!("{} {{{effort}{pending}}}", self.name)
+        let changed = if self.effort_touched { " *" } else { "" };
+        format!("{{{effort}}}{changed}")
     }
 
     fn cycle_effort(&mut self, forward: bool) -> bool {
@@ -191,14 +187,11 @@ mod tests {
     }
 
     #[test]
-    fn display_label_shows_model_and_current_pending_effort() {
+    fn effort_label_marks_an_unconfirmed_change() {
         let mut state = State::new(&models_with_reasoning());
-        assert_eq!(state.entries[0].display_label(), "Grok 4.5 {Low}");
+        assert_eq!(state.entries[0].effort_label(), "{Low}");
         assert!(state.cycle_visible_effort(0, true));
-        assert_eq!(
-            state.entries[0].display_label(),
-            "Grok 4.5 {High (pending)}"
-        );
+        assert_eq!(state.entries[0].effort_label(), "{High} *");
     }
 
     #[test]
@@ -219,10 +212,7 @@ mod tests {
             .available
             .insert(id.clone(), acp::ModelInfo::new(id, "Plain".to_string()));
         let mut state = State::new(&models);
-        assert_eq!(
-            state.entries[0].display_label(),
-            "Plain {effort unavailable}"
-        );
+        assert_eq!(state.entries[0].effort_label(), "{effort unavailable}");
         assert!(!state.cycle_visible_effort(0, true));
         assert!(!state.entries[0].effort_touched);
     }

@@ -1850,10 +1850,10 @@ impl AgentView {
                     );
                 }
             } else if let modal::ActiveModal::ModelSelectionPanel { state } = active_modal {
-                let display_labels: Vec<String> = state
+                let effort_labels: Vec<String> = state
                     .filtered_indices
                     .iter()
-                    .map(|&entry_index| state.entries[entry_index].display_label())
+                    .map(|&entry_index| state.entries[entry_index].effort_label())
                     .collect();
                 let picker_entries: Vec<PickerEntry> = state
                     .filtered_indices
@@ -1862,8 +1862,8 @@ impl AgentView {
                     .map(|(visible_index, &entry_index)| {
                         let entry = &state.entries[entry_index];
                         PickerEntry::Row(PickerRow {
-                            label: &display_labels[visible_index],
-                            right_label: "",
+                            label: &entry.name,
+                            right_label: &effort_labels[visible_index],
                             selected: state.picker.hovered == Some(visible_index)
                                 || (state.picker.hovered.is_none()
                                     && visible_index == state.picker.selected),
