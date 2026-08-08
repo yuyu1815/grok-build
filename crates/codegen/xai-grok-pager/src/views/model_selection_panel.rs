@@ -29,6 +29,35 @@ pub struct Entry {
     pub current: bool,
 }
 
+impl Entry {
+    pub fn display_label(&self) -> String {
+        let effort = self
+            .efforts
+            .get(self.effort_index)
+            .map(|effort| effort.label.as_str())
+            .unwrap_or("effort unavailable");
+        let pending = if self.effort_touched {
+            " (pending)"
+        } else {
+            ""
+        };
+        format!("{} {{{effort}{pending}}}", self.name)
+    }
+
+    fn cycle_effort(&mut self, forward: bool) -> bool {
+        if self.efforts.is_empty() {
+            return false;
+        }
+        self.effort_index = if forward {
+            (self.effort_index + 1) % self.efforts.len()
+        } else {
+            (self.effort_index + self.efforts.len() - 1) % self.efforts.len()
+        };
+        self.effort_touched = true;
+        true
+    }
+}
+
 pub struct State {
     pub picker: PickerState,
     pub entries: Vec<Entry>,
@@ -114,6 +143,11 @@ impl State {
         let entry_index = *self.filtered_indices.get(visible_index)?;
         self.entries.get_mut(entry_index)
     }
+
+    pub fn cycle_visible_effort(&mut self, visible_index: usize, forward: bool) -> bool {
+        self.visible_entry_mut(visible_index)
+            .is_some_and(|entry| entry.cycle_effort(forward))
+    }
 }
 
 #[cfg(test)]
@@ -121,6 +155,24 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    fn models_with_reasoning() -> ModelState {
+        let mut models = ModelState::default();
+        let id = acp::ModelId::new(Arc::from("grok-4.5"));
+        let meta = serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "id": "low", "value": "low", "label": "Low", "default": true },
+                { "id": "high", "value": "high", "label": "High" }
+            ]
+        });
+        models.available.insert(
+            id.clone(),
+            acp::ModelInfo::new(id.clone(), "Grok 4.5".to_string()).meta(meta.as_object().cloned()),
+        );
+        models.current = Some(id);
+        models
+    }
 
     #[test]
     fn filter_indices_map_back_to_stable_model_ids() {
@@ -136,5 +188,42 @@ mod tests {
         state.refresh_filter();
         assert_eq!(state.filtered_indices, vec![1]);
         assert_eq!(state.visible_entry(0).unwrap().model_id.0.as_ref(), "beta");
+    }
+
+    #[test]
+    fn display_label_shows_model_and_current_pending_effort() {
+        let mut state = State::new(&models_with_reasoning());
+        assert_eq!(state.entries[0].display_label(), "Grok 4.5 {Low}");
+        assert!(state.cycle_visible_effort(0, true));
+        assert_eq!(
+            state.entries[0].display_label(),
+            "Grok 4.5 {High (pending)}"
+        );
+    }
+
+    #[test]
+    fn effort_cycles_in_both_directions_with_wrapping() {
+        let mut state = State::new(&models_with_reasoning());
+        assert!(state.cycle_visible_effort(0, false));
+        assert_eq!(state.entries[0].effort_index, 1);
+        assert!(state.cycle_visible_effort(0, true));
+        assert_eq!(state.entries[0].effort_index, 0);
+        assert!(state.entries[0].effort_touched);
+    }
+
+    #[test]
+    fn unsupported_effort_is_visible_and_does_not_become_pending() {
+        let mut models = ModelState::default();
+        let id = acp::ModelId::new(Arc::from("plain"));
+        models
+            .available
+            .insert(id.clone(), acp::ModelInfo::new(id, "Plain".to_string()));
+        let mut state = State::new(&models);
+        assert_eq!(
+            state.entries[0].display_label(),
+            "Plain {effort unavailable}"
+        );
+        assert!(!state.cycle_visible_effort(0, true));
+        assert!(!state.entries[0].effort_touched);
     }
 }

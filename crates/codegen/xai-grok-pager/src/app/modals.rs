@@ -523,18 +523,7 @@ impl AgentView {
                 return InputOutcome::Changed;
             };
             let visible_index = state.picker.selected;
-            let Some(entry) = state.visible_entry_mut(visible_index) else {
-                return InputOutcome::Changed;
-            };
-            if entry.efforts.is_empty() {
-                return InputOutcome::Changed;
-            }
-            entry.effort_index = if key.code == KeyCode::Right {
-                (entry.effort_index + 1) % entry.efforts.len()
-            } else {
-                (entry.effort_index + entry.efforts.len() - 1) % entry.efforts.len()
-            };
-            entry.effort_touched = true;
+            state.cycle_visible_effort(visible_index, key.code == KeyCode::Right);
             return InputOutcome::Changed;
         }
 
@@ -1861,17 +1850,10 @@ impl AgentView {
                     );
                 }
             } else if let modal::ActiveModal::ModelSelectionPanel { state } = active_modal {
-                let effort_labels: Vec<String> = state
+                let display_labels: Vec<String> = state
                     .filtered_indices
                     .iter()
-                    .map(|&entry_index| {
-                        let entry = &state.entries[entry_index];
-                        entry
-                            .efforts
-                            .get(entry.effort_index)
-                            .map(|effort| format!("← {} →", effort.label))
-                            .unwrap_or_default()
-                    })
+                    .map(|&entry_index| state.entries[entry_index].display_label())
                     .collect();
                 let picker_entries: Vec<PickerEntry> = state
                     .filtered_indices
@@ -1880,8 +1862,8 @@ impl AgentView {
                     .map(|(visible_index, &entry_index)| {
                         let entry = &state.entries[entry_index];
                         PickerEntry::Row(PickerRow {
-                            label: &entry.name,
-                            right_label: &effort_labels[visible_index],
+                            label: &display_labels[visible_index],
+                            right_label: "",
                             selected: state.picker.hovered == Some(visible_index)
                                 || (state.picker.hovered.is_none()
                                     && visible_index == state.picker.selected),
