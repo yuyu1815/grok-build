@@ -509,7 +509,27 @@ impl AgentView {
 
     /// Handle the one-screen `/models` model selection panel.
     fn handle_model_selection_panel_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
+        use crate::views::model_selection_panel::EffortDirection;
         use crate::views::picker::{PickerConfig, PickerOutcome, handle_picker_input};
+
+        if let crossterm::event::Event::Mouse(mouse) = ev
+            && matches!(
+                mouse.kind,
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            )
+            && let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_mut()
+            && let Some(target) =
+                state.effort_hit_target(ratatui::layout::Position::new(mouse.column, mouse.row))
+        {
+            state.picker.selected = target.visible_index;
+            state.picker.hovered = None;
+            state.picker.selection_hidden = false;
+            state.cycle_visible_effort(
+                target.visible_index,
+                target.direction == EffortDirection::Next,
+            );
+            return InputOutcome::Changed;
+        }
 
         if let crossterm::event::Event::Key(key) = ev
             && matches!(key.code, KeyCode::Left | KeyCode::Right)
@@ -1360,6 +1380,7 @@ impl AgentView {
                     PickerEntry::Row(PickerRow {
                         label: &e.title,
                         right_label: &e.description,
+                        right_label_color: None,
                         selected: filtered
                             .get(state.selected)
                             .map(|(o, _)| *o)
@@ -1800,6 +1821,7 @@ impl AgentView {
                             PickerEntry::Row(PickerRow {
                                 label: &e.label,
                                 right_label: &e.shortcut,
+                                right_label_color: None,
                                 selected: state.hovered == Some(i)
                                     || (state.hovered.is_none() && i == state.selected),
                                 expanded: false,
@@ -1850,10 +1872,16 @@ impl AgentView {
                     );
                 }
             } else if let modal::ActiveModal::ModelSelectionPanel { state } = active_modal {
+                let effort_width = state.effort_label_width();
+                let display_names: Vec<String> = state
+                    .filtered_indices
+                    .iter()
+                    .map(|&entry_index| state.entries[entry_index].display_name())
+                    .collect();
                 let effort_labels: Vec<String> = state
                     .filtered_indices
                     .iter()
-                    .map(|&entry_index| state.entries[entry_index].effort_label())
+                    .map(|&entry_index| state.entries[entry_index].effort_label(effort_width))
                     .collect();
                 let picker_entries: Vec<PickerEntry> = state
                     .filtered_indices
@@ -1861,12 +1889,14 @@ impl AgentView {
                     .enumerate()
                     .map(|(visible_index, &entry_index)| {
                         let entry = &state.entries[entry_index];
+                        let selected = state.picker.hovered == Some(visible_index)
+                            || (state.picker.hovered.is_none()
+                                && visible_index == state.picker.selected);
                         PickerEntry::Row(PickerRow {
-                            label: &entry.name,
+                            label: &display_names[visible_index],
                             right_label: &effort_labels[visible_index],
-                            selected: state.picker.hovered == Some(visible_index)
-                                || (state.picker.hovered.is_none()
-                                    && visible_index == state.picker.selected),
+                            right_label_color: entry.selected_effort_color(selected),
+                            selected,
                             expanded: false,
                             fields: &[],
                             description_lines: &[],
@@ -1934,6 +1964,7 @@ impl AgentView {
                         &[],
                         false,
                     );
+                    state.refresh_effort_hit_targets();
                 }
             } else if let modal::ActiveModal::ArgPicker {
                 command,
@@ -1958,6 +1989,7 @@ impl AgentView {
                         PickerEntry::Row(PickerRow {
                             label: &item.display,
                             right_label: &item.description,
+                            right_label_color: None,
                             selected: state.hovered == Some(i)
                                 || (state.hovered.is_none() && i == state.selected),
                             expanded: false,
@@ -2247,6 +2279,7 @@ impl AgentView {
                         picker_entries.push(PickerEntry::Row(PickerRow {
                             label: &b.summary,
                             right_label: &b.right_text,
+                            right_label_color: None,
                             selected: b.is_selected,
                             expanded: b.is_expanded,
                             fields,

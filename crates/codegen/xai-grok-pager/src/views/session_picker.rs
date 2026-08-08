@@ -612,6 +612,7 @@ pub(crate) fn build_grouped_picker_entries<'a>(
             result.push(PickerEntry::Row(PickerRow {
                 label: &b.summary,
                 right_label: &b.right_text,
+                right_label_color: None,
                 selected,
                 expanded: b.is_expanded,
                 fields,

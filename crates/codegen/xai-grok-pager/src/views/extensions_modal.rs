@@ -3550,6 +3550,7 @@ pub fn render_extensions_modal(
                 picker::PickerEntry::Row(picker::PickerRow {
                     label: label.as_str(),
                     right_label: entry_right_labels[i].as_str(),
+                    right_label_color: None,
                     selected: !state.picker_state.search_active
                         && !state.picker_state.tabs_focused
                         && i == state.picker_state.selected,

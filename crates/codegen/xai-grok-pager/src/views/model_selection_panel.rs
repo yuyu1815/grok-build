@@ -5,6 +5,9 @@
 //! silently retarget a pending confirmation.
 
 use agent_client_protocol as acp;
+use ratatui::layout::{Position, Rect};
+use ratatui::style::Color;
+use unicode_width::UnicodeWidthStr;
 use xai_grok_shell::sampling::types::ReasoningEffort;
 
 use crate::acp::model_state::ModelState;
@@ -30,14 +33,28 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn effort_label(&self) -> String {
-        let effort = self
-            .efforts
-            .get(self.effort_index)
-            .map(|effort| effort.label.as_str())
-            .unwrap_or("effort unavailable");
-        let changed = if self.effort_touched { " *" } else { "" };
-        format!("{{{effort}}}{changed}")
+    pub fn display_name(&self) -> String {
+        format!(
+            "{} {}",
+            if self.effort_touched { '*' } else { ' ' },
+            self.name
+        )
+    }
+
+    pub fn effort_label(&self, width: usize) -> String {
+        let Some(effort) = self.efforts.get(self.effort_index) else {
+            return "{unavailable}".to_string();
+        };
+        format!("< {{{}}} >", pad_to_width(&effort.label, width))
+    }
+
+    pub fn selected_effort_color(&self, selected: bool) -> Option<Color> {
+        if !selected {
+            return None;
+        }
+        let option = self.efforts.get(self.effort_index)?;
+        let (r, g, b) = effort_rgb(&option.id)?;
+        Some(crate::theme::quantize(Color::Rgb(r, g, b)))
     }
 
     fn cycle_effort(&mut self, forward: bool) -> bool {
@@ -54,12 +71,42 @@ impl Entry {
     }
 }
 
+fn pad_to_width(label: &str, width: usize) -> String {
+    let padding = width.saturating_sub(label.width());
+    format!("{label}{}", " ".repeat(padding))
+}
+
+fn effort_rgb(id: &str) -> Option<(u8, u8, u8)> {
+    match id.to_ascii_lowercase().as_str() {
+        "low" => Some((0x7A, 0xA2, 0xF7)),    // Low -> blue
+        "medium" => Some((0x2A, 0xC3, 0xDE)), // Medium -> cyan
+        "high" => Some((0xE0, 0xAF, 0x68)),   // High -> yellow
+        "xhigh" => Some((0xFF, 0x9E, 0x64)),  // XHigh -> orange
+        "max" => Some((0xF7, 0x76, 0x8E)),    // Max -> red/pink
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffortDirection {
+    Previous,
+    Next,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffortHitTarget {
+    pub visible_index: usize,
+    pub direction: EffortDirection,
+    pub rect: Rect,
+}
+
 pub struct State {
     pub picker: PickerState,
     pub entries: Vec<Entry>,
     /// Visible picker index -> stable snapshot entry index.
     pub filtered_indices: Vec<usize>,
     pub window: ModalWindowState,
+    pub effort_hit_targets: Vec<EffortHitTarget>,
 }
 
 impl State {
@@ -106,6 +153,7 @@ impl State {
             entries,
             filtered_indices,
             window: ModalWindowState::new(),
+            effort_hit_targets: Vec::new(),
         }
     }
 
@@ -143,6 +191,55 @@ impl State {
     pub fn cycle_visible_effort(&mut self, visible_index: usize, forward: bool) -> bool {
         self.visible_entry_mut(visible_index)
             .is_some_and(|entry| entry.cycle_effort(forward))
+    }
+
+    pub fn effort_label_width(&self) -> usize {
+        self.entries
+            .iter()
+            .flat_map(|entry| entry.efforts.iter().map(|effort| effort.label.width()))
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn refresh_effort_hit_targets(&mut self) {
+        self.effort_hit_targets.clear();
+        let Some(hit_areas) = self.picker.hit_areas.as_ref() else {
+            return;
+        };
+        let control_width = self.effort_label_width() as u16 + 6; // `< {` + label + `} >`
+        for (rect, &visible_index) in hit_areas
+            .item_rects
+            .iter()
+            .zip(hit_areas.entry_indices.iter())
+        {
+            let Some(entry) = self.visible_entry(visible_index) else {
+                continue;
+            };
+            if entry.efforts.is_empty() || rect.width <= control_width {
+                continue;
+            }
+            // Picker rows reserve one trailing cell after the right-aligned label.
+            let control_x = rect.x + rect.width - control_width - 1;
+            // Make each arrow easier to click without overlapping the effort value:
+            // `< ` for previous and ` >` for next.
+            self.effort_hit_targets.push(EffortHitTarget {
+                visible_index,
+                direction: EffortDirection::Previous,
+                rect: Rect::new(control_x, rect.y, 2, 1),
+            });
+            self.effort_hit_targets.push(EffortHitTarget {
+                visible_index,
+                direction: EffortDirection::Next,
+                rect: Rect::new(control_x + control_width - 2, rect.y, 2, 1),
+            });
+        }
+    }
+
+    pub fn effort_hit_target(&self, position: Position) -> Option<EffortHitTarget> {
+        self.effort_hit_targets
+            .iter()
+            .copied()
+            .find(|target| target.rect.contains(position))
     }
 }
 
@@ -189,9 +286,28 @@ mod tests {
     #[test]
     fn effort_label_marks_an_unconfirmed_change() {
         let mut state = State::new(&models_with_reasoning());
-        assert_eq!(state.entries[0].effort_label(), "{Low}");
+        assert_eq!(state.entries[0].display_name(), "  Grok 4.5");
+        assert_eq!(state.entries[0].effort_label(6), "< {Low   } >");
         assert!(state.cycle_visible_effort(0, true));
-        assert_eq!(state.entries[0].effort_label(), "{High} *");
+        assert_eq!(state.entries[0].display_name(), "* Grok 4.5");
+        assert_eq!(state.entries[0].effort_label(6), "< {High  } >");
+    }
+
+    #[test]
+    fn effort_colors_progress_from_blue_to_red() {
+        assert_eq!(effort_rgb("low"), Some((0x7A, 0xA2, 0xF7)));
+        assert_eq!(effort_rgb("medium"), Some((0x2A, 0xC3, 0xDE)));
+        assert_eq!(effort_rgb("high"), Some((0xE0, 0xAF, 0x68)));
+        assert_eq!(effort_rgb("xhigh"), Some((0xFF, 0x9E, 0x64)));
+        assert_eq!(effort_rgb("max"), Some((0xF7, 0x76, 0x8E)));
+        assert_eq!(effort_rgb("minimal"), None);
+    }
+
+    #[test]
+    fn only_the_selected_row_gets_an_effort_color() {
+        let state = State::new(&models_with_reasoning());
+        assert_eq!(state.entries[0].selected_effort_color(false), None);
+        assert!(state.entries[0].selected_effort_color(true).is_some());
     }
 
     #[test]
@@ -205,6 +321,44 @@ mod tests {
     }
 
     #[test]
+    fn effort_hit_targets_keep_buttons_at_fixed_columns() {
+        let mut state = State::new(&models_with_reasoning());
+        state.picker.hit_areas = Some(crate::views::picker::PickerHitAreas {
+            close_button: Rect::default(),
+            search_bar: Rect::default(),
+            item_rects: vec![Rect::new(10, 20, 30, 1)],
+            entry_indices: vec![0],
+            tab_rects: vec![],
+            filter_rect: None,
+        });
+        state.refresh_effort_hit_targets();
+        assert_eq!(state.effort_hit_targets.len(), 2);
+        let previous = state.effort_hit_targets[0];
+        let next = state.effort_hit_targets[1];
+        assert_eq!(previous.rect, Rect::new(32, 20, 2, 1));
+        assert_eq!(next.rect, Rect::new(37, 20, 2, 1));
+        assert_eq!(
+            state
+                .effort_hit_target(Position::new(33, 20))
+                .unwrap()
+                .direction,
+            EffortDirection::Previous
+        );
+        assert_eq!(
+            state
+                .effort_hit_target(Position::new(37, 20))
+                .unwrap()
+                .direction,
+            EffortDirection::Next
+        );
+
+        assert!(state.cycle_visible_effort(0, true));
+        state.refresh_effort_hit_targets();
+        assert_eq!(state.effort_hit_targets[0].rect, previous.rect);
+        assert_eq!(state.effort_hit_targets[1].rect, next.rect);
+    }
+
+    #[test]
     fn unsupported_effort_is_visible_and_does_not_become_pending() {
         let mut models = ModelState::default();
         let id = acp::ModelId::new(Arc::from("plain"));
@@ -212,7 +366,7 @@ mod tests {
             .available
             .insert(id.clone(), acp::ModelInfo::new(id, "Plain".to_string()));
         let mut state = State::new(&models);
-        assert_eq!(state.entries[0].effort_label(), "{effort unavailable}");
+        assert_eq!(state.entries[0].effort_label(11), "{unavailable}");
         assert!(!state.cycle_visible_effort(0, true));
         assert!(!state.entries[0].effort_touched);
     }

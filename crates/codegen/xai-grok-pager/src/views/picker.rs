@@ -62,6 +62,8 @@ pub struct PickerRow<'a> {
     pub label: &'a str,
     /// Secondary text (right-aligned, e.g. shortcut, ID+time, description).
     pub right_label: &'a str,
+    /// Optional foreground color for the secondary text.
+    pub right_label_color: Option<ratatui::style::Color>,
     /// Whether this row is the selected/cursor row.
     pub selected: bool,
     /// Whether detail fields are shown below this row.
@@ -882,7 +884,8 @@ pub fn render_picker_row(
 
     // Right side (with trailing padding).
     if right_width > 0 {
-        let right_style = Style::default().fg(meta_fg).bg(row_bg);
+        let right_fg = row.right_label_color.unwrap_or(meta_fg);
+        let right_style = Style::default().fg(right_fg).bg(row_bg);
         let right_x = x + width.saturating_sub(right_width + trailing_pad);
         buf.set_span(
             right_x,
@@ -1936,7 +1939,9 @@ fn render_picker_content_inner(
             let row_rect = Rect {
                 x: content_area.x,
                 y,
-                width: content_area.width,
+                // Match the width actually passed to render_picker_entry. When a
+                // scrollbar is present, content_area is one cell wider than the row.
+                width: content_w as u16,
                 height: rows_consumed,
             };
             item_rects.push(row_rect);
@@ -3276,6 +3281,7 @@ mod tests {
             let row = PickerRow {
                 label: "Group header",
                 right_label: "",
+                right_label_color: None,
                 selected: false,
                 expanded: true,
                 fields: &[],

@@ -1107,6 +1107,7 @@ pub fn render_doc_picker_overlay(
             PickerEntry::Row(PickerRow {
                 label: &e.title,
                 right_label: if narrow { "" } else { &e.description },
+                right_label_color: None,
                 selected: *orig_idx == selected_orig,
                 expanded: narrow,
                 fields: &[],
