@@ -184,6 +184,10 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// Cohesive one-screen model and reasoning-effort picker (`/models`).
+    ModelsPicker {
+        picker: crate::views::model_picker::ModelPicker,
+    },
     /// Argument picker for commands with pre-defined choices (model, theme).
     /// Opens when selecting such a command from the command palette.
     ArgPicker {
@@ -605,6 +609,7 @@ impl ActiveModal {
                 .map(|o| (o.key, o.result.label()))
                 .collect(),
             ActiveModal::CommandPalette { .. }
+            | ActiveModal::ModelsPicker { .. }
             | ActiveModal::ArgPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
@@ -625,6 +630,7 @@ impl ActiveModal {
                 }
             }
             ActiveModal::CommandPalette { .. } => "Commands",
+            ActiveModal::ModelsPicker { .. } => "Model selection",
             ActiveModal::SessionPicker { .. } => "Resume session",
             ActiveModal::ArgPicker {
                 command,
