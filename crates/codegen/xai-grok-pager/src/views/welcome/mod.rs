@@ -2225,6 +2225,7 @@ pub(crate) fn render_session_picker(
                 PickerEntry::Row(PickerRow {
                     label: &b.summary,
                     right_label: &b.right_text,
+                    right_label_color: None,
                     selected: b.is_selected,
                     expanded: b.is_expanded,
                     fields,
@@ -2305,6 +2306,7 @@ pub(crate) fn render_session_picker(
         picker_entries.push(PickerEntry::Row(PickerRow {
             label: &b.summary,
             right_label: &b.right_text,
+            right_label_color: None,
             selected: b.is_selected,
             expanded: b.is_expanded,
             fields,

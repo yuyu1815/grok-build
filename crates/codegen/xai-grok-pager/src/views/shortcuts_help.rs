@@ -1173,6 +1173,7 @@ impl CheatsheetRows {
                     CheatsheetRowKind::Header { is_collapsed } => PickerEntry::Row(PickerRow {
                         label: self.row_strs[idx].0.as_str(),
                         right_label: "",
+                        right_label_color: None,
                         selected,
                         expanded: !is_collapsed,
                         fields: &[],
@@ -1196,6 +1197,7 @@ impl CheatsheetRows {
                         PickerEntry::Row(PickerRow {
                             label: self.row_strs[idx].0.as_str(),
                             right_label: self.row_strs[idx].1.as_str(),
+                            right_label_color: None,
                             selected,
                             expanded: is_expanded,
                             fields: &[],
@@ -1212,6 +1214,7 @@ impl CheatsheetRows {
                     CheatsheetRowKind::Other => PickerEntry::Row(PickerRow {
                         label: self.row_strs[idx].0.as_str(),
                         right_label: self.row_strs[idx].1.as_str(),
+                        right_label_color: None,
                         selected: false,
                         expanded: false,
                         fields: &[],

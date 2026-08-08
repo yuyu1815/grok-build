@@ -184,6 +184,10 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// One-screen model selection panel opened by `/models`.
+    ModelSelectionPanel {
+        state: crate::views::model_selection_panel::State,
+    },
     /// Argument picker for commands with pre-defined choices (model, theme).
     /// Opens when selecting such a command from the command palette.
     ArgPicker {
@@ -605,6 +609,7 @@ impl ActiveModal {
                 .map(|o| (o.key, o.result.label()))
                 .collect(),
             ActiveModal::CommandPalette { .. }
+            | ActiveModal::ModelSelectionPanel { .. }
             | ActiveModal::ArgPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
@@ -625,6 +630,7 @@ impl ActiveModal {
                 }
             }
             ActiveModal::CommandPalette { .. } => "Commands",
+            ActiveModal::ModelSelectionPanel { .. } => "Model selection",
             ActiveModal::SessionPicker { .. } => "Resume session",
             ActiveModal::ArgPicker {
                 command,
@@ -1101,6 +1107,7 @@ pub fn render_doc_picker_overlay(
             PickerEntry::Row(PickerRow {
                 label: &e.title,
                 right_label: if narrow { "" } else { &e.description },
+                right_label_color: None,
                 selected: *orig_idx == selected_orig,
                 expanded: narrow,
                 fields: &[],

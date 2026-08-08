@@ -451,6 +451,7 @@ fn render_mcps(
             PickerEntry::Row(PickerRow {
                 label: labels[i].as_str(),
                 right_label: right_labels[i].as_str(),
+                right_label_color: None,
                 selected: !search_active && i == selected,
                 expanded: expandeds[i],
                 fields: &empty_fields,

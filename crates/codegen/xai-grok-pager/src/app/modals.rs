@@ -19,6 +19,13 @@ use crate::theme::Theme;
 use crate::views::modal::{self, ActiveModal};
 
 impl AgentView {
+    /// Open the one-screen `/models` model selection panel on the current catalog model.
+    pub(crate) fn open_model_selection_panel(&mut self) {
+        self.active_modal = Some(ActiveModal::ModelSelectionPanel {
+            state: crate::views::model_selection_panel::State::new(&self.session.models),
+        });
+    }
+
     /// `suggest_args` falls back to model rows when the query is not in effort
     /// phase. Model-phase reasoning rows use a trailing space in `insert_text`;
     /// effort rows do not. Require a non-empty list with no trailing-space
@@ -109,6 +116,7 @@ impl AgentView {
         if matches!(
             modal,
             ActiveModal::CommandPalette { .. }
+                | ActiveModal::ModelSelectionPanel { .. }
                 | ActiveModal::ArgPicker { .. }
                 | ActiveModal::SessionPicker { .. }
                 | ActiveModal::DocPicker { .. }
@@ -117,6 +125,9 @@ impl AgentView {
             let (window, query_empty, esc_clears) = match modal {
                 ActiveModal::CommandPalette { window, state, .. } => {
                     (window, state.query.is_empty(), true)
+                }
+                ActiveModal::ModelSelectionPanel { state } => {
+                    (&mut state.window, state.picker.query.is_empty(), true)
                 }
                 ActiveModal::ArgPicker { window, state, .. } => {
                     (window, state.query.is_empty(), false)
@@ -156,6 +167,11 @@ impl AgentView {
                                 state.selected = 0;
                                 state.scroll_offset = None;
                             }
+                            ActiveModal::ModelSelectionPanel { state } => {
+                                state.picker.clear_query();
+                                state.picker.selected = 0;
+                                state.refresh_filter();
+                            }
                             _ => {}
                         }
                         return InputOutcome::Changed;
@@ -167,6 +183,12 @@ impl AgentView {
                         return self.handle_doc_input(&ev);
                     }
                     let ev = crossterm::event::Event::Key(*key);
+                    if matches!(
+                        self.active_modal,
+                        Some(ActiveModal::ModelSelectionPanel { .. })
+                    ) {
+                        return self.handle_model_selection_panel_input(&ev);
+                    }
                     return self.handle_palette_or_arg_input(&ev);
                 }
                 ModalWindowOutcome::Unhandled => {
@@ -177,6 +199,12 @@ impl AgentView {
                         return self.handle_doc_input(&ev);
                     }
                     let ev = crossterm::event::Event::Key(*key);
+                    if matches!(
+                        self.active_modal,
+                        Some(ActiveModal::ModelSelectionPanel { .. })
+                    ) {
+                        return self.handle_model_selection_panel_input(&ev);
+                    }
                     return self.handle_palette_or_arg_input(&ev);
                 }
                 _ => return InputOutcome::Changed,
@@ -466,6 +494,7 @@ impl AgentView {
                 pending_target,
             } => self.handle_edit_confirm_choice(confirm, pending_target, ch),
             ActiveModal::CommandPalette { .. }
+            | ActiveModal::ModelSelectionPanel { .. }
             | ActiveModal::ArgPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
@@ -475,6 +504,147 @@ impl AgentView {
             | ActiveModal::Settings { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
+        }
+    }
+
+    /// Handle the one-screen `/models` model selection panel.
+    fn handle_model_selection_panel_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
+        use crate::views::model_selection_panel::EffortDirection;
+        use crate::views::picker::{PickerConfig, PickerOutcome, handle_picker_input};
+
+        if let crossterm::event::Event::Mouse(mouse) = ev
+            && matches!(
+                mouse.kind,
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            )
+            && let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_mut()
+            && let Some(target) =
+                state.effort_hit_target(ratatui::layout::Position::new(mouse.column, mouse.row))
+        {
+            state.picker.selected = target.visible_index;
+            state.picker.hovered = None;
+            state.picker.selection_hidden = false;
+            state.cycle_visible_effort(
+                target.visible_index,
+                target.direction == EffortDirection::Next,
+            );
+            return InputOutcome::Changed;
+        }
+
+        if let crossterm::event::Event::Key(key) = ev
+            && matches!(key.code, KeyCode::Left | KeyCode::Right)
+            && let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_ref()
+            && state.picker.query.is_empty()
+            && !state.picker.selection_hidden
+            && !state.picker.tabs_focused
+        {
+            let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_mut()
+            else {
+                return InputOutcome::Changed;
+            };
+            let visible_index = state.picker.selected;
+            state.cycle_visible_effort(visible_index, key.code == KeyCode::Right);
+            return InputOutcome::Changed;
+        }
+
+        let config = PickerConfig {
+            title: None,
+            show_search_hint: false,
+            expandable: false,
+            esc_clears_query: true,
+            shortcuts: Some(crate::views::picker::picker_shortcuts()),
+            pending_hint: None,
+            non_selectable: &[],
+            non_selectable_clickable: &[],
+            shortcuts_area: None,
+            tabs: None,
+            active_tab: 0,
+            filter_label: None,
+            filter_key_hint: None,
+            filter_active: false,
+            action_keys: &[],
+            disable_search: false,
+            compact_bottom_bar: false,
+            search_only_on_slash: false,
+            vim_normal_first: crate::appearance::cache::load_vim_mode(),
+        };
+
+        let (outcome, query_before) = {
+            let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_mut()
+            else {
+                return InputOutcome::Changed;
+            };
+            let query_before = state.picker.query.clone();
+            let outcome =
+                handle_picker_input(ev, &mut state.picker, state.filtered_indices.len(), &config);
+            (outcome, query_before)
+        };
+
+        if matches!(outcome, PickerOutcome::Changed)
+            && let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_mut()
+            && state.picker.query != query_before
+        {
+            state.refresh_filter();
+        }
+
+        match outcome {
+            PickerOutcome::Closed => {
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            PickerOutcome::Selected(visible_index) => {
+                let Some(ActiveModal::ModelSelectionPanel { state }) = self.active_modal.as_ref()
+                else {
+                    return InputOutcome::Changed;
+                };
+                let Some(entry) = state.visible_entry(visible_index) else {
+                    return InputOutcome::Changed;
+                };
+                let model_id = entry.model_id.clone();
+                let effort_selection = entry
+                    .effort_touched
+                    .then(|| entry.efforts.get(entry.effort_index).cloned())
+                    .flatten();
+                let effort_touched = entry.effort_touched;
+
+                if !self.session.models.available.contains_key(&model_id) {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                let effort = if effort_touched {
+                    match effort_selection {
+                        Some(selection) => match self
+                            .session
+                            .models
+                            .resolve_effort_for_model(&model_id, &selection.id)
+                        {
+                            Ok(effort) if effort == selection.value => Some(effort),
+                            Ok(_) | Err(_) => {
+                                self.active_modal = None;
+                                return InputOutcome::Changed;
+                            }
+                        },
+                        // Defensive fallback for an inconsistent touched entry
+                        // with no selected snapshot effort: preserve the
+                        // model-only `/model <name>` action.
+                        None => None,
+                    }
+                } else {
+                    None
+                };
+                self.active_modal = None;
+                if let Some(effort) = effort {
+                    InputOutcome::Action(Action::SwitchModel {
+                        model_id,
+                        effort: Some(effort),
+                    })
+                } else {
+                    InputOutcome::Action(Action::SetDefaultModel(model_id))
+                }
+            }
+            PickerOutcome::Changed => InputOutcome::Changed,
+            PickerOutcome::Unchanged => InputOutcome::Unchanged,
+            _ => InputOutcome::Changed,
         }
     }
 
@@ -1210,6 +1380,7 @@ impl AgentView {
                     PickerEntry::Row(PickerRow {
                         label: &e.title,
                         right_label: &e.description,
+                        right_label_color: None,
                         selected: filtered
                             .get(state.selected)
                             .map(|(o, _)| *o)
@@ -1317,6 +1488,7 @@ impl AgentView {
             self.active_modal,
             Some(
                 ActiveModal::CommandPalette { .. }
+                    | ActiveModal::ModelSelectionPanel { .. }
                     | ActiveModal::ArgPicker { .. }
                     | ActiveModal::SessionPicker { .. }
                     | ActiveModal::DocPicker { .. }
@@ -1328,6 +1500,7 @@ impl AgentView {
             // Extract window for handle_modal_mouse.
             let window = match self.active_modal.as_mut() {
                 Some(ActiveModal::CommandPalette { window, .. }) => window,
+                Some(ActiveModal::ModelSelectionPanel { state }) => &mut state.window,
                 Some(ActiveModal::ArgPicker { window, .. }) => window,
                 Some(ActiveModal::SessionPicker { window, .. }) => window,
                 Some(ActiveModal::DocPicker { window, .. }) => window,
@@ -1455,6 +1628,12 @@ impl AgentView {
                         };
                     }
                     let ev = crossterm::event::Event::Mouse(*mouse);
+                    if matches!(
+                        self.active_modal,
+                        Some(ActiveModal::ModelSelectionPanel { .. })
+                    ) {
+                        return self.handle_model_selection_panel_input(&ev);
+                    }
                     return self.handle_palette_or_arg_input(&ev);
                 }
                 _ => return InputOutcome::Changed,
@@ -1642,6 +1821,7 @@ impl AgentView {
                             PickerEntry::Row(PickerRow {
                                 label: &e.label,
                                 right_label: &e.shortcut,
+                                right_label_color: None,
                                 selected: state.hovered == Some(i)
                                     || (state.hovered.is_none() && i == state.selected),
                                 expanded: false,
@@ -1691,6 +1871,101 @@ impl AgentView {
                         false,
                     );
                 }
+            } else if let modal::ActiveModal::ModelSelectionPanel { state } = active_modal {
+                let effort_width = state.effort_label_width();
+                let display_names: Vec<String> = state
+                    .filtered_indices
+                    .iter()
+                    .map(|&entry_index| state.entries[entry_index].display_name())
+                    .collect();
+                let effort_labels: Vec<String> = state
+                    .filtered_indices
+                    .iter()
+                    .map(|&entry_index| state.entries[entry_index].effort_label(effort_width))
+                    .collect();
+                let picker_entries: Vec<PickerEntry> = state
+                    .filtered_indices
+                    .iter()
+                    .enumerate()
+                    .map(|(visible_index, &entry_index)| {
+                        let entry = &state.entries[entry_index];
+                        let selected = state.picker.hovered == Some(visible_index)
+                            || (state.picker.hovered.is_none()
+                                && visible_index == state.picker.selected);
+                        PickerEntry::Row(PickerRow {
+                            label: &display_names[visible_index],
+                            right_label: &effort_labels[visible_index],
+                            right_label_color: entry.selected_effort_color(selected),
+                            selected,
+                            expanded: false,
+                            fields: &[],
+                            description_lines: &[],
+                            summary_lines: &[],
+                            dimmed: false,
+                            indent: 0,
+                            badge: if entry.current { "current" } else { "" },
+                            badge_color: None,
+                            collapsible: false,
+                            underline_last_desc: false,
+                        })
+                    })
+                    .collect();
+                let compact = self.scrollback.appearance().prompt.compact;
+                let mut shortcuts = vec![
+                    mw::Shortcut {
+                        label: "↑/↓ model",
+                        clickable: false,
+                        id: 0,
+                    },
+                    mw::Shortcut {
+                        label: "←/→ effort",
+                        clickable: false,
+                        id: 0,
+                    },
+                    mw::Shortcut {
+                        label: "Enter select",
+                        clickable: false,
+                        id: 0,
+                    },
+                    mw::Shortcut {
+                        label: "Esc cancel",
+                        clickable: false,
+                        id: 0,
+                    },
+                ];
+                mw::push_vim_nav_search_hint(&mut shortcuts, state.picker.search_active);
+                let modal_config = ModalWindowConfig {
+                    title: "Model selection",
+                    tabs: None,
+                    shortcuts: &shortcuts,
+                    sizing: ModalSizing {
+                        width_pct: 0.50,
+                        max_width: 80,
+                        min_width: 44,
+                        v_margin: 4,
+                        h_pad: 2,
+                        v_pad: 1,
+                        footer_lines: 2,
+                    }
+                    .with_compact(compact),
+                    fold_info: None,
+                };
+                if let Some(mca) =
+                    mw::render_modal_window(buf, area, &mut state.window, &modal_config, &theme)
+                {
+                    picker::render_picker_in_modal(
+                        buf,
+                        mca.content,
+                        mca.inner_x,
+                        mca.inner_width,
+                        &theme,
+                        &mut state.picker,
+                        &picker_entries,
+                        &[],
+                        false,
+                    );
+                    state.refresh_effort_hit_targets();
+                }
             } else if let modal::ActiveModal::ArgPicker {
                 command,
                 args_query,
@@ -1714,6 +1989,7 @@ impl AgentView {
                         PickerEntry::Row(PickerRow {
                             label: &item.display,
                             right_label: &item.description,
+                            right_label_color: None,
                             selected: state.hovered == Some(i)
                                 || (state.hovered.is_none() && i == state.selected),
                             expanded: false,
@@ -2003,6 +2279,7 @@ impl AgentView {
                         picker_entries.push(PickerEntry::Row(PickerRow {
                             label: &b.summary,
                             right_label: &b.right_text,
+                            right_label_color: None,
                             selected: b.is_selected,
                             expanded: b.is_expanded,
                             fields,
@@ -2602,6 +2879,249 @@ mod session_picker_delete_tests {
             !st.selection_hidden,
             "typing a query restores the selection highlight"
         );
+    }
+}
+
+#[cfg(test)]
+mod model_selection_panel_tests {
+    use std::sync::Arc;
+
+    use agent_client_protocol as acp;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use xai_grok_shell::sampling::types::ReasoningEffort;
+
+    use crate::app::actions::Action;
+    use crate::app::agent_view::test_fixtures::make_agent;
+    use crate::app::app_view::InputOutcome;
+    use crate::views::modal::ActiveModal;
+
+    fn reasoning_model(id: &str, name: &str) -> (acp::ModelId, acp::ModelInfo) {
+        let id = acp::ModelId::new(Arc::from(id));
+        let meta = serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "id": "low", "value": "low", "label": "Low" },
+                { "id": "high", "value": "high", "label": "High" }
+            ],
+            "reasoningEffort": "low"
+        });
+        let info =
+            acp::ModelInfo::new(id.clone(), name.to_string()).meta(meta.as_object().cloned());
+        (id, info)
+    }
+
+    fn plain_model(id: &str, name: &str) -> (acp::ModelId, acp::ModelInfo) {
+        let id = acp::ModelId::new(Arc::from(id));
+        let info = acp::ModelInfo::new(id.clone(), name.to_string());
+        (id, info)
+    }
+
+    fn open_model_selection_panel() -> crate::app::agent_view::AgentView {
+        let mut agent = make_agent();
+        let (first_id, first) = reasoning_model("first", "First");
+        let (second_id, second) = reasoning_model("second", "Second");
+        agent
+            .session
+            .models
+            .available
+            .insert(first_id.clone(), first);
+        agent.session.models.available.insert(second_id, second);
+        agent.session.models.current = Some(first_id);
+        agent.session.models.reasoning_effort = Some(ReasoningEffort::Low);
+        agent.open_model_selection_panel();
+        agent
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn pending_effort_change_is_discarded_on_cancel() {
+        let mut agent = open_model_selection_panel();
+        let original_effort = agent.session.models.reasoning_effort;
+        let Some(ActiveModal::ModelSelectionPanel { state, .. }) = agent.active_modal.as_ref()
+        else {
+            panic!("expected model selection panel");
+        };
+        assert_eq!(state.picker.selected, 0);
+
+        agent.handle_modal_key(&key(KeyCode::Right));
+        assert_eq!(agent.session.models.reasoning_effort, original_effort);
+
+        let outcome = agent.handle_modal_key(&key(KeyCode::Esc));
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(agent.active_modal.is_none());
+        assert_eq!(agent.session.models.reasoning_effort, original_effort);
+    }
+
+    #[test]
+    fn effort_touch_on_first_model_does_not_affect_second_model_confirmation() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        agent.handle_modal_key(&key(KeyCode::Down));
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetDefaultModel(ref id)) if id.0.as_ref() == "second"
+        ));
+    }
+
+    #[test]
+    fn left_right_with_query_moves_search_cursor_instead_of_effort() {
+        crate::appearance::cache::set_vim_mode(false);
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Char('F')));
+        agent.handle_modal_key(&key(KeyCode::Char('i')));
+        let Some(ActiveModal::ModelSelectionPanel { state }) = agent.active_modal.as_ref() else {
+            panic!("expected model selection panel");
+        };
+        assert_eq!(state.picker.query_cursor, 2);
+        assert!(state.entries.iter().all(|entry| !entry.effort_touched));
+
+        agent.handle_modal_key(&key(KeyCode::Left));
+        let Some(ActiveModal::ModelSelectionPanel { state }) = agent.active_modal.as_ref() else {
+            panic!("expected model selection panel");
+        };
+        assert_eq!(state.picker.query_cursor, 1);
+        assert!(state.entries.iter().all(|entry| !entry.effort_touched));
+    }
+
+    #[test]
+    fn returning_to_touched_model_retains_its_pending_effort() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        agent.handle_modal_key(&key(KeyCode::Down));
+        agent.handle_modal_key(&key(KeyCode::Up));
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SwitchModel {
+                ref model_id,
+                effort: Some(ReasoningEffort::High),
+            }) if model_id.0.as_ref() == "first"
+        ));
+    }
+
+    #[test]
+    fn explicit_effort_touch_returns_switch_model_with_some_effort() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SwitchModel {
+                ref model_id,
+                effort: Some(ReasoningEffort::High),
+            }) if model_id.0.as_ref() == "first"
+        ));
+    }
+
+    #[test]
+    fn touched_effort_then_selecting_plain_model_falls_back_to_set_default() {
+        let mut agent = make_agent();
+        let (reasoning_id, reasoning) = reasoning_model("reasoning", "Reasoning");
+        let (plain_id, plain) = plain_model("plain", "Plain");
+        agent
+            .session
+            .models
+            .available
+            .insert(reasoning_id.clone(), reasoning);
+        agent
+            .session
+            .models
+            .available
+            .insert(plain_id.clone(), plain);
+        agent.session.models.current = Some(reasoning_id);
+        agent.session.models.reasoning_effort = Some(ReasoningEffort::Low);
+        agent.open_model_selection_panel();
+
+        agent.handle_modal_key(&key(KeyCode::Right));
+        agent.handle_modal_key(&key(KeyCode::Down));
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetDefaultModel(ref id)) if id == &plain_id
+        ));
+    }
+
+    #[test]
+    fn filtering_selects_stable_snapshot_model_id() {
+        crate::appearance::cache::set_vim_mode(false);
+        let mut agent = open_model_selection_panel();
+        for ch in "Second".chars() {
+            agent.handle_modal_key(&key(KeyCode::Char(ch)));
+        }
+        let Some(ActiveModal::ModelSelectionPanel { state }) = agent.active_modal.as_ref() else {
+            panic!("expected model selection panel");
+        };
+        assert_eq!(state.filtered_indices, vec![1]);
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetDefaultModel(ref id)) if id.0.as_ref() == "second"
+        ));
+    }
+
+    #[test]
+    fn catalog_reorder_does_not_retarget_snapshot_selection() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Down));
+        let first = agent
+            .session
+            .models
+            .available
+            .shift_remove_index(0)
+            .unwrap();
+        agent.session.models.available.insert(first.0, first.1);
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetDefaultModel(ref id)) if id.0.as_ref() == "second"
+        ));
+    }
+
+    #[test]
+    fn removed_snapshot_model_does_not_dispatch() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Down));
+        let second = acp::ModelId::new(Arc::from("second"));
+        agent.session.models.available.shift_remove(&second);
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(agent.active_modal.is_none());
+    }
+
+    #[test]
+    fn stale_effort_option_does_not_dispatch() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        let first = acp::ModelId::new(Arc::from("first"));
+        agent.session.models.available.get_mut(&first).unwrap().meta = None;
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(agent.active_modal.is_none());
+    }
+
+    #[test]
+    fn effort_id_remapped_to_different_canonical_value_does_not_dispatch() {
+        let mut agent = open_model_selection_panel();
+        agent.handle_modal_key(&key(KeyCode::Right));
+        let first = acp::ModelId::new(Arc::from("first"));
+        let remapped = serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "id": "low", "value": "low", "label": "Low" },
+                { "id": "high", "value": "xhigh", "label": "High" }
+            ],
+            "reasoningEffort": "low"
+        });
+        agent.session.models.available.get_mut(&first).unwrap().meta =
+            remapped.as_object().cloned();
+
+        let outcome = agent.handle_modal_key(&key(KeyCode::Enter));
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(agent.active_modal.is_none());
     }
 }
 

@@ -1158,6 +1158,7 @@ fn render_location_picker(
             PickerEntry::Row(PickerRow {
                 label: c.label.as_str(),
                 right_label: detail.as_str(),
+                right_label_color: None,
                 selected: vis == modal.picker.selected,
                 expanded: false,
                 fields: &[],
