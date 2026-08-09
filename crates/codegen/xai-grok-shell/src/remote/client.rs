@@ -826,6 +826,52 @@ pub fn parse_remote_model_value(
             _ => None,
         })
         .unwrap_or_default();
+
+    let reasoning_effort_value = obj
+        .get("reasoningEffort")
+        .or_else(|| obj.get("reasoning_effort"))
+        .or_else(|| meta.and_then(|m| m.get("reasoningEffort")));
+    let supports_reasoning_effort_value = obj
+        .get("supportsReasoningEffort")
+        .or_else(|| obj.get("supports_reasoning_effort"))
+        .or_else(|| meta.and_then(|m| m.get("supportsReasoningEffort")));
+    let reasoning_efforts_value = obj
+        .get("reasoningEfforts")
+        .or_else(|| obj.get("reasoning_efforts"))
+        .or_else(|| meta.and_then(|m| m.get("reasoningEfforts")));
+
+    let server_reasoning_effort = reasoning_effort_value
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok());
+    let server_supports_reasoning_effort =
+        supports_reasoning_effort_value.and_then(|v| v.as_bool());
+    let server_reasoning_efforts = reasoning_efforts_value
+        .and_then(|v| v.as_array())
+        .map(|arr| xai_grok_sampling_types::parse_reasoning_effort_options(arr));
+
+    let openai_policy = (reasoning_effort_value.is_none()
+        && supports_reasoning_effort_value.is_none()
+        && reasoning_efforts_value.is_none())
+    .then(|| super::openai_reasoning_effort::policy_for_model(&model))
+    .flatten();
+    let (reasoning_effort, supports_reasoning_effort, reasoning_efforts) =
+        if server_supports_reasoning_effort == Some(false) {
+            // An explicit server false is authoritative over any accompanying
+            // scalar or menu. Clear both so the final catalog derive pass cannot
+            // re-enable support from a contradictory payload.
+            (None, false, Vec::new())
+        } else {
+            (
+                server_reasoning_effort.or(openai_policy.map(|policy| policy.default)),
+                server_supports_reasoning_effort.unwrap_or_else(|| openai_policy.is_some()),
+                server_reasoning_efforts.unwrap_or_else(|| {
+                    openai_policy
+                        .map(|policy| policy.options())
+                        .unwrap_or_default()
+                }),
+            )
+        };
+
     Some(crate::agent::config::ModelEntryConfig {
         id,
         model,
@@ -873,23 +919,9 @@ pub fn parse_remote_model_value(
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
         auth_scheme: None,
-        reasoning_effort: get_string(obj, "reasoningEffort")
-            .or_else(|| get_string(obj, "reasoning_effort"))
-            .or_else(|| meta.and_then(|m| get_string(m, "reasoningEffort")))
-            .and_then(|s| s.parse().ok()),
-        supports_reasoning_effort: obj
-            .get("supportsReasoningEffort")
-            .or_else(|| obj.get("supports_reasoning_effort"))
-            .or_else(|| meta.and_then(|m| m.get("supportsReasoningEffort")))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        reasoning_efforts: obj
-            .get("reasoningEfforts")
-            .or_else(|| obj.get("reasoning_efforts"))
-            .or_else(|| meta.and_then(|m| m.get("reasoningEfforts")))
-            .and_then(|v| v.as_array())
-            .map(|arr| xai_grok_sampling_types::parse_reasoning_effort_options(arr))
-            .unwrap_or_default(),
+        reasoning_effort,
+        supports_reasoning_effort,
+        reasoning_efforts,
         supports_backend_search: obj
             .get("supportsBackendSearch")
             .or_else(|| obj.get("supports_backend_search"))
@@ -1469,6 +1501,361 @@ mod tests {
         let result = parse_remote_model_value(&value, "https://default.url").unwrap();
         assert!(result.reasoning_efforts.is_empty());
     }
+
+    #[test]
+    fn parse_supplements_exact_openai_reasoning_policy() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        let result = parse_remote_model_value(
+            &serde_json::json!({ "model": "gpt-5.5", "context_window": 1_050_000 }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(result.supports_reasoning_effort);
+        assert_eq!(result.reasoning_effort, Some(ReasoningEffort::Medium));
+        assert_eq!(
+            result
+                .reasoning_efforts
+                .iter()
+                .map(|option| option.value)
+                .collect::<Vec<_>>(),
+            vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::Xhigh,
+            ]
+        );
+        assert_eq!(
+            result
+                .reasoning_efforts
+                .iter()
+                .find(|option| option.default)
+                .map(|option| option.value),
+            Some(ReasoningEffort::Medium)
+        );
+    }
+
+    #[test]
+    fn parse_supplements_provider_prefixed_openai_reasoning_policy() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        for model in ["anything/gpt-5.5", "one/two/gpt-5.5"] {
+            let result = parse_remote_model_value(
+                &serde_json::json!({ "model": model, "context_window": 1_050_000 }),
+                "https://default.url",
+            )
+            .unwrap();
+            assert_eq!(result.reasoning_effort, Some(ReasoningEffort::Medium));
+            assert_eq!(result.reasoning_efforts.len(), 5);
+        }
+    }
+
+    #[test]
+    fn parse_rejects_inexact_openai_reasoning_policy_matches() {
+        for model in [
+            "GPT-5.5",
+            "gpt-5.5-latest",
+            "gpt-5.5-2026-04-24",
+            "prefix-gpt-5.5",
+            "gpt-5.5/suffix",
+        ] {
+            let result = parse_remote_model_value(
+                &serde_json::json!({ "model": model, "context_window": 1_050_000 }),
+                "https://default.url",
+            )
+            .unwrap();
+            assert!(
+                !result.supports_reasoning_effort,
+                "unexpected match: {model}"
+            );
+            assert!(
+                result.reasoning_effort.is_none(),
+                "unexpected match: {model}"
+            );
+            assert!(
+                result.reasoning_efforts.is_empty(),
+                "unexpected match: {model}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_openai_policy_never_overrides_present_server_reasoning_metadata() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        let explicit_menu = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "gpt-5.5",
+                "context_window": 1_050_000,
+                "reasoningEfforts": [{ "value": "high", "default": true }]
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert_eq!(explicit_menu.reasoning_effort, None);
+        assert!(!explicit_menu.supports_reasoning_effort);
+        assert_eq!(explicit_menu.reasoning_efforts.len(), 1);
+        assert_eq!(
+            explicit_menu.reasoning_efforts[0].value,
+            ReasoningEffort::High
+        );
+
+        let explicit_default = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "gpt-5.5",
+                "context_window": 1_050_000,
+                "reasoningEffort": "low"
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert_eq!(
+            explicit_default.reasoning_effort,
+            Some(ReasoningEffort::Low)
+        );
+        assert!(!explicit_default.supports_reasoning_effort);
+        assert!(explicit_default.reasoning_efforts.is_empty());
+
+        let explicit_false = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "gpt-5.5",
+                "context_window": 1_050_000,
+                "supportsReasoningEffort": false
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(!explicit_false.supports_reasoning_effort);
+        assert_eq!(explicit_false.reasoning_effort, None);
+        assert!(explicit_false.reasoning_efforts.is_empty());
+
+        let contradictory_server_payload = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "remote-reasoning-model",
+                "context_window": 200_000,
+                "supportsReasoningEffort": false,
+                "reasoningEffort": "high",
+                "reasoningEfforts": [
+                    { "value": "low" },
+                    { "value": "high", "default": true }
+                ]
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(!contradictory_server_payload.supports_reasoning_effort);
+        assert_eq!(contradictory_server_payload.reasoning_effort, None);
+        assert!(contradictory_server_payload.reasoning_efforts.is_empty());
+
+        let resolved = crate::agent::config::resolve_model_list(
+            &crate::agent::config::Config::default(),
+            Some(indexmap::IndexMap::from([(
+                "remote-reasoning-model".to_owned(),
+                crate::agent::config::ModelEntry::from_config_entry(&contradictory_server_payload),
+            )])),
+        );
+        let info = &resolved["remote-reasoning-model"].info;
+        assert!(!info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, None);
+        assert!(info.reasoning_efforts.is_empty());
+
+        let present_but_invalid = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "gpt-5.5",
+                "context_window": 1_050_000,
+                "reasoningEfforts": null
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(!present_but_invalid.supports_reasoning_effort);
+        assert_eq!(present_but_invalid.reasoning_effort, None);
+        assert!(present_but_invalid.reasoning_efforts.is_empty());
+    }
+
+    #[test]
+    fn remote_menu_only_payload_still_derives_support_and_default() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        let parsed = parse_remote_model_value(
+            &serde_json::json!({
+                "model": "remote-menu-only",
+                "context_window": 200_000,
+                "reasoningEfforts": [
+                    { "value": "low" },
+                    { "value": "high", "default": true }
+                ]
+            }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(!parsed.supports_reasoning_effort);
+        assert_eq!(parsed.reasoning_effort, None);
+        assert_eq!(parsed.reasoning_efforts.len(), 2);
+
+        let resolved = crate::agent::config::resolve_model_list(
+            &crate::agent::config::Config::default(),
+            Some(indexmap::IndexMap::from([(
+                "remote-menu-only".to_owned(),
+                crate::agent::config::ModelEntry::from_config_entry(&parsed),
+            )])),
+        );
+        let info = &resolved["remote-menu-only"].info;
+        assert!(info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, Some(ReasoningEffort::High));
+        assert_eq!(info.reasoning_efforts.len(), 2);
+    }
+
+    #[test]
+    fn parse_leaves_non_openai_model_unchanged() {
+        let result = parse_remote_model_value(
+            &serde_json::json!({ "model": "claude-opus-4-1", "context_window": 200_000 }),
+            "https://default.url",
+        )
+        .unwrap();
+        assert!(!result.supports_reasoning_effort);
+        assert!(result.reasoning_effort.is_none());
+        assert!(result.reasoning_efforts.is_empty());
+    }
+
+    fn openai_prefetched_entry() -> indexmap::IndexMap<String, crate::agent::config::ModelEntry> {
+        let remote = parse_remote_model_value(
+            &serde_json::json!({ "model": "gpt-5.5", "context_window": 1_050_000 }),
+            "https://default.url",
+        )
+        .unwrap();
+        indexmap::IndexMap::from([(
+            "gpt-5.5".to_owned(),
+            crate::agent::config::ModelEntry::from_config_entry(&remote),
+        )])
+    }
+
+    #[test]
+    fn config_explicit_false_disables_openai_reasoning_policy() {
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.5".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                supports_reasoning_effort: Some(false),
+                ..Default::default()
+            },
+        );
+
+        let resolved =
+            crate::agent::config::resolve_model_list(&cfg, Some(openai_prefetched_entry()));
+        let info = &resolved["gpt-5.5"].info;
+        assert!(!info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, None);
+        assert!(info.reasoning_efforts.is_empty());
+    }
+
+    #[test]
+    fn config_menu_replaces_openai_menu_and_rederives_marked_default() {
+        use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
+
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.5".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        id: "quick".to_owned(),
+                        value: ReasoningEffort::Low,
+                        label: "Quick".to_owned(),
+                        description: None,
+                        default: false,
+                    },
+                    ReasoningEffortOption {
+                        id: "deep".to_owned(),
+                        value: ReasoningEffort::High,
+                        label: "Deep".to_owned(),
+                        description: None,
+                        default: true,
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+
+        let resolved =
+            crate::agent::config::resolve_model_list(&cfg, Some(openai_prefetched_entry()));
+        let info = &resolved["gpt-5.5"].info;
+        assert!(info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, Some(ReasoningEffort::High));
+        assert_eq!(
+            info.reasoning_efforts
+                .iter()
+                .map(|option| option.value)
+                .collect::<Vec<_>>(),
+            vec![ReasoningEffort::Low, ReasoningEffort::High]
+        );
+    }
+
+    #[test]
+    fn config_menu_rederives_first_option_without_marked_default() {
+        use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
+
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.5".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                reasoning_efforts: vec![
+                    ReasoningEffortOption {
+                        id: "quick".to_owned(),
+                        value: ReasoningEffort::Low,
+                        label: "Quick".to_owned(),
+                        description: None,
+                        default: false,
+                    },
+                    ReasoningEffortOption {
+                        id: "deep".to_owned(),
+                        value: ReasoningEffort::High,
+                        label: "Deep".to_owned(),
+                        description: None,
+                        default: false,
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+
+        let resolved =
+            crate::agent::config::resolve_model_list(&cfg, Some(openai_prefetched_entry()));
+        assert_eq!(
+            resolved["gpt-5.5"].info.reasoning_effort,
+            Some(ReasoningEffort::Low)
+        );
+    }
+
+    #[test]
+    fn config_explicit_scalar_beats_replacement_menu_but_remains_safely_unoffered() {
+        use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
+
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.5".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                reasoning_effort: Some(ReasoningEffort::Xhigh),
+                reasoning_efforts: vec![ReasoningEffortOption {
+                    id: "low".to_owned(),
+                    value: ReasoningEffort::Low,
+                    label: "Low".to_owned(),
+                    description: None,
+                    default: true,
+                }],
+                ..Default::default()
+            },
+        );
+
+        let resolved =
+            crate::agent::config::resolve_model_list(&cfg, Some(openai_prefetched_entry()));
+        let info = &resolved["gpt-5.5"].info;
+        assert_eq!(info.reasoning_effort, Some(ReasoningEffort::Xhigh));
+        assert!(!info.offers_reasoning_effort(ReasoningEffort::Xhigh));
+    }
+
     #[test]
     fn parse_reads_meta_fallback_fields() {
         let value = serde_json::json!(
