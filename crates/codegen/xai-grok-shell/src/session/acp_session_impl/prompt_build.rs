@@ -687,13 +687,21 @@ impl SessionActor {
         let resolved_describe = self
             .resolve_aux_sampler_config(&self.image_description_model)
             .await;
-        let (describe_model, sampler_config) =
+        let resolved_provider = resolved_describe.as_ref().map(|(_, provider)| *provider);
+        let (describe_model, mut sampler_config) =
             crate::agent::config::finalize_image_describe_sampler_config(
-                resolved_describe,
+                resolved_describe.map(|(cfg, _)| cfg),
                 &active_session_config,
                 self.client_identifier.clone(),
                 Some(self.max_retries),
             );
+        if let Some(provider) = resolved_provider {
+            crate::agent::config::stamp_xai_aux_bearer_resolver(
+                &mut sampler_config,
+                provider,
+                &active_session_config,
+            );
+        }
         let client = xai_grok_sampler::SamplingClient::new(sampler_config).map_err(|e| {
             acp::Error::internal_error().data(format!(
                 "failed to build image-describe sampling client: {e}"

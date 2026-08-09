@@ -273,7 +273,7 @@ max_completion_tokens = 8192          # max tokens per response
 context_window = 128000               # context window size (for auto-compact)
 ```
 
-Credential resolution: `api_key` > `env_key` > signed-in session token > `XAI_API_KEY`.
+Credential resolution is provider-aware: first-party xAI/Grok catalog models use `api_key` > resolved `env_key` > signed-in session token > `XAI_API_KEY`; user-defined custom models use only `api_key` > resolved `env_key` > no credential. A built-in model explicitly redirected to a non-xAI `base_url`/`api_base_url` becomes custom. Catalogs loaded through `models_base_url`/`models_list_url` are custom: `XAI_API_KEY` authenticates the catalog fetch, but returned models are keyless unless an explicit per-model `api_key`/`env_key` override is configured; the signed-in session token is never used. Keyless custom endpoints are allowed (for example Ollama); endpoints that require authentication will return an error such as HTTP 401 until you configure a model key.
 
 Override built-in models by using their name as the section key:
 

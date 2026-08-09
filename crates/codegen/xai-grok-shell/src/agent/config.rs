@@ -3683,6 +3683,13 @@ impl ConfigModelOverride {
         if self.api_base_url.is_some() {
             entry.api_base_url.clone_from(&self.api_base_url);
         }
+        let explicitly_overridden_urls = self.base_url.iter().chain(self.api_base_url.iter());
+        if explicitly_overridden_urls
+            .into_iter()
+            .any(|url| !crate::util::is_first_party_xai_url(url))
+        {
+            entry.info.provider = ProviderId::Unknown;
+        }
         if self.supported_in_api.is_none() && (self.api_key.is_some() || self.env_key.is_some()) {
             entry.info.supported_in_api = true;
         }
@@ -4412,6 +4419,9 @@ pub fn try_resolve_model_credentials(
 pub struct ModelAuthFacts {
     pub byok: ModelByok,
     pub auth_scheme: AuthScheme,
+    /// Resolved provider identity. `Unknown` is the safe boundary: custom
+    /// models never inherit xAI session credentials or request metadata.
+    pub provider: ProviderId,
 }
 /// Resolve `model_id` to its auth facts from one effective-config load.
 /// Load/parse failure → `byok = Unknown`; model absent from the catalog →
@@ -4422,16 +4432,33 @@ pub fn resolve_model_auth_facts(model_id: &str) -> ModelAuthFacts {
         return ModelAuthFacts {
             byok: ModelByok::Unknown,
             auth_scheme: AuthScheme::default(),
+            provider: ProviderId::Unknown,
         };
     }
     with_resolved_model(model_id, |lookup| ModelAuthFacts {
         byok: byok_from_lookup(&lookup),
-        auth_scheme: match lookup {
+        auth_scheme: match &lookup {
             ModelLookup::Loaded(Some(e)) => e.info().auth_scheme,
             _ => AuthScheme::default(),
         },
+        provider: match &lookup {
+            ModelLookup::Loaded(Some(e)) => e.info().provider,
+            _ => ProviderId::Unknown,
+        },
     })
 }
+pub fn model_auth_facts_for_entry(entry: &ModelEntry) -> ModelAuthFacts {
+    ModelAuthFacts {
+        byok: if entry.has_own_credentials() {
+            ModelByok::Byok
+        } else {
+            ModelByok::NotByok
+        },
+        auth_scheme: entry.info().auth_scheme,
+        provider: entry.info().provider,
+    }
+}
+
 fn byok_from_lookup(lookup: &ModelLookup) -> ModelByok {
     match lookup {
         ModelLookup::ConfigUnavailable => ModelByok::Unknown,
@@ -4467,6 +4494,11 @@ fn with_resolved_model<T>(model_id: &str, f: impl FnOnce(ModelLookup) -> T) -> T
 /// description, session summary, ...), resolved through the catalog so a
 /// `[model.*]` override redirects it to its own endpoint, credentials, and
 /// routing `model`. `None` → caller falls back to the active session's model.
+pub struct ResolvedAuxSamplingConfig {
+    pub config: SamplerConfig,
+    pub provider: ProviderId,
+}
+
 pub fn resolve_aux_model_sampling_config(
     model_id: &str,
     models: &IndexMap<String, ModelEntry>,
@@ -4475,7 +4507,7 @@ pub fn resolve_aux_model_sampling_config(
     disable_api_key_auth: bool,
     alpha_test_key: Option<String>,
     client_version: Option<String>,
-) -> Option<SamplerConfig> {
+) -> Option<ResolvedAuxSamplingConfig> {
     let catalog_entry = find_model_by_id(models, model_id).cloned();
     if let Some(entry) = &catalog_entry {
         let credentials = resolve_credentials_enforced(entry, session_key, disable_api_key_auth);
@@ -4487,9 +4519,22 @@ pub fn resolve_aux_model_sampling_config(
             None,
             None,
         );
-        if sampler.api_key.is_some() {
-            return Some(sampler);
+        // A configured custom model is authoritative even without a key: local
+        // and other unauthenticated endpoints must be allowed through, and must
+        // never fall through to the xAI auxiliary endpoint/session bearer.
+        if entry.info().provider != ProviderId::Xai || sampler.api_key.is_some() {
+            return Some(ResolvedAuxSamplingConfig {
+                config: sampler,
+                provider: entry.info().provider,
+            });
         }
+    }
+    if endpoints.has_custom_endpoint() {
+        tracing::warn!(
+            aux_model = % model_id,
+            "auxiliary model absent from custom catalog; falling back to active model",
+        );
+        return None;
     }
     let xai_bearer = session_key
         .map(|s| s.to_owned())
@@ -4545,7 +4590,10 @@ pub fn resolve_aux_model_sampling_config(
             None,
             None,
         );
-        return Some(sampler);
+        return Some(ResolvedAuxSamplingConfig {
+            config: sampler,
+            provider: ProviderId::Xai,
+        });
     }
     tracing::warn!(
         aux_model = % model_id,
@@ -4573,8 +4621,20 @@ pub fn stamp_session_local_sampler_fields(
 ) {
     cfg.client_identifier = client_identifier;
     cfg.attribution_callback = active_session_config.attribution_callback.clone();
-    cfg.bearer_resolver = active_session_config.bearer_resolver.clone();
     cfg.max_retries = max_retries;
+}
+
+/// Attach the live xAI session bearer only to first-party auxiliary models.
+/// Custom/BYOK auxiliary configs remain self-contained, including the valid
+/// unauthenticated (`api_key = None`) case.
+pub fn stamp_xai_aux_bearer_resolver(
+    cfg: &mut SamplerConfig,
+    provider: ProviderId,
+    active_session_config: &SamplerConfig,
+) {
+    if provider == ProviderId::Xai {
+        cfg.bearer_resolver = active_session_config.bearer_resolver.clone();
+    }
 }
 pub fn finalize_image_describe_sampler_config(
     resolved_aux: Option<SamplerConfig>,
@@ -4791,7 +4851,9 @@ pub fn resolve_web_search_sampling_config(
             None,
             None,
         ))
-    } else if model_id == crate::models::default_web_search_model() {
+    } else if model_id == crate::models::default_web_search_model()
+        && !endpoints.has_custom_endpoint()
+    {
         Some(resolve_hidden_default_web_search_sampling_config(
             model_id,
             session_key,
@@ -5269,6 +5331,36 @@ reasoning_effort = "low"
         );
     }
     #[test]
+    fn custom_endpoint_missing_aux_model_does_not_synthesize_xai_fallback() {
+        let mut endpoints = EndpointsConfig::default();
+        endpoints.models_base_url = Some("https://custom.example/v1".to_string());
+        assert!(
+            resolve_aux_model_sampling_config(
+                "missing-helper",
+                &IndexMap::new(),
+                &endpoints,
+                Some("xai-session-token"),
+                false,
+                None,
+                None,
+            )
+            .is_none()
+        );
+        assert!(
+            resolve_web_search_sampling_config(
+                crate::models::default_web_search_model(),
+                &IndexMap::new(),
+                Some("xai-session-token"),
+                false,
+                None,
+                None,
+                &endpoints,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn finalize_image_describe_sampler_none_uses_active_session_model_not_forced_helper() {
         let active = SamplerConfig {
             model: "composer-session-model".into(),
@@ -5320,9 +5412,51 @@ reasoning_effort = "low"
             None,
         )
         .expect("override entry has an API key, so resolution succeeds");
-        assert_eq!(resolved.model, "v9m-rl-learnability-tp8");
-        assert_eq!(resolved.base_url, "https://vendor.example/v1");
-        assert_eq!(resolved.api_key.as_deref(), Some("vendor-key"));
+        assert_eq!(resolved.provider, ProviderId::Xai);
+        assert_eq!(resolved.config.model, "v9m-rl-learnability-tp8");
+        assert_eq!(resolved.config.base_url, "https://vendor.example/v1");
+        assert_eq!(resolved.config.api_key.as_deref(), Some("vendor-key"));
+    }
+    #[test]
+    fn keyless_custom_aux_model_does_not_fall_through_to_xai_credentials() {
+        let endpoints = EndpointsConfig::default();
+        let mut catalog = IndexMap::new();
+        catalog.insert(
+            "local-helper".to_string(),
+            test_model_entry_for_provider(
+                ProviderId::Unknown,
+                "local-helper",
+                crate::env::PROD_CLI_CHAT_PROXY_BASE_URL,
+                None,
+                None,
+                None,
+            ),
+        );
+        let resolved = resolve_aux_model_sampling_config(
+            "local-helper",
+            &catalog,
+            &endpoints,
+            Some("session-token"),
+            false,
+            Some("alpha-secret".to_owned()),
+            None,
+        )
+        .expect("keyless custom auxiliary endpoints are valid");
+        assert_eq!(resolved.provider, ProviderId::Unknown);
+        assert_eq!(resolved.config.api_key, None);
+        assert_eq!(resolved.config.user_id, None);
+        assert!(
+            !resolved
+                .config
+                .extra_headers
+                .contains_key("X-XAI-Token-Auth")
+        );
+        assert!(
+            !resolved
+                .config
+                .extra_headers
+                .contains_key("x-authenticateresponse")
+        );
     }
     #[test]
     fn web_search_disable_api_key_auth_swaps_first_party_key_for_session() {
@@ -5552,6 +5686,43 @@ reasoning_effort = "low"
             default_model_entries(&EndpointsConfig::default())
                 .values()
                 .all(|entry| entry.info.provider == ProviderId::Xai)
+        );
+    }
+
+    #[test]
+    fn third_party_url_override_downgrades_builtin_provider() {
+        let dm = crate::models::default_model();
+        let raw_config: toml::Value = toml::from_str(&format!(
+            r#"
+            [model."{dm}"]
+            base_url = "https://third-party.example/v1"
+            "#,
+        ))
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).unwrap();
+        let model = resolve_model_list(&cfg, None).shift_remove(dm).unwrap();
+        assert_eq!(model.info.provider, ProviderId::Unknown);
+        let credentials = resolve_credentials(&model, Some("xai-session-token"));
+        assert_eq!(credentials.api_key, None);
+        assert_eq!(credentials.base_url, "https://third-party.example/v1");
+    }
+
+    #[test]
+    fn third_party_api_base_url_override_downgrades_builtin_provider() {
+        let dm = crate::models::default_model();
+        let raw_config: toml::Value = toml::from_str(&format!(
+            r#"
+            [model."{dm}"]
+            api_base_url = "https://third-party.example/v1"
+            "#,
+        ))
+        .unwrap();
+        let cfg = Config::new_from_toml_cfg(&raw_config).unwrap();
+        let model = resolve_model_list(&cfg, None).shift_remove(dm).unwrap();
+        assert_eq!(model.info.provider, ProviderId::Unknown);
+        assert_eq!(
+            resolve_credentials(&model, Some("xai-session-token")).api_key,
+            None
         );
     }
 

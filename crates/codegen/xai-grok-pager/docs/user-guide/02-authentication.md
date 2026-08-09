@@ -245,11 +245,13 @@ Grok picks up changes to `~/.grok/auth.json` automatically. If you update creden
 
 ## Auth Precedence
 
-Grok resolves credentials for each request in this order, highest to lowest:
+Credential resolution is provider-aware:
 
-1. **Per-model `api_key` or `env_key`** -- set under `[model.<name>]` in `config.toml`. Wins whenever present.
-2. **Active session token** -- obtained through browser, OIDC/OAuth2, or external-provider login and stored in `~/.grok/auth.json`.
-3. **`XAI_API_KEY`** -- fallback when no session token is active.
+- **xAI/Grok catalog models:** per-model `api_key` or resolved `env_key` > active session token > `XAI_API_KEY`.
+- **User-defined custom models:** per-model `api_key` or resolved `env_key` > no credential (`None`). Grok does not forward the signed-in xAI session token or an unrelated global key to individually configured custom endpoints.
+- **Custom remote catalogs** configured with `GROK_MODELS_BASE_URL`/`GROK_MODELS_LIST_URL`: `XAI_API_KEY` authenticates the catalog fetch only. Returned models receive no inference credential by default, because a catalog may advertise a different origin. Add an explicit `[model.*] api_key` or `env_key` override for each model whose inference endpoint requires authentication. The signed-in session token is never used as a fallback.
+
+A custom model with no key is still sent normally, which supports Ollama and other unauthenticated local endpoints. If that endpoint requires authentication, its server will reject the request (typically with HTTP 401); configure `api_key` or `env_key` for that model. Redirecting a built-in model to an explicit non-xAI `base_url` or `api_base_url` also makes it custom for credential resolution.
 
 When more than one login flow is configured, Grok populates the session token from the first available source, highest to lowest:
 

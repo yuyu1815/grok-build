@@ -724,16 +724,9 @@ pub(crate) fn fetch_models_blocking(
     let mut request = client.get(&source.url);
     match source.auth {
         EndpointAuth::ApiKey => {
-            let api_key = crate::agent::auth_method::read_xai_api_key_env()
-                .or_else(|_| {
-                    auth.map(|a| a.key.clone())
-                        .ok_or(std::env::VarError::NotPresent)
-                })
-                .map_err(|_| {
-                    BackendError::Auth(
-                        "No API key for custom models endpoint. Set XAI_API_KEY.".into(),
-                    )
-                })?;
+            let api_key = crate::agent::auth_method::read_xai_api_key_env().map_err(|_| {
+                BackendError::Auth("No API key for models endpoint. Set XAI_API_KEY.".into())
+            })?;
             request = request.header("Authorization", format!("Bearer {}", api_key));
         }
         EndpointAuth::Session => {
@@ -1775,6 +1768,21 @@ mod tests {
     /// Session/Deployment → cli-chat-proxy (Session auth), never the inference host;
     /// ApiKey → `xai_api_base_url` (ApiKey, public default when unset); a custom
     /// models endpoint → that URL verbatim.
+    #[test]
+    fn custom_models_endpoint_api_key_auth_never_falls_back_to_session() {
+        let mut endpoints = crate::agent::config::EndpointsConfig::default();
+        endpoints.models_base_url = Some("https://custom.example/v1".to_string());
+        let source = ListModelsEndpoint::from_endpoints(
+            &endpoints,
+            crate::agent::models::ModelFetchAuth::CustomEndpoint,
+        );
+        assert_eq!(source.auth, EndpointAuth::ApiKey);
+        assert_eq!(
+            crate::agent::models::ModelFetchAuth::CustomEndpoint.catalog_provider(),
+            crate::provider::ProviderId::Unknown
+        );
+    }
+
     #[test]
     #[serial_test::serial]
     fn models_fetch_endpoint_matches_auth_mode() {

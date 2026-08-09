@@ -900,12 +900,20 @@ async fn read_parent_sampling_config(
     if let Some(ref chat_state) = ctx.parent_chat_state {
         if let Some(cfg) = chat_state.get_sampling_config().await {
             let creds = chat_state.get_credentials().await;
+            let provider = crate::agent::config::find_model_by_id(
+                &ctx.models_manager.models(),
+                ctx.model_id.0.as_ref(),
+            )
+            .map(|entry| entry.info().provider)
+            .unwrap_or(crate::provider::ProviderId::Unknown);
             let mut extra_headers = cfg.extra_headers;
-            crate::agent::config::inject_url_derived_headers(
-                &mut extra_headers,
-                creds.alpha_test_key.as_deref(),
-                &cfg.base_url,
-            );
+            if provider == crate::provider::ProviderId::Xai {
+                crate::agent::config::inject_url_derived_headers(
+                    &mut extra_headers,
+                    creds.alpha_test_key.as_deref(),
+                    &cfg.base_url,
+                );
+            }
             let auth_scheme = crate::agent::config::try_resolve_model_credentials(&cfg.model, None)
                 .map(|r| r.auth_scheme)
                 .unwrap_or_default();
@@ -928,7 +936,11 @@ async fn read_parent_sampling_config(
                 idle_timeout_secs: None,
                 client_identifier: ctx.sampling_config.client_identifier.clone(),
                 deployment_id: ctx.sampling_config.deployment_id.clone(),
-                user_id: ctx.sampling_config.user_id.clone(),
+                user_id: if provider == crate::provider::ProviderId::Xai {
+                    ctx.sampling_config.user_id.clone()
+                } else {
+                    None
+                },
                 origin_client: ctx.sampling_config.origin_client.clone(),
                 attribution_callback: ctx.attribution_callback.clone(),
                 bearer_resolver: None,

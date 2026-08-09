@@ -572,7 +572,7 @@ pub(crate) struct SessionActor {
     /// Memoized per-model auth facts, keyed by model id — see
     /// [`SessionActor::model_auth_facts`].
     pub(crate) model_auth_facts:
-        std::cell::RefCell<Option<(String, crate::agent::config::ModelAuthFacts)>>,
+        std::cell::RefCell<Option<(String, String, crate::agent::config::ModelAuthFacts)>>,
     /// 401-attribution callback. Joined with the bearer the
     /// sampler sends on the wire to emit an `auth 401 attribution`
     /// event at each of the six `OaiCompatClient` 401 arms in

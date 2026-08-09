@@ -3,6 +3,29 @@
 //! Inherent [`MvpAgent`] helpers (MCP/clients/gateway, settings/models, session ops, spawn).
 //! Co-located child of `mvp_agent` (`use super::*`).
 use super::*;
+
+pub(super) fn resolved_summary_config_or_primary(
+    resolved: Option<crate::agent::config::ResolvedAuxSamplingConfig>,
+    primary: &SamplingConfig,
+) -> SamplingConfig {
+    match resolved {
+        Some(resolved) => {
+            let mut cfg = resolved.config;
+            cfg.client_identifier = primary.client_identifier.clone();
+            cfg.attribution_callback = primary.attribution_callback.clone();
+            if resolved.provider == crate::provider::ProviderId::Xai {
+                cfg.bearer_resolver = primary.bearer_resolver.clone();
+            }
+            cfg.max_retries = primary.max_retries;
+            cfg
+        }
+        // Missing helpers on a custom catalog fall back to the active sampler
+        // unchanged. Rewriting only the model slug would route an unknown
+        // helper name to the primary custom endpoint.
+        None => primary.clone(),
+    }
+}
+
 impl MvpAgent {
     pub(super) fn resolve_image_description_model(&self) -> String {
         self.cfg
@@ -36,28 +59,18 @@ impl MvpAgent {
                 cfg.client_version.clone(),
             )
         };
-        let config = match crate::agent::config::resolve_aux_model_sampling_config(
-            &slug,
-            &models,
-            &endpoints,
-            session_key.as_deref(),
-            disable_api_key_auth,
-            alpha_test_key,
-            client_version,
-        ) {
-            Some(mut cfg) => {
-                cfg.client_identifier = primary.client_identifier.clone();
-                cfg.attribution_callback = primary.attribution_callback.clone();
-                cfg.bearer_resolver = primary.bearer_resolver.clone();
-                cfg.max_retries = primary.max_retries;
-                cfg
-            }
-            None => {
-                let mut fallback = primary.clone();
-                fallback.model = slug;
-                fallback
-            }
-        };
+        let config = resolved_summary_config_or_primary(
+            crate::agent::config::resolve_aux_model_sampling_config(
+                &slug,
+                &models,
+                &endpoints,
+                session_key.as_deref(),
+                disable_api_key_auth,
+                alpha_test_key,
+                client_version,
+            ),
+            primary,
+        );
         let model = config.model.clone();
         let client = OaiCompatClient::new(config).map_err(map_sampling_err_to_acp)?;
         Ok((client, model))

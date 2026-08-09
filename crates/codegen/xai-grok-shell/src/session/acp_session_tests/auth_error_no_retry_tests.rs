@@ -831,17 +831,29 @@ async fn model_auth_facts_memo_serves_cached_status_and_keys_on_model() {
 
             actor.model_auth_facts.replace(Some((
                 "model-a".to_string(),
+                "https://example.invalid/v1".to_string(),
                 ModelAuthFacts {
                     byok: ModelByok::Byok,
                     auth_scheme: Default::default(),
+                    provider: crate::provider::ProviderId::Unknown,
                 },
             )));
 
             // Cache hit: served without consulting config.
-            assert_eq!(actor.model_auth_facts("model-a").byok, ModelByok::Byok);
+            assert_eq!(
+                actor
+                    .model_auth_facts("model-a", "https://example.invalid/v1")
+                    .byok,
+                ModelByok::Byok
+            );
 
             // Different model re-resolves rather than serving the stale `Byok`.
-            assert_ne!(actor.model_auth_facts("model-b").byok, ModelByok::Byok);
+            assert_ne!(
+                actor
+                    .model_auth_facts("model-b", "https://example.invalid/v1")
+                    .byok,
+                ModelByok::Byok
+            );
         })
         .await;
 }
@@ -864,17 +876,14 @@ async fn reconstruct_full_config_no_bearer_resolver_for_byok_model_on_session_me
             )
             .await;
 
-            let model = actor
-                .chat_state_handle
-                .get_sampling_config()
-                .await
-                .map(|c| c.model)
-                .unwrap_or_default();
+            let sampling = actor.chat_state_handle.get_sampling_config().await.unwrap();
             actor.model_auth_facts.replace(Some((
-                model,
+                sampling.model,
+                sampling.base_url,
                 ModelAuthFacts {
                     byok: ModelByok::Byok,
                     auth_scheme: Default::default(),
+                    provider: crate::provider::ProviderId::Unknown,
                 },
             )));
 
@@ -884,6 +893,53 @@ async fn reconstruct_full_config_no_bearer_resolver_for_byok_model_on_session_me
                 cfg.bearer_resolver.is_none(),
                 "a per-model BYOK model must keep its own key even on a session method"
             );
+        })
+        .await;
+}
+
+/// A custom endpoint without its own key is intentionally unauthenticated. Even
+/// if its URL resembles an xAI endpoint, provider identity prevents session
+/// bearer/header/user metadata from being reconstructed onto the request.
+#[tokio::test(flavor = "current_thread")]
+async fn reconstruct_full_config_keeps_keyless_custom_model_xai_metadata_free() {
+    use crate::agent::auth_method::ModelByok;
+    use crate::agent::config::ModelAuthFacts;
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (_dir, am) = auth_manager_with_valid_token("session-token");
+            let (actor, _rx) = make_actor_with_method_and_credentials(
+                Some(am),
+                "cached_token",
+                xai_chat_state::AuthType::ApiKey,
+                String::new(),
+            )
+            .await;
+            actor
+                .chat_state_handle
+                .update_credentials(xai_chat_state::Credentials {
+                    api_key: None,
+                    auth_type: xai_chat_state::AuthType::ApiKey,
+                    ..Default::default()
+                });
+
+            let sampling = actor.chat_state_handle.get_sampling_config().await.unwrap();
+            actor.model_auth_facts.replace(Some((
+                sampling.model,
+                sampling.base_url,
+                ModelAuthFacts {
+                    byok: ModelByok::NotByok,
+                    auth_scheme: Default::default(),
+                    provider: crate::provider::ProviderId::Unknown,
+                },
+            )));
+
+            let cfg = actor.reconstruct_full_config().await;
+            assert_eq!(cfg.api_key, None);
+            assert!(cfg.bearer_resolver.is_none());
+            assert!(cfg.user_id.is_none());
+            assert!(!cfg.extra_headers.contains_key("X-XAI-Token-Auth"));
+            assert!(!cfg.extra_headers.contains_key("x-authenticateresponse"));
         })
         .await;
 }
@@ -908,18 +964,16 @@ async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
             )
             .await;
 
-            let model = actor
-                .chat_state_handle
-                .get_sampling_config()
-                .await
-                .map(|c| c.model)
-                .unwrap_or_default();
+            let sampling = actor.chat_state_handle.get_sampling_config().await.unwrap();
+            let model = sampling.model.clone();
 
             actor.model_auth_facts.replace(Some((
                 model.clone(),
+                sampling.base_url,
                 ModelAuthFacts {
                     byok: ModelByok::NotByok,
                     auth_scheme: Default::default(),
+                    provider: crate::provider::ProviderId::Xai,
                 },
             )));
 

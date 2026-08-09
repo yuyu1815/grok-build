@@ -28,6 +28,13 @@ pub(crate) enum ModelFetchAuth {
 }
 
 impl ModelFetchAuth {
+    pub(crate) fn catalog_provider(self) -> crate::provider::ProviderId {
+        match self {
+            Self::CustomEndpoint => crate::provider::ProviderId::Unknown,
+            Self::Session | Self::ApiKey | Self::Deployment => crate::provider::ProviderId::Xai,
+        }
+    }
+
     /// custom_endpoint > session > deployment > API key.
     ///
     /// A `deployment_key` outranks an ambient `XAI_API_KEY` so a stray env key
@@ -49,7 +56,8 @@ impl ModelFetchAuth {
 
     fn cache_auth_method(&self) -> CacheAuthMethod {
         match self {
-            Self::CustomEndpoint | Self::ApiKey => CacheAuthMethod::ApiKey,
+            Self::CustomEndpoint => CacheAuthMethod::CustomEndpoint,
+            Self::ApiKey => CacheAuthMethod::ApiKey,
             Self::Session => CacheAuthMethod::Session,
             Self::Deployment => CacheAuthMethod::Deployment,
         }
@@ -62,6 +70,19 @@ enum CacheAuthMethod {
     Session,
     ApiKey,
     Deployment,
+    CustomEndpoint,
+}
+
+/// Stable disk-cache identity for the complete catalog routing shape. The
+/// models-list URL alone is insufficient because catalog entries may omit
+/// `base_url` and inherit the configured inference endpoint.
+fn models_cache_origin(endpoints: &config::EndpointsConfig, fetch_auth: ModelFetchAuth) -> String {
+    serde_json::json!({
+        "models_list_url": crate::remote::models_list_url(endpoints, fetch_auth),
+        "inference_base_url": endpoints.resolve_inference_base_url(),
+        "catalog_provider": fetch_auth.catalog_provider().display_name(),
+    })
+    .to_string()
 }
 
 pub(crate) fn task_model_error_for_catalog(
@@ -230,7 +251,7 @@ impl ModelsManager {
             cache
                 .load_fresh(
                     &fetch_auth.cache_auth_method(),
-                    &crate::remote::models_list_url(&cfg.endpoints, fetch_auth),
+                    &models_cache_origin(&cfg.endpoints, fetch_auth),
                 )
                 .map(|c| c.models)
         });
@@ -394,6 +415,43 @@ impl ModelsManager {
 
     pub fn current_model_id(&self) -> acp::ModelId {
         self.inner.current_model_id.read().clone()
+    }
+
+    /// Resolve auth-sensitive model identity from the routed sampling target.
+    /// Exactly one catalog entry must match both routing slug and base URL.
+    /// Any collision fails closed rather than guessing which provider owns the
+    /// request.
+    pub fn resolve_routed_entry(&self, routing_model: &str, base_url: &str) -> Option<ModelEntry> {
+        let models = self.inner.models.read();
+        let mut matches = models
+            .values()
+            .filter(|entry| entry.info.model == routing_model && entry.info.base_url == base_url);
+        let entry = matches.next()?.clone();
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(entry)
+    }
+
+    pub fn resolve_routed_auth_facts(
+        &self,
+        routing_model: &str,
+        base_url: &str,
+    ) -> Option<config::ModelAuthFacts> {
+        if let Some(entry) = self.resolve_routed_entry(routing_model, base_url) {
+            return Some(config::model_auth_facts_for_entry(&entry));
+        }
+        if self.inner.models.read().is_empty() {
+            return None;
+        }
+        // A populated live catalog that cannot identify exactly one routed
+        // entry is an ambiguity, not an invitation to re-guess by slug from
+        // disk config. Treat it as keyless custom so bearer refresh is closed.
+        Some(config::ModelAuthFacts {
+            byok: crate::agent::auth_method::ModelByok::NotByok,
+            auth_scheme: Default::default(),
+            provider: crate::provider::ProviderId::Unknown,
+        })
     }
 
     pub fn set_current_model_id(&self, id: acp::ModelId) {
@@ -967,7 +1025,7 @@ impl ModelsManager {
     fn cache_origin(&self) -> String {
         let endpoints = self.inner.cfg.read().endpoints.clone();
         let fetch_auth = *self.inner.fetch_auth.read();
-        crate::remote::models_list_url(&endpoints, fetch_auth)
+        models_cache_origin(&endpoints, fetch_auth)
     }
 
     fn try_load_cache(&self) -> bool {
@@ -1200,10 +1258,13 @@ pub enum RefreshStrategy {
 // ── Disk cache ──────────────────────────────────────────────────────────────
 
 const MODELS_CACHE_FILE: &str = "models_cache.json";
+const MODELS_CACHE_SCHEMA_VERSION: u32 = 3;
 const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ModelsCache {
+    #[serde(default)]
+    schema_version: u32,
     fetched_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     grok_version: Option<String>,
@@ -1261,6 +1322,14 @@ impl ModelsCacheManager {
     ) -> Option<CacheResult> {
         let data = std::fs::read(&self.path).ok()?;
         let cache: ModelsCache = serde_json::from_slice(&data).ok()?;
+        if cache.schema_version != MODELS_CACHE_SCHEMA_VERSION {
+            tracing::debug!(
+                cached = cache.schema_version,
+                expected = MODELS_CACHE_SCHEMA_VERSION,
+                "models cache schema mismatch"
+            );
+            return None;
+        }
         if cache.grok_version.as_deref() != Some(xai_grok_version::VERSION) {
             tracing::debug!("models cache version mismatch");
             return None;
@@ -1297,6 +1366,7 @@ impl ModelsCacheManager {
         origin: &str,
     ) {
         let cache = ModelsCache {
+            schema_version: MODELS_CACHE_SCHEMA_VERSION,
             fetched_at: Utc::now(),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -1379,14 +1449,19 @@ impl ModelsCacheManager {
 fn build_prefetched_map(
     models: Vec<config::ModelEntryConfig>,
     api_base_url_override: Option<String>,
+    provider: crate::provider::ProviderId,
 ) -> IndexMap<String, ModelEntry> {
     let mut map: IndexMap<String, ModelEntry> = IndexMap::with_capacity(models.len());
     for m in models {
         let key = m.id.clone().unwrap_or_else(|| m.model.clone());
-        let info = config::ModelInfo::from_config(&m);
+        let mut info = config::ModelInfo::from_config(&m);
+        info.provider = provider;
         let entry = ModelEntry {
             info,
             api_key: None,
+            // Catalog-fetch credentials are never inference credentials. In
+            // particular, a custom catalog may return a cross-origin base URL;
+            // only an explicit per-model config override may attach a key.
             env_key: None,
             api_base_url: m.api_base_url.clone().or(api_base_url_override.clone()),
         };
@@ -1447,8 +1522,9 @@ fn prefetch_models_blocking_gated(
     remote_fetch_enabled: bool,
 ) -> Option<IndexMap<String, ModelEntry>> {
     let cache_auth = fetch_auth.cache_auth_method();
-    // Same URL the fetch below will hit — the cache is only valid for it.
-    let cache_origin = crate::remote::models_list_url(endpoints, fetch_auth);
+    // Include both catalog and inference routing identity: entries that omit a
+    // base URL inherit the configured inference endpoint.
+    let cache_origin = models_cache_origin(endpoints, fetch_auth);
     let cache = ModelsCacheManager::new();
     if let Some(cached) = cache.load_fresh(&cache_auth, &cache_origin) {
         return Some(cached.models);
@@ -1469,7 +1545,8 @@ fn prefetch_models_blocking_gated(
                 ModelFetchAuth::ApiKey => Some(endpoints.xai_api_base_url.clone()),
                 _ => None,
             };
-            let map = build_prefetched_map(models, api_base_url_override);
+            let map =
+                build_prefetched_map(models, api_base_url_override, fetch_auth.catalog_provider());
 
             // NOTE: inheriting context_window / agent_type / api_backend
             // from hardcoded defaults is handled centrally in
@@ -2135,6 +2212,54 @@ mod tests {
             mgr.inner.etag.read().as_deref(),
             Some("\"abc123\""),
             "etag should remain unchanged when same"
+        );
+    }
+
+    #[test]
+    fn routed_auth_lookup_fails_closed_on_slug_and_url_collision() {
+        let mgr = test_manager();
+        let mut xai = make_prefetched(&["shared"]).shift_remove("shared").unwrap();
+        xai.info.provider = crate::provider::ProviderId::Xai;
+        xai.info.model = "same-slug".to_string();
+        xai.info.base_url = "https://same.example/v1".to_string();
+        let mut custom = xai.clone();
+        custom.info.provider = crate::provider::ProviderId::Unknown;
+        mgr.insert_test_entry("xai-key", xai);
+        mgr.insert_test_entry("custom-key", custom);
+        let facts = mgr
+            .resolve_routed_auth_facts("same-slug", "https://same.example/v1")
+            .unwrap();
+        assert_eq!(facts.provider, crate::provider::ProviderId::Unknown);
+        assert_eq!(facts.byok, crate::agent::auth_method::ModelByok::NotByok);
+    }
+
+    #[test]
+    fn routed_auth_lookup_resolves_remote_only_xai_and_custom_catalog_entries() {
+        let mgr = test_manager();
+        let mut xai = make_prefetched(&["remote-xai"])
+            .shift_remove("remote-xai")
+            .unwrap();
+        xai.info.provider = crate::provider::ProviderId::Xai;
+        let xai_url = xai.info.base_url.clone();
+        mgr.insert_test_entry("remote-xai", xai);
+        assert_eq!(
+            mgr.resolve_routed_auth_facts("remote-xai", &xai_url)
+                .unwrap()
+                .provider,
+            crate::provider::ProviderId::Xai
+        );
+
+        let mut custom = make_prefetched(&["remote-custom"])
+            .shift_remove("remote-custom")
+            .unwrap();
+        custom.info.provider = crate::provider::ProviderId::Unknown;
+        custom.info.base_url = "https://custom.example/v1".to_string();
+        mgr.insert_test_entry("remote-custom", custom);
+        assert_eq!(
+            mgr.resolve_routed_auth_facts("remote-custom", "https://custom.example/v1")
+                .unwrap()
+                .provider,
+            crate::provider::ProviderId::Unknown
         );
     }
 
@@ -2866,6 +2991,7 @@ mod tests {
         let cache = test_cache_manager(tmp.path());
         let auth_method = mgr.inner.fetch_auth.read().cache_auth_method();
         let stale = ModelsCache {
+            schema_version: MODELS_CACHE_SCHEMA_VERSION,
             fetched_at: Utc::now() - ChronoDuration::seconds(3600),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -2907,6 +3033,57 @@ mod tests {
         assert!(!mgr.models().contains_key("grok-other-auth"));
     }
 
+    #[test]
+    fn cache_identity_separates_standard_api_key_from_custom_endpoint() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = test_cache_manager(tmp.path());
+        let endpoints = config::EndpointsConfig::default();
+        let api_key_origin = models_cache_origin(&endpoints, ModelFetchAuth::ApiKey);
+        cache.persist(
+            &make_prefetched(&["api-key-catalog"]),
+            None,
+            CacheAuthMethod::ApiKey,
+            &api_key_origin,
+        );
+        assert!(
+            cache
+                .load_fresh(&CacheAuthMethod::CustomEndpoint, &api_key_origin)
+                .is_none(),
+            "standard API-key cache must not be reused in custom endpoint mode"
+        );
+    }
+
+    #[test]
+    fn cache_identity_includes_inference_base_url() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = test_cache_manager(tmp.path());
+        let mut first = config::EndpointsConfig::default();
+        first.models_list_url = Some("https://catalog.example/v1/models".to_string());
+        first.models_base_url = Some("https://inference-a.example/v1".to_string());
+        let mut second = first.clone();
+        second.models_base_url = Some("https://inference-b.example/v1".to_string());
+        let first_origin = models_cache_origin(&first, ModelFetchAuth::CustomEndpoint);
+        let second_origin = models_cache_origin(&second, ModelFetchAuth::CustomEndpoint);
+
+        assert_eq!(
+            first.resolve_models_list_url(),
+            second.resolve_models_list_url()
+        );
+        assert_ne!(first_origin, second_origin);
+        cache.persist(
+            &make_prefetched(&["first-inference-origin"]),
+            None,
+            CacheAuthMethod::CustomEndpoint,
+            &first_origin,
+        );
+        assert!(
+            cache
+                .load_fresh(&CacheAuthMethod::CustomEndpoint, &second_origin)
+                .is_none(),
+            "same models-list URL with a different inference base URL must miss cache"
+        );
+    }
+
     /// A cache persisted by a process pointed at a *different backend* (env
     /// override, another deployment, a test's mock server) must not poison
     /// this manager's catalog: cached entries embed absolute `base_url`s from
@@ -2942,6 +3119,7 @@ mod tests {
         let cache = test_cache_manager(tmp.path());
         let auth_method = mgr.inner.fetch_auth.read().cache_auth_method();
         let legacy = ModelsCache {
+            schema_version: MODELS_CACHE_SCHEMA_VERSION,
             fetched_at: Utc::now(),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
@@ -2954,6 +3132,27 @@ mod tests {
         mgr.reload_from_cache_manager(&cache);
 
         assert!(!mgr.models().contains_key("grok-legacy"));
+    }
+
+    #[test]
+    fn load_fresh_rejects_pre_provider_schema_cache() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let cache = test_cache_manager(tmp.path());
+        let legacy = ModelsCache {
+            schema_version: 0,
+            fetched_at: Utc::now(),
+            grok_version: Some(xai_grok_version::VERSION.to_string()),
+            auth_method: Some(CacheAuthMethod::Session),
+            origin: Some("https://example.test/models".into()),
+            etag: None,
+            models: make_prefetched(&["legacy"]),
+        };
+        cache.atomic_write(&legacy);
+        assert!(
+            cache
+                .load_fresh(&CacheAuthMethod::Session, "https://example.test/models")
+                .is_none()
+        );
     }
 
     // ── clear() resets has_fetched_real_catalog ──────────────────────
@@ -3404,7 +3603,7 @@ mod tests {
                 Some("Grok Fast"),
             ),
         ];
-        let map = build_prefetched_map(entries, None);
+        let map = build_prefetched_map(entries, None, crate::provider::ProviderId::Xai);
 
         assert_eq!(map.len(), 3, "all three entries should survive");
         assert!(map.contains_key("auto"));
@@ -3415,6 +3614,28 @@ mod tests {
             "auto entry should still route to grok-build"
         );
         assert_eq!(map["grok-build"].info.model, "grok-build");
+        assert!(
+            map.values()
+                .all(|entry| entry.info.provider == crate::provider::ProviderId::Xai),
+            "remote catalog entries must be classified as xAI"
+        );
+    }
+
+    #[test]
+    fn custom_catalog_entries_remain_provider_unknown_even_with_arbitrary_base_urls() {
+        let mut entry = make_entry_config("remote-custom", Some("Remote Custom"));
+        entry.base_url = "https://attacker.example/v1".to_string();
+        let map = build_prefetched_map(
+            vec![entry],
+            None,
+            ModelFetchAuth::CustomEndpoint.catalog_provider(),
+        );
+        let model = &map["remote-custom"];
+        assert_eq!(model.info.provider, crate::provider::ProviderId::Unknown);
+        assert!(model.env_key.is_none());
+        let creds = config::resolve_credentials(model, Some("xai-session-secret"));
+        assert_eq!(creds.api_key, None);
+        assert_eq!(creds.base_url, "https://attacker.example/v1");
     }
 
     /// No id field — falls back to model slug as key.
@@ -3424,7 +3645,7 @@ mod tests {
             make_entry_config("model-a", Some("Model A")),
             make_entry_config("model-b", Some("Model B")),
         ];
-        let map = build_prefetched_map(entries, None);
+        let map = build_prefetched_map(entries, None, crate::provider::ProviderId::Xai);
 
         assert_eq!(map.len(), 2);
         assert!(map.contains_key("model-a"));
@@ -3438,7 +3659,7 @@ mod tests {
             make_entry_config_with_id(Some("grok-build"), "grok-build", Some("First")),
             make_entry_config_with_id(Some("grok-build"), "grok-build", Some("Second")),
         ];
-        let map = build_prefetched_map(entries, None);
+        let map = build_prefetched_map(entries, None, crate::provider::ProviderId::Xai);
 
         assert_eq!(map.len(), 1, "duplicate id: second overwrites first");
         assert_eq!(map["grok-build"].info.name.as_deref(), Some("Second"));
@@ -3471,7 +3692,7 @@ mod tests {
             "grok-build",
             Some("Grok Build"),
         )];
-        let map = build_prefetched_map(entries, None);
+        let map = build_prefetched_map(entries, None, crate::provider::ProviderId::Xai);
 
         assert_eq!(map.len(), 1);
         assert!(map.contains_key("grok-build"));

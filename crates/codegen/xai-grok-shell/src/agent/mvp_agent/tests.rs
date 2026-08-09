@@ -4425,3 +4425,17 @@ mod soft_default_settings_emit {
             .await;
     }
 }
+
+#[test]
+fn missing_summary_helper_preserves_active_model_fallback() {
+    let primary = xai_grok_sampler::SamplerConfig {
+        model: "active-custom-model".to_string(),
+        base_url: "https://custom.example/v1".to_string(),
+        api_key: None,
+        ..Default::default()
+    };
+    let fallback = super::resolved_summary_config_or_primary(None, &primary);
+    assert_eq!(fallback.model, "active-custom-model");
+    assert_eq!(fallback.base_url, "https://custom.example/v1");
+    assert_eq!(fallback.api_key, None);
+}

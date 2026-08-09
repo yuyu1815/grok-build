@@ -32,9 +32,9 @@ pub(super) fn is_auth_tool_error(err: &xai_tool_runtime::ToolError) -> bool {
 struct SessionTokenAuthGate {
     is_session_based: bool,
     model_byok: crate::agent::auth_method::ModelByok,
-    /// Whether the request targets a first-party host. Lets an `Unknown`
-    /// BYOK status still refresh against cli-chat-proxy / `*.x.ai` without
-    /// risking a session-token leak to a third-party BYOK endpoint.
+    provider: crate::provider::ProviderId,
+    /// Whether the request targets a first-party host. This is only a
+    /// conservative fallback when provider identity could not be resolved.
     endpoint_is_first_party: bool,
 }
 impl SessionTokenAuthGate {
@@ -43,16 +43,23 @@ impl SessionTokenAuthGate {
     fn new(
         auth_method_id: Option<&acp::AuthMethodId>,
         model_byok: crate::agent::auth_method::ModelByok,
+        provider: crate::provider::ProviderId,
         base_url: &str,
     ) -> Self {
         Self {
             is_session_based: auth_method_id
                 .is_some_and(crate::agent::auth_method::is_session_based_method),
             model_byok,
+            provider,
             endpoint_is_first_party: crate::util::is_first_party_xai_url(base_url),
         }
     }
     fn active(self) -> bool {
+        if self.provider != crate::provider::ProviderId::Xai
+            && self.model_byok != crate::agent::auth_method::ModelByok::Unknown
+        {
+            return false;
+        }
         crate::agent::auth_method::session_token_auth_gate(
             self.is_session_based,
             self.model_byok,
@@ -159,24 +166,35 @@ impl SessionActor {
     /// currently-selected model into a per-model BYOK model without changing
     /// `model_id`, keying on `model_id` alone is insufficient — each
     /// model/credential chokepoint must clear this memo (`replace(None)`).
-    pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {
+    pub(super) fn model_auth_facts(
+        &self,
+        model_id: &str,
+        base_url: &str,
+    ) -> crate::agent::config::ModelAuthFacts {
         use crate::agent::auth_method::ModelByok;
-        if let Some((cached_id, facts)) = self.model_auth_facts.borrow().as_ref()
+        if let Some((cached_id, cached_base_url, facts)) = self.model_auth_facts.borrow().as_ref()
             && cached_id == model_id
+            && cached_base_url == base_url
             && facts.byok != ModelByok::Unknown
         {
             return *facts;
         }
-        let fresh = crate::agent::config::resolve_model_auth_facts(model_id);
+        let fresh = self
+            .models_manager
+            .resolve_routed_auth_facts(model_id, base_url)
+            .unwrap_or_else(|| crate::agent::config::resolve_model_auth_facts(model_id));
         if fresh.byok == ModelByok::Unknown {
-            if let Some((cached_id, facts)) = self.model_auth_facts.borrow().as_ref()
+            if let Some((cached_id, cached_base_url, facts)) =
+                self.model_auth_facts.borrow().as_ref()
                 && cached_id == model_id
+                && cached_base_url == base_url
             {
                 return *facts;
             }
             return fresh;
         }
-        *self.model_auth_facts.borrow_mut() = Some((model_id.to_string(), fresh));
+        *self.model_auth_facts.borrow_mut() =
+            Some((model_id.to_string(), base_url.to_string(), fresh));
         fresh
     }
     /// Gate inputs for `model_id` routed to `base_url`. See
@@ -184,9 +202,9 @@ impl SessionActor {
     /// (`base_url` keeps an `Unknown` BYOK status refreshable only
     /// against first-party xAI hosts).
     fn auth_gate(&self, model_id: &str, base_url: &str) -> SessionTokenAuthGate {
-        let byok = self.model_auth_facts(model_id).byok;
+        let facts = self.model_auth_facts(model_id, base_url);
         let auth_method = self.auth_method_id.load();
-        SessionTokenAuthGate::new(auth_method.as_deref(), byok, base_url)
+        SessionTokenAuthGate::new(auth_method.as_deref(), facts.byok, facts.provider, base_url)
     }
     /// Emit a unified-log breadcrumb whenever the session-token refresh gate is
     /// evaluated with an **`Unknown`** per-model BYOK status on a session-based
@@ -204,10 +222,10 @@ impl SessionActor {
         }
         let refresh_active = gate.active();
         let ctx = serde_json::json!(
-            { "site" : site, "model_byok" : gate.model_byok.as_str(), "is_session_based"
-            : gate.is_session_based, "endpoint_is_first_party" : gate
-            .endpoint_is_first_party, "refresh_active" : refresh_active, "base_url" :
-            base_url, }
+            { "site" : site, "model_byok" : gate.model_byok.as_str(), "provider" :
+            gate.provider.display_name(), "is_session_based" : gate.is_session_based,
+            "endpoint_is_first_party" : gate.endpoint_is_first_party, "refresh_active" :
+            refresh_active, "base_url" : base_url, }
         );
         let sid = Some(self.session_info.id.0.as_ref());
         if refresh_active {
@@ -270,19 +288,25 @@ impl SessionActor {
                 stream_tool_calls: None,
             });
         let creds = self.chat_state_handle.get_credentials().await;
-        let model_facts = self.model_auth_facts(cfg.model.as_str());
+        let model_facts = self.model_auth_facts(cfg.model.as_str(), &cfg.base_url);
         let auth_method = self.auth_method_id.load();
-        let gate =
-            SessionTokenAuthGate::new(auth_method.as_deref(), model_facts.byok, &cfg.base_url);
+        let gate = SessionTokenAuthGate::new(
+            auth_method.as_deref(),
+            model_facts.byok,
+            model_facts.provider,
+            &cfg.base_url,
+        );
         let use_bearer_resolver = gate.active();
         self.log_auth_gate_unknown("reconstruct_full_config", gate, &cfg.base_url);
         let auth_scheme = model_facts.auth_scheme;
         let mut extra_headers = cfg.extra_headers;
-        crate::agent::config::inject_url_derived_headers(
-            &mut extra_headers,
-            creds.alpha_test_key.as_deref(),
-            &cfg.base_url,
-        );
+        if model_facts.provider == crate::provider::ProviderId::Xai {
+            crate::agent::config::inject_url_derived_headers(
+                &mut extra_headers,
+                creds.alpha_test_key.as_deref(),
+                &cfg.base_url,
+            );
+        }
         let compaction_at_tokens = self.compaction_at_tokens.get();
         let compactions_remaining = self.compactions_remaining.get();
         if compactions_remaining.is_some() || compaction_at_tokens.is_some() {
@@ -328,12 +352,15 @@ impl SessionActor {
             deployment_id: crate::managed_config::resolve_deployment_id(
                 crate::managed_config::resolve_deployment_key().as_deref(),
             ),
-            user_id: self
-                .auth_manager
-                .as_ref()
-                .and_then(|am| am.current_or_expired())
-                .filter(|a| a.is_xai_auth())
-                .map(|a| a.user_id),
+            user_id: if model_facts.provider == crate::provider::ProviderId::Xai {
+                self.auth_manager
+                    .as_ref()
+                    .and_then(|am| am.current_or_expired())
+                    .filter(|a| a.is_xai_auth())
+                    .map(|a| a.user_id)
+            } else {
+                None
+            },
             origin_client: self.origin_client.clone(),
             attribution_callback: self.attribution_callback.clone(),
             bearer_resolver: if use_bearer_resolver {
@@ -472,7 +499,7 @@ impl SessionActor {
     pub(super) async fn resolve_aux_sampler_config(
         &self,
         slug: &str,
-    ) -> Option<xai_grok_sampler::SamplerConfig> {
+    ) -> Option<(xai_grok_sampler::SamplerConfig, crate::provider::ProviderId)> {
         let creds = self.chat_state_handle.get_credentials().await;
         let session_key = self
             .auth_manager
@@ -494,6 +521,7 @@ impl SessionActor {
             creds.alpha_test_key.clone(),
             creds.client_version.clone(),
         )
+        .map(|resolved| (resolved.config, resolved.provider))
     }
     /// Resolve a dedicated sampler for the Auto-mode classifier model `slug`,
     /// stamping session-local auth/attribution like image-describe (which relies
@@ -505,12 +533,17 @@ impl SessionActor {
         slug: &str,
     ) -> Option<(xai_grok_sampler::SamplingClient, String)> {
         let active_session_config = self.reconstruct_full_config().await;
-        let mut cfg = self.resolve_aux_sampler_config(slug).await?;
+        let (mut cfg, provider) = self.resolve_aux_sampler_config(slug).await?;
         crate::agent::config::stamp_session_local_sampler_fields(
             &mut cfg,
             &active_session_config,
             self.client_identifier.clone(),
             Some(self.max_retries),
+        );
+        crate::agent::config::stamp_xai_aux_bearer_resolver(
+            &mut cfg,
+            provider,
+            &active_session_config,
         );
         let model = cfg.model.clone();
         let client = xai_grok_sampler::SamplingClient::new(cfg)
@@ -655,8 +688,9 @@ impl SessionActor {
             if !eligible {
                 tracing::warn!(
                     session_id = % self.session_info.id.0, is_session_based = gate
-                    .is_session_based, model_byok = gate.model_byok.as_str(),
-                    endpoint_is_first_party = gate.endpoint_is_first_party,
+                    .is_session_based, model_byok = gate.model_byok.as_str(), provider =
+                    gate.provider.display_name(), endpoint_is_first_party = gate
+                    .endpoint_is_first_party,
                     "auth recovery: sampler 401 not refreshable (api-key auth) — surfacing 401",
                 );
                 xai_grok_telemetry::unified_log::warn(
@@ -665,8 +699,9 @@ impl SessionActor {
                     Some(serde_json::json!(
                         { "kind" : error.kind.as_str(), "status_code" : error
                         .status_code, "is_session_based" : gate.is_session_based,
-                        "model_byok" : gate.model_byok.as_str(),
-                        "endpoint_is_first_party" : gate.endpoint_is_first_party, }
+                        "model_byok" : gate.model_byok.as_str(), "provider" : gate
+                        .provider.display_name(), "endpoint_is_first_party" : gate
+                        .endpoint_is_first_party, }
                     )),
                 );
             }
@@ -819,6 +854,24 @@ impl SessionActor {
                     current_model
                 ));
                 msg.push_str("\n  Switch models with /model or start a new session.");
+            }
+            let current_base_url = self
+                .chat_state_handle
+                .get_sampling_config()
+                .await
+                .map(|c| c.base_url)
+                .unwrap_or_default();
+            if is_auth_401
+                && self
+                    .model_auth_facts(&current_model, &current_base_url)
+                    .provider
+                    == crate::provider::ProviderId::Unknown
+            {
+                msg.push_str(
+                    "\n\n  This custom endpoint rejected the request. Configure `api_key` or \
+                     `env_key` for this model if the endpoint requires authentication; \
+                     keyless local endpoints are also supported.",
+                );
             }
             msg
         } else {

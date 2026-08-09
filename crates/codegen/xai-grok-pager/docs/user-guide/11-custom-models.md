@@ -91,12 +91,15 @@ extra_headers = { "x-api-key" = "sk-..." } # Extra request headers, sent verbati
 
 ### Credential Resolution
 
-Grok resolves the API key in this order:
+Credential resolution is provider-aware:
 
-1. The `api_key` field in the model config
-2. The environment variable(s) named by `env_key` — a single string or an array of names. The first set, non-empty value wins (for example `env_key = ["ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN"]` for SSH `LC_*` forwarding)
-3. Your signed-in session token (from `grok login`), for a model with no `api_key`/`env_key` of its own
-4. The `XAI_API_KEY` environment variable (global fallback; Grok also accepts `GROK_CODE_XAI_API_KEY` for backward compatibility)
+- **xAI/Grok catalog models:** model `api_key` > the first set, non-empty environment variable named by `env_key` > signed-in session token > `XAI_API_KEY` (including the backward-compatible `GROK_CODE_XAI_API_KEY`).
+- **User-defined custom models:** model `api_key` > the first set, non-empty environment variable named by `env_key` > no credential (`None`). The signed-in xAI session token and unrelated global keys are not forwarded to individually configured custom endpoints.
+- **Custom remote catalogs** configured through `GROK_MODELS_BASE_URL`/`GROK_MODELS_LIST_URL`: `XAI_API_KEY` authenticates the catalog fetch only. Returned models remain custom and keyless by default, including when the catalog advertises a different `base_url`. Configure a per-model `[model.*] api_key` or `env_key` override when inference requires authentication. The signed-in xAI session token is never substituted.
+
+`env_key` can be a single string or an array (for example `env_key = ["ANTHROPIC_AUTH_TOKEN", "LC_ANTHROPIC_AUTH_TOKEN"]` for SSH `LC_*` forwarding).
+
+A keyless custom model is valid and is sent without an `Authorization` credential, which supports Ollama and other local endpoints. If the endpoint requires authentication, the server will reject the request (typically HTTP 401); add `api_key` or `env_key` to that model.
 
 ### Context Window
 
@@ -247,7 +250,7 @@ Point Grok at a custom OpenAI-compatible `/v1/models` endpoint instead of the de
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GROK_MODELS_BASE_URL` | Yes | Base URL for inference. Grok fetches the model list from `{base_url}/models`. |
-| `XAI_API_KEY` | Yes | API key sent as `Authorization: Bearer`. Grok also accepts `GROK_CODE_XAI_API_KEY`. |
+| `XAI_API_KEY` | Yes | API key sent as `Authorization: Bearer` for the catalog fetch only. Grok also accepts `GROK_CODE_XAI_API_KEY`. |
 | `GROK_MODELS_LIST_URL` | No | Override the model-list URL when it differs from `{base_url}/models`. |
 
 ### Setup
@@ -273,7 +276,7 @@ When you use `[endpoints]` with partial model overrides, Grok inherits the `base
 
 ### Auth Behavior
 
-When you set `models_base_url`, Grok uses API key auth (`Authorization: Bearer`) instead of session auth. You do not need `grok login` -- the API key is enough.
+When you set `models_base_url` or `models_list_url`, Grok treats the fetched catalog as custom. The catalog fetch uses `XAI_API_KEY` and never falls back to your signed-in xAI session token. Returned models receive no inference key automatically—even when their `base_url` matches the configured catalog endpoint—because the response can advertise an arbitrary origin. Add a per-model `[model.*] api_key` or `env_key` override when inference authentication is required. If an auxiliary helper model is absent from the custom catalog, Grok uses the active model unchanged or disables that helper instead of synthesizing an xAI-authenticated request to the custom inference URL.
 
 ---
 
