@@ -35,7 +35,6 @@ pub mod login;
 pub mod logout;
 pub mod loop_cmd;
 pub mod mcps;
-pub mod model;
 pub mod models;
 pub mod multiline;
 pub mod new;
@@ -89,7 +88,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(context::ContextCommand),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::minimal()),
         Arc::new(screen_mode_switch::ScreenModeSwitchCommand::fullscreen()),
-        Arc::new(model::ModelCommand),
         Arc::new(models::ModelsCommand),
         Arc::new(effort::EffortCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
@@ -147,23 +145,6 @@ mod tests {
     use crate::app::actions::Action;
     use crate::slash::command::{CommandExecCtx, CommandResult};
     use crate::slash::registry::CommandRegistry;
-    use agent_client_protocol as acp;
-    /// Build a ModelState with two models for testing.
-    fn sample_models() -> ModelState {
-        let mut models = ModelState::default();
-        let id_fast = acp::ModelId::new(Arc::from("grok-4.5"));
-        models.available.insert(
-            id_fast.clone(),
-            acp::ModelInfo::new(id_fast.clone(), "Grok 4.5".to_string()),
-        );
-        let id_pro = acp::ModelId::new(Arc::from("grok-4.3"));
-        models.available.insert(
-            id_pro.clone(),
-            acp::ModelInfo::new(id_pro.clone(), "Grok 4.3".to_string()),
-        );
-        models.current = Some(id_fast);
-        models
-    }
     static DEFAULT_BUNDLE_STATE: crate::app::bundle::BundleState =
         crate::app::bundle::BundleState {
             has_cache: false,
@@ -194,8 +175,9 @@ mod tests {
         assert!(reg.get("quit").is_some());
         assert!(reg.get("new").is_some());
         assert!(reg.get("compact").is_some());
-        assert!(reg.get("model").is_some());
         assert!(reg.get("models").is_some());
+        assert!(reg.get("model").is_none());
+        assert!(reg.get("m").is_none());
         assert!(reg.get("home").is_some());
         assert!(reg.get("view-plan").is_some());
         reg.set_available_tools(std::collections::HashSet::from([
@@ -233,7 +215,6 @@ mod tests {
         let reg = CommandRegistry::new(builtin_commands());
         assert!(reg.get("exit").is_some());
         assert!(reg.get("clear").is_some());
-        assert!(reg.get("m").is_some());
         assert!(reg.get("welcome").is_some());
         assert!(reg.get("show-plan").is_some());
         assert!(reg.get("plan-view").is_some());
@@ -311,114 +292,6 @@ mod tests {
             CommandResult::QueueCommand(text) => assert_eq!(text, "/compact"),
             other => panic!("expected QueueCommand, got {other:?}"),
         }
-    }
-    /// Bare `/model <name>` → `SetDefaultModel` (switch + persist).
-    /// `/model <name> <effort>` → `SwitchModel` (session-scoped).
-    #[test]
-    fn model_resolves_by_display_name() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "Grok 4.5");
-        match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
-            }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
-        }
-    }
-    #[test]
-    fn model_resolves_by_model_id() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "grok-4.3");
-        match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.3");
-            }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
-        }
-    }
-    #[test]
-    fn model_resolves_case_insensitively() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "grok 4.5");
-        match result {
-            CommandResult::Action(Action::SetDefaultModel(id)) => {
-                assert_eq!(id.0.as_ref(), "grok-4.5");
-            }
-            other => panic!("expected Action(SetDefaultModel), got {other:?}"),
-        }
-    }
-    #[test]
-    fn model_invalid_arg_returns_error() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "nonexistent-model");
-        match result {
-            CommandResult::Error(msg) => {
-                assert!(
-                    msg.contains("nonexistent-model"),
-                    "error should contain the arg"
-                );
-            }
-            other => panic!("expected Error, got {other:?}"),
-        }
-    }
-    #[test]
-    fn model_empty_arg_returns_error() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "");
-        assert!(matches!(result, CommandResult::Error(_)));
-    }
-    #[test]
-    fn model_whitespace_only_arg_returns_error() {
-        let models = sample_models();
-        let mut ctx = make_ctx(&models);
-        let cmd = model::ModelCommand;
-        let result = cmd.run(&mut ctx, "   ");
-        assert!(matches!(result, CommandResult::Error(_)));
-    }
-    #[test]
-    fn model_suggest_args_returns_available_models() {
-        let models = sample_models();
-        let ctx = crate::slash::command::AppCtx {
-            models: &models,
-            cwd: std::path::Path::new("."),
-            has_session_announcements: false,
-            screen_mode: crate::app::ScreenMode::Fullscreen,
-        };
-        let cmd = model::ModelCommand;
-        let items = cmd.suggest_args(&ctx, "").expect("should have suggestions");
-        assert_eq!(items.len(), 2);
-        assert!(
-            items
-                .iter()
-                .any(|i| i.display.starts_with("Grok 4.5") && i.insert_text == "Grok 4.5")
-        );
-        assert!(
-            items
-                .iter()
-                .any(|i| i.display == "Grok 4.3" && i.insert_text == "Grok 4.3")
-        );
-    }
-    #[test]
-    fn model_suggest_args_empty_models_returns_none() {
-        let models = ModelState::default();
-        let ctx = crate::slash::command::AppCtx {
-            models: &models,
-            cwd: std::path::Path::new("."),
-            has_session_announcements: false,
-            screen_mode: crate::app::ScreenMode::Fullscreen,
-        };
-        let cmd = model::ModelCommand;
-        assert!(cmd.suggest_args(&ctx, "").is_none());
     }
     #[test]
     fn remember_no_args_enters_remember_mode() {

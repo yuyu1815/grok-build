@@ -41,78 +41,6 @@ fn live_models_picker_action(
 }
 
 impl AgentView {
-    /// `suggest_args` falls back to model rows when the query is not in effort
-    /// phase. Model-phase reasoning rows use a trailing space in `insert_text`;
-    /// effort rows do not. Require a non-empty list with no trailing-space
-    /// rows before treating the picker as effort phase.
-    fn arg_items_look_like_effort_phase(items: &[crate::slash::command::ArgItem]) -> bool {
-        !items.is_empty()
-            && items
-                .iter()
-                .all(|item| !item.insert_text.ends_with(char::is_whitespace))
-    }
-
-    /// Step the model ArgPicker from effort phase back to the model list.
-    /// Returns `true` if the modal was updated (caller should not fully close).
-    fn try_arg_picker_step_back_from_effort(&mut self) -> bool {
-        Self::try_arg_picker_step_back_from_effort_modal(
-            &mut self.active_modal,
-            &self.prompt.slash_controller,
-            &self.session.models,
-            &self.session.cwd,
-        )
-    }
-
-    fn try_arg_picker_step_back_from_effort_modal(
-        active_modal: &mut Option<ActiveModal>,
-        slash_controller: &crate::slash::SlashController,
-        models: &crate::acp::model_state::ModelState,
-        cwd: &std::path::Path,
-    ) -> bool {
-        let Some(ActiveModal::ArgPicker {
-            command,
-            args_query,
-            ..
-        }) = active_modal.as_ref()
-        else {
-            return false;
-        };
-        if args_query.is_empty() || !matches!(command.as_str(), "model" | "m") {
-            return false;
-        }
-        let command = command.clone();
-        let Some(cmd) = slash_controller.registry().get(&command) else {
-            return false;
-        };
-        let ctx = crate::slash::command::AppCtx {
-            models,
-            cwd,
-            has_session_announcements: slash_controller.has_session_announcements(),
-            screen_mode: slash_controller.screen_mode(),
-        };
-        let Some(model_items) = cmd.suggest_args(&ctx, "") else {
-            return false;
-        };
-        if model_items.is_empty() {
-            return false;
-        }
-        if let Some(ActiveModal::ArgPicker {
-            args_query,
-            items,
-            original_items,
-            state,
-            ..
-        }) = active_modal.as_mut()
-        {
-            args_query.clear();
-            *items = model_items.clone();
-            *original_items = model_items;
-            // Model list is type-to-find: reopen input-default like the initial /model open.
-            *state = crate::views::picker::PickerState::input_active();
-        }
-        true
-    }
-
     /// Handle a key press while a modal dialog is active.
     ///
     /// Matches the pressed character against the modal's options and resolves
@@ -532,8 +460,7 @@ impl AgentView {
         }
     }
 
-    /// Arg picker input (separate from command palette to avoid borrow conflicts
-    /// when stepping back from the model effort phase via slash registry + session).
+    /// Arg picker input (separate from command palette to avoid borrow conflicts).
     fn handle_arg_picker_input(&mut self, ev: &crossterm::event::Event) -> InputOutcome {
         use crate::views::picker::{PickerConfig, PickerOutcome, handle_picker_input};
 
@@ -543,13 +470,8 @@ impl AgentView {
             FilterChanged,
         }
 
-        let (command_clone, in_effort_phase, entry_count) = match self.active_modal.as_ref() {
-            Some(ActiveModal::ArgPicker {
-                command,
-                args_query,
-                items,
-                ..
-            }) => (command.clone(), !args_query.is_empty(), items.len()),
+        let (command_clone, entry_count) = match self.active_modal.as_ref() {
+            Some(ActiveModal::ArgPicker { command, items, .. }) => (command.clone(), items.len()),
             _ => return InputOutcome::Changed,
         };
 
@@ -617,9 +539,6 @@ impl AgentView {
                 InputOutcome::Changed
             }
             ArgPickerStep::Closed => {
-                if in_effort_phase && self.try_arg_picker_step_back_from_effort() {
-                    return InputOutcome::Changed;
-                }
                 let snapshot = match self.active_modal.as_mut() {
                     Some(ActiveModal::ArgPicker {
                         previous_palette, ..
@@ -638,33 +557,6 @@ impl AgentView {
                 InputOutcome::Changed
             }
             ArgPickerStep::Selected(item) => {
-                let chains_to_effort = matches!(command_clone.as_str(), "model" | "m")
-                    && item.insert_text.ends_with(char::is_whitespace);
-                if chains_to_effort {
-                    let next_query = item.insert_text.clone();
-                    if let Some(cmd) = self.prompt.slash_controller.registry().get(&command_clone) {
-                        let ctx = self.prompt.slash_controller.app_ctx(&self.session.models);
-                        if let Some(effort_items) = cmd.suggest_args(&ctx, &next_query)
-                            && Self::arg_items_look_like_effort_phase(&effort_items)
-                        {
-                            if let Some(ActiveModal::ArgPicker {
-                                args_query,
-                                items,
-                                original_items,
-                                state,
-                                ..
-                            }) = self.active_modal.as_mut()
-                            {
-                                *args_query = next_query;
-                                *items = effort_items.clone();
-                                *original_items = effort_items;
-                                // Effort sub-step is part of the type-to-find /model picker: open input-focused (cursor + type-to-filter), matching the rest of the flow.
-                                *state = crate::views::picker::PickerState::input_active();
-                            }
-                            return InputOutcome::Changed;
-                        }
-                    }
-                }
                 let full = format!("/{} {}", command_clone, item.insert_text.trim_end());
                 self.active_modal = None;
                 InputOutcome::Action(Action::SendSlashCommandPreservingDraft(full))
@@ -852,8 +744,7 @@ impl AgentView {
                                     return InputOutcome::Action(Action::FetchSessionList);
                                 }
 
-                                let is_picker =
-                                    matches!(trimmed.as_str(), "model" | "m" | "theme" | "t");
+                                let is_picker = matches!(trimmed.as_str(), "theme" | "t");
                                 if is_picker
                                     && let Some(command) =
                                         self.prompt.slash_controller.registry().get(&trimmed)
@@ -1407,11 +1298,6 @@ impl AgentView {
             let outcome = mw::handle_modal_mouse(window, mouse.kind, mouse.column, mouse.row);
             match outcome {
                 ModalWindowOutcome::CloseRequested => {
-                    // Match keyboard Esc: step back from model effort phase
-                    // before fully dismissing the ArgPicker.
-                    if self.try_arg_picker_step_back_from_effort() {
-                        return InputOutcome::Changed;
-                    }
                     // Match keyboard Esc: a closed SessionPicker may still
                     // have a list/search fetch in flight — the dispatch
                     // layer must invalidate it (its landing surface is gone).
@@ -1763,7 +1649,6 @@ impl AgentView {
                 }
             } else if let modal::ActiveModal::ArgPicker {
                 command,
-                args_query,
                 items,
                 state,
                 window,
@@ -1772,8 +1657,6 @@ impl AgentView {
             {
                 // Arg picker: ModalWindow chrome + picker content.
                 let title = match command.as_str() {
-                    "model" | "m" if !args_query.is_empty() => "Pick reasoning effort",
-                    "model" | "m" => "Pick model",
                     "theme" | "t" => "Pick theme",
                     _ => "Pick option",
                 };
@@ -2844,7 +2727,7 @@ mod command_palette_vim_input_tests {
         ));
         assert!(
             agent.active_modal.is_none(),
-            "palette selection must not open the legacy model ArgPicker"
+            "palette selection must dispatch the cohesive models picker"
         );
     }
 

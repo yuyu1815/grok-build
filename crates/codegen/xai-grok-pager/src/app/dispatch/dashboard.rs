@@ -1014,8 +1014,8 @@ pub(super) fn dispatch_dashboard_overlay_cycle(app: &mut AppView, delta: i32) ->
         return vec![];
     }
     // Materialize + configure only on a real switch — otherwise a
-    // cycle-created dashboard renders bare on back-out (default cwd, empty
-    // `/model`, wrong auto-approve).
+    // cycle-created dashboard renders bare on back-out (default cwd, missing
+    // model snapshot, wrong auto-approve).
     if app.dashboard.is_none() {
         ensure_dashboard_state(app);
         configure_dashboard_state(app);
@@ -1113,9 +1113,8 @@ pub(super) fn dispatch_dashboard_dispatch(
     // Return the new AgentId from the inner constructor
     // so we don't have to rely on `app.agents.last()`.
     //
-    // Carry the dashboard's staged model / plan-mode (set via `/model` and
-    // `/plan`) onto the new session: the model id seeds `CreateSession`, and
-    // effort / plan are applied post-creation by `apply_pending_dispatch_config`.
+    // Carry any dashboard-staged model / plan mode onto the new session: the
+    // model id seeds `CreateSession`, and effort / plan are applied after creation.
     let pending_model = app.dashboard.as_ref().and_then(|d| d.pending_model.clone());
     let pending_mode = app
         .dashboard
@@ -1199,8 +1198,8 @@ pub(super) fn dispatch_dashboard_dispatch(
 /// limited than the agent view's:
 ///
 ///   - Builtin commands that return `CommandResult::Action(...)` (e.g.
-///     `/dashboard`, `/exit`, `/theme`, `/settings`, `/help`, `/model`,
-///     `/mcps`, `/plugin`, …) are dispatched identically to the agent path.
+///     `/dashboard`, `/exit`, `/theme`, `/settings`, `/help`, `/mcps`,
+///     `/plugin`, …) are dispatched identically to the agent path.
 ///   - `CommandResult::Message` / `Error` surface as an `error_toast`
 ///     on the dashboard (no scrollback to push into). `Error` strings
 ///     get the `✗` prefix via `set_error_toast`; `Message` strings are
@@ -1219,8 +1218,8 @@ pub(super) fn dispatch_dashboard_dispatch(
 ///   - **Registered, not offered** (session-scoped hidden on this surface,
 ///     or `dashboard_only` off-dashboard) → clear dispatch + error toast;
 ///     do **not** spawn with the slash text as the prompt.
-///   - **Registered, offered** → MRU + `command.run` (e.g. `/model` /
-///     `/plan` stage the next spawn).
+///   - **Registered, offered** → MRU + `command.run` (e.g. `/plan` stages
+///     the next spawn mode).
 pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String) -> Vec<Effect> {
     use crate::slash::command::{CommandExecCtx, CommandResult};
     use crate::slash::parse_invocation;
@@ -1242,12 +1241,20 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
 
     // Build the execution context from app-wide state. The dashboard
     // is session-less, so `session_id` is `None`. Offered session-less
-    // opt-ins (`/model`, `/plan`) and pager-global commands still run
-    // and may toast if a dispatcher needs an agent.
+    // opt-ins such as `/plan` and pager-global commands still run and may
+    // toast if a dispatcher needs an agent.
     let result = {
         let Some(invocation) = parse_invocation(trimmed.as_str()) else {
             return vec![];
         };
+
+        if let Some(message) = crate::slash::retired_command_error(invocation.token) {
+            if let Some(dashboard) = app.dashboard.as_mut() {
+                dashboard.dispatch.set_text("");
+                dashboard.set_error_toast(message);
+            }
+            return vec![];
+        }
 
         // Get the slash registry from the dashboard's prompt widget.
         // The dashboard owns its own registry (populated at open time
@@ -1361,8 +1368,7 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
         CommandResult::Error(msg) => {
             if let Some(d) = app.dashboard.as_mut() {
                 d.dispatch.set_text("");
-                // Command errors are plain strings ("Unknown model: …",
-                // "Usage: /model <name> [effort]") with no glyph of their
+                // Command errors are plain strings with no glyph of their
                 // own — route through `set_error_toast` so the verbatim
                 // badge shows the `✗` error marker. `Message` results
                 // below stay verbatim: they carry their own glyph
@@ -1385,19 +1391,6 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                 d.dispatch.set_text("");
             }
             dispatch(Action::ExitDashboard, app)
-        }
-        // `/model` on the session-less dashboard stages the model for the
-        // NEXT spawned agent instead of switching a (nonexistent) session.
-        // Both the effort-bearing (`SwitchModel`) and bare
-        // (`SetDefaultModel`) forms map to the same per-spawn staging — we
-        // deliberately do NOT persist a global default here.
-        CommandResult::Action(Action::SwitchModel { model_id, effort }) => {
-            stage_dashboard_model(app, model_id, effort);
-            vec![]
-        }
-        CommandResult::Action(Action::SetDefaultModel(model_id)) => {
-            stage_dashboard_model(app, model_id, None);
-            vec![]
         }
         // `/plan` toggles whether the next spawned agent starts in plan
         // mode. The command always reports `On` here (the dashboard's
@@ -1463,39 +1456,6 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
     }
 }
 
-/// Stage a model (+ optional reasoning effort) for the next agent the
-/// dashboard spawns. Resolves the human-readable display name from the
-/// app's model catalog (falling back to the raw id) so the renderer can
-/// show the indicator without a live `ModelState`. Clears the dispatch
-/// input + any error toast.
-fn stage_dashboard_model(
-    app: &mut AppView,
-    model_id: acp::ModelId,
-    effort: Option<xai_grok_shell::sampling::types::ReasoningEffort>,
-) {
-    let display = app
-        .models
-        .available
-        .get(&model_id)
-        .map(|info| info.name.clone())
-        .unwrap_or_else(|| model_id.0.to_string());
-    if let Some(d) = app.dashboard.as_mut() {
-        d.dispatch.set_text("");
-        d.error_toast = None;
-        // Mirror the staged choice into the dashboard's catalog snapshot so a
-        // subsequent `/model` dropdown marks THIS model as `(current)` (and
-        // its effort as `(active)`) rather than the app default the snapshot
-        // was seeded with at open. Without this the dropdown lags one step
-        // behind `pending_model`.
-        d.models.set_current(model_id.clone(), effort);
-        d.pending_model = Some(crate::views::dashboard::PendingDispatchModel {
-            id: model_id,
-            effort,
-            display,
-        });
-    }
-}
-
 /// Apply the dashboard's staged model effort + plan mode to a freshly
 /// spawned agent. The base model is already seeded via `CreateSession`'s
 /// `model_id`; here we stash the reasoning effort (pushed to the shell once
@@ -1513,7 +1473,7 @@ pub(super) fn apply_pending_dispatch_config(
         // The base model is seeded via `CreateSession.model_id`; only stash a
         // deferred switch when an explicit effort must be pushed. Setting it
         // (or clearing to `None`) also overrides any CLI `-m` default so the
-        // dashboard's `/model` choice wins.
+        // dashboard's staged choice wins.
         agent.session.deferred_model_switch = m.effort.map(|e| (m.id.clone(), Some(e)));
     }
     match pending_mode {

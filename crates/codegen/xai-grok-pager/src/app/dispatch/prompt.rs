@@ -437,47 +437,51 @@ pub(super) fn dispatch_send_prompt_inner(
             };
 
             if let Some(invocation) = parse_invocation(trimmed) {
-                let (is_builtin, command) = {
-                    let reg = agent.prompt.slash_controller.registry();
-                    let is_builtin = reg.is_builtin(invocation.token);
-                    // Bypasses only the menu-only hide (hard gates still
-                    // return `None`); see `CommandRegistry::get_for_dispatch`.
-                    let command = reg.get_for_dispatch(invocation.token).cloned();
-                    (is_builtin, command)
-                };
-                {
-                    use xai_grok_telemetry::events::{PagerCommandSource, PagerSlashCommand};
-                    use xai_grok_telemetry::session_ctx::log_event;
-                    let source = if is_builtin {
-                        PagerCommandSource::Builtin
-                    } else {
-                        PagerCommandSource::NonBuiltin
-                    };
-                    log_event(PagerSlashCommand {
-                        command_name: invocation.token.to_string(),
-                        source,
-                    });
-                }
-                if let Some(command) = command {
-                    if ctx.screen_mode.is_minimal() && !command.available_in_minimal() {
-                        // Central minimal gate: commands that drive the deleted
-                        // fullscreen pane / dashboard (/find, /copy, /dashboard)
-                        // have nothing to act on in scrollback-native mode.
-                        // Surface a friendly system block instead of running them.
-                        CommandResult::Message(format!(
-                            "/{} is not available in minimal mode",
-                            invocation.token
-                        ))
-                    } else {
-                        agent
-                            .prompt
-                            .slash_controller
-                            .record_command_use(invocation.token, invocation.token);
-                        command.run(&mut ctx, invocation.args)
-                    }
+                if let Some(message) = crate::slash::retired_command_error(invocation.token) {
+                    CommandResult::Error(message.to_string())
                 } else {
-                    // Unknown command -- pass through to shell.
-                    CommandResult::PassThrough(text.clone())
+                    let (is_builtin, command) = {
+                        let reg = agent.prompt.slash_controller.registry();
+                        let is_builtin = reg.is_builtin(invocation.token);
+                        // Bypasses only the menu-only hide (hard gates still
+                        // return `None`); see `CommandRegistry::get_for_dispatch`.
+                        let command = reg.get_for_dispatch(invocation.token).cloned();
+                        (is_builtin, command)
+                    };
+                    {
+                        use xai_grok_telemetry::events::{PagerCommandSource, PagerSlashCommand};
+                        use xai_grok_telemetry::session_ctx::log_event;
+                        let source = if is_builtin {
+                            PagerCommandSource::Builtin
+                        } else {
+                            PagerCommandSource::NonBuiltin
+                        };
+                        log_event(PagerSlashCommand {
+                            command_name: invocation.token.to_string(),
+                            source,
+                        });
+                    }
+                    if let Some(command) = command {
+                        if ctx.screen_mode.is_minimal() && !command.available_in_minimal() {
+                            // Central minimal gate: commands that drive the deleted
+                            // fullscreen pane / dashboard (/find, /copy, /dashboard)
+                            // have nothing to act on in scrollback-native mode.
+                            // Surface a friendly system block instead of running them.
+                            CommandResult::Message(format!(
+                                "/{} is not available in minimal mode",
+                                invocation.token
+                            ))
+                        } else {
+                            agent
+                                .prompt
+                                .slash_controller
+                                .record_command_use(invocation.token, invocation.token);
+                            command.run(&mut ctx, invocation.args)
+                        }
+                    } else {
+                        // Unknown command -- pass through to shell.
+                        CommandResult::PassThrough(text.clone())
+                    }
                 }
             } else {
                 // Bare `/` or malformed -- pass through.

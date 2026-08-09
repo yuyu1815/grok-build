@@ -38,9 +38,9 @@ pub const MAX_VISIBLE_SUGGESTIONS: usize = 6;
 /// A single row in the slash suggestion dropdown.
 #[derive(Debug, Clone)]
 pub struct SuggestionRow {
-    /// Display text (e.g., "/model" or "Grok 4 Fast").
+    /// Display text (e.g., "/models" or "/theme").
     pub display: String,
-    /// Description text (e.g., "Switch the active model").
+    /// Description text (e.g., "Select model and reasoning effort").
     pub description: String,
     /// Text to insert into the prompt on acceptance.
     pub insert_text: String,
@@ -158,7 +158,7 @@ pub struct SlashSnapshot {
     pub matches: Vec<SuggestionRow>,
     /// Currently selected index in `matches`.
     pub selected: usize,
-    /// Byte range of the command part in the input (e.g., `0..6` for `/model`).
+    /// Byte range of the command part in the input (e.g., `0..7` for `/models`).
     pub command_range: Option<Range<usize>>,
     /// Byte range of the arguments part in the input.
     pub args_range: Option<Range<usize>>,
@@ -506,7 +506,7 @@ impl SlashController {
         }
 
         // Also scan for mid-text slash tokens (after the first one) so that
-        // prompts like "/model foo /comm" get ghost text and teal highlighting
+        // prompts like "/compact now /comm" get ghost text and teal highlighting
         // on the second and subsequent `/` tokens.
         // compute_inline_slash only supplies recognized-token highlights now;
         // the inline ghost is derived solely from the dropdown selection (one
@@ -850,7 +850,7 @@ impl SlashController {
 
         // Deduplicate: keep the best-scoring trigger per command.
         // At equal fuzzy scores the tiebreaker is:
-        //   1. Exact match on match_text wins (e.g. alias "/m" for query "m")
+        //   1. Exact match on match_text wins (e.g. alias "/q" for query "q")
         //   2. Canonical name beats aliases (e.g. "/terminal-setup" over
         //      "/terminal-check" for query "terminal")
         //   3. Lexicographic display order as final fallback
@@ -994,7 +994,7 @@ impl SlashController {
 /// for them to operate on.
 ///
 /// Commands that opt in via [`SlashCommand::offered_when_session_less`]
-/// (`/model`, `/plan`, `/multiline`) are exempt from this suppression —
+/// (`/plan`, `/multiline`) are exempt from this suppression —
 /// they configure the next spawn or the dashboard input surface itself.
 ///
 /// Conversely, [`SlashCommand::dashboard_only`] commands (`/cd`) are
@@ -1112,7 +1112,7 @@ fn analyze_input(text: &str, cursor: usize) -> Option<SlashInput> {
 
 /// Parsed slash command invocation.
 pub struct SlashInvocation<'a> {
-    /// Command token (e.g., "model" for "/model grok-4").
+    /// Command token (e.g., "models" for "/models").
     pub token: &'a str,
     /// Everything after the command token, trimmed on the left.
     pub args: &'a str,
@@ -1144,6 +1144,15 @@ pub fn parse_invocation(line: &str) -> Option<SlashInvocation<'_>> {
         ""
     };
     Some(SlashInvocation { token, args })
+}
+
+/// Explicit error for retired slash names that must never pass through to
+/// inference or be restored by an ACP command with the same name.
+pub fn retired_command_error(token: &str) -> Option<&'static str> {
+    match token.to_ascii_lowercase().as_str() {
+        "model" | "m" => Some("/model has been removed; use /models."),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,9 +1364,9 @@ mod tests {
 
     #[test]
     fn parses_invocation_with_args() {
-        let inv = parse_invocation("/model grok-code-fast-1").expect("parsed");
-        assert_eq!(inv.token, "model");
-        assert_eq!(inv.args, "grok-code-fast-1");
+        let inv = parse_invocation("/models extra").expect("parsed");
+        assert_eq!(inv.token, "models");
+        assert_eq!(inv.args, "extra");
     }
 
     #[test]
@@ -1380,6 +1389,19 @@ mod tests {
     #[test]
     fn rejects_empty_string() {
         assert!(parse_invocation("").is_none());
+    }
+
+    #[test]
+    fn retired_command_guard_is_case_insensitive() {
+        assert_eq!(
+            retired_command_error("MODEL"),
+            Some("/model has been removed; use /models.")
+        );
+        assert_eq!(
+            retired_command_error("m"),
+            Some("/model has been removed; use /models.")
+        );
+        assert_eq!(retired_command_error("models"), None);
     }
 
     // -- is_command_complete tests --
@@ -1406,12 +1428,13 @@ mod tests {
     }
 
     #[test]
-    fn required_arg_command_blocks_without_args() {
+    fn retired_commands_are_complete_for_dispatch_guard() {
         let reg = test_registry();
-        // /model has takes_args=true, args_required=true.
-        assert!(!is_command_complete("/model", &reg));
-        assert!(!is_command_complete("/model ", &reg));
+        // Retired names are unknown to the registry, so Enter reaches the
+        // explicit dispatch guard instead of being blocked by arg validation.
+        assert!(is_command_complete("/model", &reg));
         assert!(is_command_complete("/model grok-4", &reg));
+        assert!(is_command_complete("/m grok-4", &reg));
     }
 
     #[test]
@@ -1520,8 +1543,8 @@ mod tests {
         let snapshot = state.snapshot();
         assert!(snapshot.open);
         assert!(
-            snapshot.matches.iter().any(|row| row.display == "/model"),
-            "expected /model in matches"
+            snapshot.matches.iter().any(|row| row.display == "/models"),
+            "expected /models in matches"
         );
     }
 
@@ -1575,8 +1598,8 @@ mod tests {
         assert!(snapshot.open);
         assert_eq!(snapshot.query, "mo");
         assert!(
-            snapshot.matches.iter().any(|row| row.display == "/model"),
-            "expected /model in matches"
+            snapshot.matches.iter().any(|row| row.display == "/models"),
+            "expected /models in matches"
         );
     }
 
@@ -1589,13 +1612,13 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "/model grok-4", 3, &models);
+        ctrl.refresh(&state, "/models extra", 3, &models);
         let snapshot = state.snapshot();
         assert!(snapshot.open);
         assert!(snapshot.command_recognized);
         assert!(
-            snapshot.matches.iter().any(|row| row.display == "/model"),
-            "expected /model in matches"
+            snapshot.matches.iter().any(|row| row.display == "/models"),
+            "expected /models in matches"
         );
         assert!(
             snapshot.inline_ghost.is_none(),
@@ -1609,7 +1632,7 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "/model", 6, &models);
+        ctrl.refresh(&state, "/models", 7, &models);
         assert!(state.snapshot().open);
 
         state.close();
@@ -1619,7 +1642,7 @@ mod tests {
     }
 
     #[test]
-    fn controller_suggests_alias_display_for_alias() {
+    fn retired_alias_is_not_suggested() {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
         let state = SlashState::default();
         let models = ModelState::default();
@@ -1627,9 +1650,8 @@ mod tests {
         ctrl.refresh(&state, "/m", 2, &models);
         let snapshot = state.snapshot();
         assert!(snapshot.open);
-        let first = snapshot.matches.first().expect("match");
-        assert_eq!(first.display, "/m");
-        assert!(first.insert_text.starts_with("/m"));
+        assert!(snapshot.matches.iter().all(|row| row.display != "/model"));
+        assert!(snapshot.matches.iter().all(|row| row.display != "/m"));
     }
 
     /// `/sessions` survives the sessions-modal removal as an alias of
@@ -1660,7 +1682,7 @@ mod tests {
     }
 
     #[test]
-    fn controller_suggests_model_args() {
+    fn models_does_not_suggest_args() {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
         let state = SlashState::default();
         let mut models = ModelState::default();
@@ -1670,22 +1692,17 @@ mod tests {
             acp::ModelInfo::new(model_id, "Example".to_string()),
         );
 
-        let text = "/model e";
+        let text = "/models e";
         ctrl.refresh(&state, text, text.len(), &models);
         let snapshot = state.snapshot();
-        assert!(snapshot.open);
-        assert!(
-            snapshot
-                .matches
-                .iter()
-                .any(|row| row.display.contains("Example"))
-        );
+        assert!(!snapshot.open);
+        assert!(snapshot.matches.is_empty());
         assert!(snapshot.args_range.is_some());
     }
 
     #[test]
     fn no_placeholder_when_cursor_at_start_of_existing_args() {
-        // Simulates the user typing "hello", then prepending "/model ".
+        // Simulates the user typing "hello", then prepending "/models ".
         // Cursor ends up right at the start of the args ("hello"), so
         // args_query is empty but the args range is non-empty.
         // The placeholder must NOT appear.
@@ -1693,9 +1710,9 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        let text = "/model hello";
-        // Cursor at 7: right after "/model ", before 'h'.
-        ctrl.refresh(&state, text, 7, &models);
+        let text = "/models hello";
+        // Cursor at 8: right after "/models ", before 'h'.
+        ctrl.refresh(&state, text, 8, &models);
         let snapshot = state.snapshot();
         assert!(
             !snapshot.args_query_is_empty,
@@ -1778,12 +1795,12 @@ mod tests {
     }
 
     #[test]
-    fn recognized_command_sets_command_recognized() {
+    fn models_command_sets_command_recognized() {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "/model", 6, &models);
+        ctrl.refresh(&state, "/models", 7, &models);
         let snapshot = state.snapshot();
         assert!(snapshot.active);
         assert!(
@@ -1817,9 +1834,8 @@ mod tests {
             .map(|r| r.display.as_str())
             .collect();
 
-        // Pager-global commands stay, plus session-scoped opt-ins
-        // (`offered_when_session_less`): `/model`/`/plan` stage the next
-        // spawn; `/multiline` toggles compose on the dashboard inputs.
+        // Pager-global commands stay, plus session-scoped opt-ins:
+        // `/plan` stages the next spawn and `/multiline` toggles compose.
         for keep in [
             "/quit",
             "/new",
@@ -1827,7 +1843,6 @@ mod tests {
             "/settings",
             "/dashboard",
             "/resume",
-            "/model",
             "/plan",
             "/multiline",
         ] {
@@ -1966,7 +1981,7 @@ mod tests {
         );
     }
 
-    /// `/model`, `/plan`, and `/multiline` opt in via `offered_when_session_less`,
+    /// `/plan` and `/multiline` opt in via `offered_when_session_less`,
     /// so they stay recognized on the dashboard even though they're session-scoped.
     #[test]
     fn session_less_opt_in_commands_recognized_on_dashboard() {
@@ -1981,12 +1996,6 @@ mod tests {
             "/plan must be recognized on the dashboard"
         );
 
-        ctrl.refresh(&state, "/model", 6, &models);
-        assert!(
-            state.snapshot().command_recognized,
-            "/model must be recognized on the dashboard"
-        );
-
         ctrl.refresh(&state, "/multiline", 10, &models);
         assert!(
             state.snapshot().command_recognized,
@@ -1998,10 +2007,10 @@ mod tests {
 
     #[test]
     fn scan_finds_mid_text_slash_token() {
-        let tokens = scan_inline_slash_tokens("do /model now", 6);
+        let tokens = scan_inline_slash_tokens("do /models now", 6);
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].name, "model");
-        assert_eq!(tokens[0].range, 3..9);
+        assert_eq!(tokens[0].name, "models");
+        assert_eq!(tokens[0].range, 3..10);
         assert!(tokens[0].has_cursor);
     }
 
@@ -2037,7 +2046,7 @@ mod tests {
 
     #[test]
     fn scan_cursor_at_token_end() {
-        let tokens = scan_inline_slash_tokens("run /model", 10);
+        let tokens = scan_inline_slash_tokens("run /models", 10);
         assert_eq!(tokens.len(), 1);
         assert!(tokens[0].has_cursor, "cursor at end of token should match");
     }
@@ -2054,8 +2063,8 @@ mod tests {
         let snapshot = state.snapshot();
         assert!(snapshot.active, "mid-text slash under cursor is active");
         if let Some(ref ghost) = snapshot.inline_ghost {
-            assert_eq!(ghost.full_name, "model");
-            assert_eq!(ghost.text, "el");
+            assert_eq!(ghost.full_name, "models");
+            assert_eq!(ghost.text, "els");
             assert_eq!(ghost.token_range, 3..7);
         } else {
             panic!("expected inline ghost for partial /mod");
@@ -2383,14 +2392,14 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "do /model now", 9, &models);
+        ctrl.refresh(&state, "do /models now", 9, &models);
         let snapshot = state.snapshot();
         assert!(
             snapshot.inline_ghost.is_none(),
             "fully recognized command should not show ghost"
         );
         assert_eq!(snapshot.recognized_tokens.len(), 1);
-        assert_eq!(snapshot.recognized_tokens[0], 3..9);
+        assert_eq!(snapshot.recognized_tokens[0], 3..10);
     }
 
     #[test]
@@ -2420,8 +2429,8 @@ mod tests {
             .inline_ghost
             .as_ref()
             .expect("expected ghost for /mod on line 2");
-        assert_eq!(ghost.full_name, "model");
-        assert_eq!(ghost.text, "el");
+        assert_eq!(ghost.full_name, "models");
+        assert_eq!(ghost.text, "els");
         assert_eq!(ghost.token_range, 6..10);
     }
 
@@ -2431,7 +2440,7 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        ctrl.refresh(&state, "run /exit and /model please", 0, &models);
+        ctrl.refresh(&state, "run /exit and /models please", 0, &models);
         let snapshot = state.snapshot();
         assert_eq!(snapshot.recognized_tokens.len(), 2);
     }
@@ -2444,7 +2453,7 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        let text = "run /exit and /model please but not /zzzzz nor foo/bar";
+        let text = "run /exit and /models please but not /zzzzz nor foo/bar";
         ctrl.refresh(&state, text, text.len(), &models);
         let composer = state.snapshot().recognized_tokens;
 
@@ -2536,33 +2545,12 @@ mod tests {
         let state = SlashState::default();
         let models = ModelState::default();
 
-        let text = "/model\n  /im";
+        let text = "/models\n  /im";
         let cursor = text.len();
         ctrl.refresh(&state, text, cursor, &models);
         let snapshot = state.snapshot();
-        assert_eq!(snapshot.command_range, Some(9..12));
+        assert_eq!(snapshot.command_range, Some(10..13));
         assert!(snapshot.cursor_in_command);
-    }
-
-    #[test]
-    fn mid_text_slash_args_after_token() {
-        let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
-        let state = SlashState::default();
-        let models = ModelState::default();
-
-        let text = "hi /model ";
-        let cursor = text.len();
-        ctrl.refresh(&state, text, cursor, &models);
-        let snapshot = state.snapshot();
-        assert!(
-            !snapshot.cursor_in_command,
-            "cursor in args after /model should leave command mode"
-        );
-        assert!(snapshot.args_range.is_some());
-        assert!(
-            snapshot.open || snapshot.args_placeholder.is_some(),
-            "args phase should show suggestions or placeholder for /model"
-        );
     }
 
     #[test]

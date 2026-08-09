@@ -191,10 +191,9 @@ pub enum ActiveModal {
     /// Argument picker for commands with pre-defined choices (model, theme).
     /// Opens when selecting such a command from the command palette.
     ArgPicker {
-        /// Command name (e.g., "model", "theme").
+        /// Command name (e.g., "theme").
         command: String,
-        /// Args query passed to `suggest_args` (empty = first phase; for `/model`,
-        /// a trailing-space query enters the reasoning-effort sub-menu).
+        /// Args query passed to `suggest_args` (empty on initial open).
         args_query: String,
         /// Filtered items (re-filtered from original_items on query change).
         items: Vec<crate::slash::command::ArgItem>,
@@ -632,13 +631,7 @@ impl ActiveModal {
             ActiveModal::CommandPalette { .. } => "Commands",
             ActiveModal::ModelsPicker { .. } => "Model selection",
             ActiveModal::SessionPicker { .. } => "Resume session",
-            ActiveModal::ArgPicker {
-                command,
-                args_query,
-                ..
-            } => match command.as_str() {
-                "model" | "m" if !args_query.is_empty() => "Pick reasoning effort",
-                "model" | "m" => "Pick model",
+            ActiveModal::ArgPicker { command, .. } => match command.as_str() {
                 "theme" | "t" => "Pick theme",
                 _ => "Pick option",
             },

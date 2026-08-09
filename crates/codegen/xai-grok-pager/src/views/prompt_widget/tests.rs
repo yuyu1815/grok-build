@@ -1542,21 +1542,23 @@
         let mut pw = PromptWidget::new();
         let models = crate::acp::model_state::ModelState::default();
 
-        // Type alias "/m" → should match the "/m" alias of "/model".
-        pw.textarea.insert_str("/m");
+        // Type alias "/t" → should match the "/t" alias of "/theme".
+        pw.textarea.insert_str("/t");
         pw.refresh_slash(&models);
 
         let snap = pw.slash_snapshot();
         assert!(snap.open);
-        assert_eq!(snap.selection().unwrap().display, "/m");
+        let theme_alias_idx = snap
+            .matches
+            .iter()
+            .position(|row| row.display == "/t")
+            .expect("/t in matches");
+        for _ in 0..theme_alias_idx {
+            pw.slash_move_selection(1);
+        }
 
-        // Accept → text should become "/m " (alias + trailing space since model takes args).
         pw.accept_slash_completion(&models);
-        assert!(
-            pw.textarea.text().starts_with("/m"),
-            "should insert alias command, got: {:?}",
-            pw.textarea.text()
-        );
+        assert_eq!(pw.textarea.text(), "/t ");
     }
 
     #[test]
@@ -1564,16 +1566,20 @@
         let mut pw = PromptWidget::new();
         let models = crate::acp::model_state::ModelState::default();
 
-        // Type "/mod" → should match "/model" which takes_args.
-        pw.textarea.insert_str("/mod");
+        pw.textarea.insert_str("/the");
         pw.refresh_slash(&models);
 
+        let snap = pw.slash_snapshot();
+        let theme_idx = snap
+            .matches
+            .iter()
+            .position(|row| row.display == "/theme")
+            .expect("/theme in matches");
+        for _ in 0..theme_idx {
+            pw.slash_move_selection(1);
+        }
         pw.accept_slash_completion(&models);
-        let text = pw.textarea.text().to_string();
-        assert_eq!(
-            text, "/model ",
-            "arg-taking command should get trailing space"
-        );
+        assert_eq!(pw.textarea.text(), "/theme ");
     }
 
     #[test]
@@ -1581,32 +1587,24 @@
         let mut pw = PromptWidget::new();
         let models = crate::acp::model_state::ModelState::default();
 
-        // Cursor inside the command token with args already present.
-        pw.textarea.insert_str("/mod grok-4");
+        pw.textarea.insert_str("/the dark");
         pw.textarea.set_cursor(3);
         pw.refresh_slash(&models);
 
         let snap = pw.slash_snapshot();
         assert!(snap.open, "menu opens with the cursor inside the command");
-        let model_idx = snap
+        let theme_idx = snap
             .matches
             .iter()
-            .position(|r| r.display == "/model")
-            .expect("/model in matches");
-        for _ in 0..model_idx {
+            .position(|row| row.display == "/theme")
+            .expect("/theme in matches");
+        for _ in 0..theme_idx {
             pw.slash_move_selection(1);
         }
 
         assert!(pw.accept_slash_completion(&models));
-        assert_eq!(
-            pw.textarea.text(),
-            "/model grok-4",
-            "the row's trailing space must not stack on the existing separator"
-        );
-        // Absorb (not trim-the-insert): the cursor must land after the
-        // separator so the post-accept refresh is in the args phase — the
-        // Enter-chains flow. Trimming would leave it at the command end.
-        assert_eq!(pw.textarea.cursor(), "/model ".len());
+        assert_eq!(pw.textarea.text(), "/theme dark");
+        assert_eq!(pw.textarea.cursor(), "/theme ".len());
         assert!(!pw.slash_snapshot().cursor_in_command);
     }
 
@@ -1615,39 +1613,28 @@
         let mut pw = PromptWidget::new();
         let models = crate::acp::model_state::ModelState::default();
 
-        // Snapshot taken while the composer is just the token…
-        pw.textarea.insert_str("/mod");
+        pw.textarea.insert_str("/the");
         pw.refresh_slash(&models);
         let snap = pw.slash_snapshot();
-        assert!(snap.open);
-        let model_idx = snap
+        let theme_idx = snap
             .matches
             .iter()
-            .position(|r| r.display == "/model")
-            .expect("/model in matches");
-        for _ in 0..model_idx {
+            .position(|row| row.display == "/theme")
+            .expect("/theme in matches");
+        for _ in 0..theme_idx {
             pw.slash_move_selection(1);
         }
 
-        // …then indented code pastes as a chip flush against it, its first
-        // byte a plain space (handle_paste does not refresh the snapshot).
         let pasted = " if foo:\n    bar\n    baz\n    qux";
         pw.handle_paste(pasted);
         assert_eq!(pw.textarea.elements().len(), 1);
 
-        // Accepting must not absorb the chip's leading byte: replace_range
-        // expands any element overlap to the whole chip, so an absorbed
-        // chip byte would silently delete the entire paste.
         assert!(pw.accept_slash_completion(&models));
         let elements = pw.textarea.elements();
         assert_eq!(elements.len(), 1, "paste chip must survive the accept");
         assert_eq!(elements[0].kind, KIND_PASTE);
-        assert_eq!(
-            pw.textarea.element_text(elements[0].id),
-            Some(pasted),
-            "chip content must be untouched"
-        );
-        assert_eq!(pw.textarea.text(), format!("/model {pasted}"));
+        assert_eq!(pw.textarea.element_text(elements[0].id), Some(pasted));
+        assert_eq!(pw.textarea.text(), format!("/theme {pasted}"));
     }
 
     #[test]
@@ -1683,33 +1670,26 @@
 
     #[test]
     fn accept_arg_completion_replaces_arg_range() {
-        use std::sync::Arc;
-
         let mut pw = PromptWidget::new();
-        let mut models = crate::acp::model_state::ModelState::default();
-        let model_id = agent_client_protocol::ModelId::new(Arc::from("grok-4.5"));
-        models.available.insert(
-            model_id.clone(),
-            agent_client_protocol::ModelInfo::new(model_id, "Grok 4.5".to_string()),
-        );
+        let models = crate::acp::model_state::ModelState::default();
 
-        // Type "/model gr" and position cursor at end (in args).
-        pw.textarea.insert_str("/model gr");
+        pw.textarea.insert_str("/theme dr");
         pw.refresh_slash(&models);
 
         let snap = pw.slash_snapshot();
         assert!(snap.open, "arg suggestions should be open");
         assert!(snap.args_range.is_some());
+        let dark_idx = snap
+            .matches
+            .iter()
+            .position(|row| row.insert_text == "dark")
+            .expect("dark theme in matches");
+        for _ in 0..dark_idx {
+            pw.slash_move_selection(1);
+        }
 
-        // Accept arg completion → should replace "gr" with "Grok 4.5".
         pw.accept_slash_completion(&models);
-        let text = pw.textarea.text().to_string();
-        assert!(
-            text.contains("Grok 4.5"),
-            "arg should be replaced, got: {:?}",
-            text
-        );
-        assert!(text.starts_with("/model "));
+        assert_eq!(pw.textarea.text(), "/theme dark");
     }
 
     #[test]

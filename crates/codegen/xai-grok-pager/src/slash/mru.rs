@@ -41,6 +41,23 @@ struct MruFile {
     by_prefix: HashMap<String, HashMap<String, u64>>,
 }
 
+/// Fold retired model-command keys into the canonical `models` entry.
+/// Returns whether the map changed and should be persisted.
+fn migrate_retired_model_keys(by_command: &mut HashMap<String, u64>) -> bool {
+    let mut changed = false;
+    let mut timestamp = by_command.get("models").copied().unwrap_or(0);
+    for legacy in ["model", "m"] {
+        if let Some(value) = by_command.remove(legacy) {
+            timestamp = timestamp.max(value);
+            changed = true;
+        }
+    }
+    if changed {
+        by_command.insert("models".to_string(), timestamp);
+    }
+    changed
+}
+
 #[derive(Debug)]
 pub struct SlashMru {
     by_command: HashMap<String, u64>,
@@ -145,6 +162,7 @@ impl SlashMru {
                         }
                         self.dirty = true;
                     }
+                    self.dirty |= migrate_retired_model_keys(&mut self.by_command);
                     self.trim_to_cap();
                     self.loaded = true;
                 }
@@ -334,9 +352,32 @@ mod tests {
     #[test]
     fn strips_leading_slash_on_command() {
         let mut mru = SlashMru::new_in_memory();
-        mru.touch("m", "/model");
-        assert!(mru.last_used("", "model") > 0);
-        assert_eq!(mru.last_used("", "/model"), mru.last_used("", "model"));
+        mru.touch("x", "/models");
+        assert!(mru.last_used("", "models") > 0);
+        assert_eq!(mru.last_used("", "/models"), mru.last_used("", "models"));
+    }
+
+    #[test]
+    fn retired_model_keys_migrate_to_models_with_max_timestamp() {
+        let mut map = HashMap::from([
+            ("model".to_string(), 20),
+            ("m".to_string(), 30),
+            ("models".to_string(), 10),
+            ("help".to_string(), 40),
+        ]);
+        assert!(migrate_retired_model_keys(&mut map));
+        assert_eq!(map.get("models"), Some(&30));
+        assert!(!map.contains_key("model"));
+        assert!(!map.contains_key("m"));
+        assert_eq!(map.get("help"), Some(&40));
+        let snapshot = serde_json::to_value(MruFile {
+            by_command: map.clone(),
+            by_prefix: HashMap::new(),
+        })
+        .unwrap();
+        assert!(snapshot["by_command"].get("model").is_none());
+        assert!(snapshot["by_command"].get("m").is_none());
+        assert!(!migrate_retired_model_keys(&mut map));
     }
 
     #[test]

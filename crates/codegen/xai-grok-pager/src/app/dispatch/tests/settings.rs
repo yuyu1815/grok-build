@@ -260,48 +260,6 @@ fn set_default_model_allowed_when_agent_chat_kind() {
     );
     assert!(app.agents[&id].session.model_switch_pending);
 }
-/// `/model <name>` dispatches `SetDefaultModel` which routes
-/// through both `PersistSetting` and `SwitchModel`.
-#[test]
-fn slash_model_valid_dispatches_set_default_model_with_switch_and_persist() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    let model_id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
-    app.agents
-        .get_mut(&id)
-        .unwrap()
-        .session
-        .models
-        .available
-        .insert(
-            model_id.clone(),
-            acp::ModelInfo::new(model_id.clone(), "Grok 4.5".to_string()),
-        );
-    let effects = dispatch(Action::SendPrompt("/model Grok 4.5".into()), &mut app);
-    assert_eq!(
-        effects.len(),
-        2,
-        "expected PersistSetting + SwitchModel effects, got {effects:?}",
-    );
-    assert!(
-        matches!(
-            &effects[0],
-            Effect::PersistSetting {
-                key: "default_model",
-                ..
-            }
-        ),
-        "first effect must be PersistSetting(default_model), got {:?}",
-        effects[0],
-    );
-    assert!(
-        matches!(& effects[1], Effect::SwitchModel { model_id : mid, .. } if mid == &
-        model_id),
-        "second effect must be SwitchModel(<resolved id>), got {:?}",
-        effects[1],
-    );
-    assert!(app.agents[&id].session.model_switch_pending);
-}
 #[test]
 fn model_switch_pending_resets_correctly_across_success_and_failure() {
     let mut app = test_app_with_agent();
@@ -932,10 +890,7 @@ fn clear_default_model_persists_but_keeps_live_current() {
 }
 /// `Action::SetDefaultModel(<known id>)` resolves the
 /// id against the live catalog, mutates current, and emits both
-/// PersistSetting + SwitchModel effects. This is the
-/// dispatch-level analog of the slash-command's
-/// `slash_model_valid_dispatches_set_default_model_with_switch_and_persist`
-/// test.
+/// PersistSetting + SwitchModel effects for the typed default-model action.
 #[test]
 fn set_default_model_resolves_known_name() {
     use agent_client_protocol as acp;

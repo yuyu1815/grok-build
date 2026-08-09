@@ -16,7 +16,7 @@ use super::command::SlashCommand;
 /// Source of a command in the registry. Used for precedence and replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandSource {
-    /// Pager-local builtin (e.g., /exit, /model).
+    /// Pager-local builtin (e.g., /exit, /models).
     Builtin,
     /// Advertised by the shell/agent via ACP AvailableCommandsUpdate.
     Acp,
@@ -477,6 +477,10 @@ impl CommandRegistry {
         // even if the shell advertises them.
         const BLOCKED_NAMES: &[&str] = &[
             "help",
+            // Retired pager commands stay reserved so ACP commands/skills
+            // cannot silently restore their old semantics.
+            "model",
+            "m",
             // Block individual hook/plugin shell commands — the pager's
             // /hooks and /plugins builtins provide a unified modal instead.
             "hooks-list",
@@ -925,6 +929,26 @@ mod tests {
         // Hiding again removes it.
         registry.set_dashboard_visible(false);
         assert!(registry.get("dashboard").is_none());
+    }
+
+    #[test]
+    fn retired_model_names_are_blocked_from_acp() {
+        let mut registry = CommandRegistry::new(vec![]);
+        registry.set_acp_commands(&[
+            agent_client_protocol::AvailableCommand::new(
+                "model".to_string(),
+                "Legacy model command".to_string(),
+            ),
+            agent_client_protocol::AvailableCommand::new(
+                "m".to_string(),
+                "Legacy model alias".to_string(),
+            ),
+        ]);
+        assert!(registry.get("model").is_none());
+        assert!(registry.get_for_dispatch("model").is_none());
+        assert!(registry.get("m").is_none());
+        assert!(registry.get_for_dispatch("m").is_none());
+        assert!(registry.triggers().is_empty());
     }
 
     #[test]
