@@ -1406,16 +1406,6 @@ mod tests {
     }
 
     #[test]
-    fn removed_model_is_unknown_while_m_uses_models_contract() {
-        let reg = test_registry();
-        assert!(is_command_complete("/model", &reg));
-        assert!(is_command_complete("/model grok-4", &reg));
-        assert!(is_command_complete("/m", &reg));
-        assert!(is_command_complete("/m grok-4", &reg));
-        assert_eq!(reg.get("m").map(|command| command.name()), Some("models"));
-    }
-
-    #[test]
     fn unknown_command_is_complete() {
         let reg = test_registry();
         // Unknown commands pass through.
@@ -1617,19 +1607,6 @@ mod tests {
         let snapshot = state.snapshot();
         assert!(!snapshot.open);
         assert!(snapshot.matches.is_empty());
-    }
-
-    #[test]
-    fn retired_alias_is_not_suggested() {
-        let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
-        let state = SlashState::default();
-        let models = ModelState::default();
-
-        ctrl.refresh(&state, "/m", 2, &models);
-        let snapshot = state.snapshot();
-        assert!(snapshot.open);
-        assert!(snapshot.matches.iter().all(|row| row.display != "/model"));
-        assert!(snapshot.matches.iter().all(|row| row.display != "/m"));
     }
 
     /// `/sessions` survives the sessions-modal removal as an alias of

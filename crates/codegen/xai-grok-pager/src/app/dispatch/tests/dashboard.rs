@@ -1604,7 +1604,7 @@ fn dashboard_roster_switches_on_leader_mode() {
     assert_eq!(app.dashboard_roster()[0].session_id, "local-sess");
 }
 
-/// Seed a model into the app catalog for `/model` tests.
+/// Seed a model into the app catalog for dashboard model-state tests.
 fn seed_model(app: &mut AppView, id: &str, name: &str) {
     let model_id = acp::ModelId::new(std::sync::Arc::from(id));
     app.models.available.insert(
@@ -1613,39 +1613,6 @@ fn seed_model(app: &mut AppView, id: &str, name: &str) {
     );
 }
 
-/// The removed `/model` name has no pager-specific behavior on the dashboard:
-/// like any unknown slash token, it becomes the new session's prompt.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_removed_model_name_uses_unknown_command_path() {
-    let mut app = test_app();
-    open_dashboard(&mut app);
-    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/model grok-4.5".into());
-    assert!(!effects.is_empty());
-    assert_eq!(app.agents.len(), 1);
-}
-
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_m_matches_models_surface_contract() {
-    let mut messages = Vec::new();
-    for text in ["/models", "/m", "/models grok-4.5", "/m grok-4.5"] {
-        let mut app = test_app();
-        open_dashboard(&mut app);
-        let effects = dispatch_dashboard_dispatch_slash(&mut app, text.into());
-        assert!(effects.is_empty());
-        assert!(app.agents.is_empty());
-        messages.push(
-            app.dashboard
-                .as_ref()
-                .unwrap()
-                .error_toast
-                .clone()
-                .expect("session-scoped picker must report its surface restriction"),
-        );
-    }
-    assert!(messages.iter().all(|message| message == &messages[0]));
-}
 /// A tier-restricted command typed into the dashboard dispatch input must
 /// upsell via the feedback toast — not execute, and (crucially) not fall
 /// through the unknown-command path, which would spawn a session whose

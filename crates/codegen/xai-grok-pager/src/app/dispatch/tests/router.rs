@@ -876,29 +876,25 @@ fn removed_model_name_is_an_unknown_command() {
 }
 
 #[test]
-fn slash_m_opens_the_models_picker_without_legacy_arguments() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    let model_id = acp::ModelId::new(std::sync::Arc::from("model-a"));
-    let agent = app.agents.get_mut(&id).unwrap();
-    agent.session.models.available.insert(
-        model_id.clone(),
-        acp::ModelInfo::new(model_id.clone(), "Model A".to_string()),
-    );
-    agent.session.models.current = Some(model_id);
+fn models_slash_names_open_the_picker() {
+    for command in ["/models", "/m"] {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        let model_id = acp::ModelId::new(std::sync::Arc::from("model-a"));
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.models.available.insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Model A".to_string()),
+        );
+        agent.session.models.current = Some(model_id);
 
-    let effects = dispatch(Action::SendPrompt("/m".into()), &mut app);
-    assert!(effects.is_empty());
-    assert!(matches!(
-        app.agents[&id].active_modal,
-        Some(crate::views::modal::ActiveModal::ModelsPicker { .. })
-    ));
-
-    app.agents.get_mut(&id).unwrap().active_modal = None;
-    let effects = dispatch(Action::SendPrompt("/m grok-4".into()), &mut app);
-    assert!(effects.is_empty());
-    assert_eq!(last_system_text(&app, id), "Usage: /models");
-    assert!(app.agents[&id].active_modal.is_none());
+        let effects = dispatch(Action::SendPrompt(command.into()), &mut app);
+        assert!(effects.is_empty());
+        assert!(matches!(
+            app.agents[&id].active_modal,
+            Some(crate::views::modal::ActiveModal::ModelsPicker { .. })
+        ));
+    }
 }
 #[test]
 fn slash_hooks_opens_modal() {

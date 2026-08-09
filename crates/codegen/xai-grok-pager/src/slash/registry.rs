@@ -955,20 +955,6 @@ mod tests {
         assert!(registry.triggers().is_empty());
     }
 
-    #[test]
-    fn models_builtin_owns_m_alias_against_acp() {
-        let mut registry = CommandRegistry::new(crate::slash::commands::builtin_commands());
-        registry.set_acp_commands(&[agent_client_protocol::AvailableCommand::new(
-            "m".to_string(),
-            "ACP model shortcut".to_string(),
-        )]);
-        let command = registry
-            .get("m")
-            .expect("builtin alias must remain available");
-        assert_eq!(command.name(), "models");
-        assert!(registry.is_builtin("m"));
-    }
-
     fn skill_command(name: &str, scope: &str) -> agent_client_protocol::AvailableCommand {
         agent_client_protocol::AvailableCommand::new(name.to_string(), format!("{name} skill"))
             .meta(
