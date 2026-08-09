@@ -866,24 +866,39 @@ fn slash_new_uses_active_agent_cwd() {
     assert!(!app.agents[&new_id].session.is_worktree);
 }
 #[test]
-fn retired_model_names_produce_explicit_errors_without_passthrough() {
-    for text in ["/model nonexistent", "/m grok-4"] {
-        let mut app = test_app_with_agent();
-        let id = AgentId(0);
-        let initial_scrollback = app.agents[&id].scrollback.len();
-        let effects = dispatch(Action::SendPrompt(text.into()), &mut app);
-        assert!(
-            effects.is_empty(),
-            "retired command must not produce effects"
-        );
-        assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
-        assert!(app.agents[&id].session.pending_prompts.is_empty());
-        assert!(app.agents[&id].prompt.text().is_empty());
-        assert_eq!(
-            last_system_text(&app, id),
-            "/model has been removed; use /models."
-        );
-    }
+fn removed_model_name_is_an_unknown_command() {
+    let mut app = test_app_with_agent();
+    let effects = dispatch(Action::SendPrompt("/model nonexistent".into()), &mut app);
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::SendPrompt { text, .. }] if text == "/model nonexistent"
+    ));
+}
+
+#[test]
+fn slash_m_opens_the_models_picker_without_legacy_arguments() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("model-a"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.models.available.insert(
+        model_id.clone(),
+        acp::ModelInfo::new(model_id.clone(), "Model A".to_string()),
+    );
+    agent.session.models.current = Some(model_id);
+
+    let effects = dispatch(Action::SendPrompt("/m".into()), &mut app);
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::ModelsPicker { .. })
+    ));
+
+    app.agents.get_mut(&id).unwrap().active_modal = None;
+    let effects = dispatch(Action::SendPrompt("/m grok-4".into()), &mut app);
+    assert!(effects.is_empty());
+    assert_eq!(last_system_text(&app, id), "Usage: /models");
+    assert!(app.agents[&id].active_modal.is_none());
 }
 #[test]
 fn slash_hooks_opens_modal() {

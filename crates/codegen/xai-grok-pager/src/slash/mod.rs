@@ -1146,15 +1146,6 @@ pub fn parse_invocation(line: &str) -> Option<SlashInvocation<'_>> {
     Some(SlashInvocation { token, args })
 }
 
-/// Explicit error for retired slash names that must never pass through to
-/// inference or be restored by an ACP command with the same name.
-pub fn retired_command_error(token: &str) -> Option<&'static str> {
-    match token.to_ascii_lowercase().as_str() {
-        "model" | "m" => Some("/model has been removed; use /models."),
-        _ => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Completeness check
 // ---------------------------------------------------------------------------
@@ -1391,19 +1382,6 @@ mod tests {
         assert!(parse_invocation("").is_none());
     }
 
-    #[test]
-    fn retired_command_guard_is_case_insensitive() {
-        assert_eq!(
-            retired_command_error("MODEL"),
-            Some("/model has been removed; use /models.")
-        );
-        assert_eq!(
-            retired_command_error("m"),
-            Some("/model has been removed; use /models.")
-        );
-        assert_eq!(retired_command_error("models"), None);
-    }
-
     // -- is_command_complete tests --
 
     fn test_registry() -> CommandRegistry {
@@ -1428,13 +1406,13 @@ mod tests {
     }
 
     #[test]
-    fn retired_commands_are_complete_for_dispatch_guard() {
+    fn removed_model_is_unknown_while_m_uses_models_contract() {
         let reg = test_registry();
-        // Retired names are unknown to the registry, so Enter reaches the
-        // explicit dispatch guard instead of being blocked by arg validation.
         assert!(is_command_complete("/model", &reg));
         assert!(is_command_complete("/model grok-4", &reg));
+        assert!(is_command_complete("/m", &reg));
         assert!(is_command_complete("/m grok-4", &reg));
+        assert_eq!(reg.get("m").map(|command| command.name()), Some("models"));
     }
 
     #[test]

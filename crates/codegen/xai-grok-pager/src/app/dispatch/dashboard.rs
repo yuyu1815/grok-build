@@ -1248,14 +1248,6 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
             return vec![];
         };
 
-        if let Some(message) = crate::slash::retired_command_error(invocation.token) {
-            if let Some(dashboard) = app.dashboard.as_mut() {
-                dashboard.dispatch.set_text("");
-                dashboard.set_error_toast(message);
-            }
-            return vec![];
-        }
-
         // Get the slash registry from the dashboard's prompt widget.
         // The dashboard owns its own registry (populated at open time
         // with builtins + ACP commands from `bootstrap_acp_commands`).

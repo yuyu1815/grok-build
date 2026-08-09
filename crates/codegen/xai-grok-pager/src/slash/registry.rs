@@ -477,10 +477,9 @@ impl CommandRegistry {
         // even if the shell advertises them.
         const BLOCKED_NAMES: &[&str] = &[
             "help",
-            // Retired pager commands stay reserved so ACP commands/skills
-            // cannot silently restore their old semantics.
+            // The removed pager command stays unavailable as a top-level
+            // completion even if the shell advertises the same name.
             "model",
-            "m",
             // Block individual hook/plugin shell commands — the pager's
             // /hooks and /plugins builtins provide a unified modal instead.
             "hooks-list",
@@ -506,14 +505,13 @@ impl CommandRegistry {
 
             let command = AcpSlashCommand::from(acp_cmd);
             // Skills can be advertised under scope/plugin-qualified names such
-            // as `local:model` or `plugin-name:m`. Reserve those qualified
-            // variants too, while leaving arbitrary qualified non-skill ACP
-            // commands untouched.
+            // as `local:model`. Reserve those qualified variants too, while
+            // leaving arbitrary qualified non-skill ACP commands untouched.
             if command.is_skill()
                 && name_lower
                     .rsplit(':')
                     .next()
-                    .is_some_and(|name| matches!(name, "model" | "m"))
+                    .is_some_and(|name| name == "model")
             {
                 continue;
             }
@@ -946,23 +944,29 @@ mod tests {
     }
 
     #[test]
-    fn retired_model_names_are_blocked_from_acp() {
+    fn removed_model_name_is_blocked_from_acp() {
         let mut registry = CommandRegistry::new(vec![]);
-        registry.set_acp_commands(&[
-            agent_client_protocol::AvailableCommand::new(
-                "model".to_string(),
-                "Legacy model command".to_string(),
-            ),
-            agent_client_protocol::AvailableCommand::new(
-                "m".to_string(),
-                "Legacy model alias".to_string(),
-            ),
-        ]);
+        registry.set_acp_commands(&[agent_client_protocol::AvailableCommand::new(
+            "model".to_string(),
+            "Removed model command".to_string(),
+        )]);
         assert!(registry.get("model").is_none());
         assert!(registry.get_for_dispatch("model").is_none());
-        assert!(registry.get("m").is_none());
-        assert!(registry.get_for_dispatch("m").is_none());
         assert!(registry.triggers().is_empty());
+    }
+
+    #[test]
+    fn models_builtin_owns_m_alias_against_acp() {
+        let mut registry = CommandRegistry::new(crate::slash::commands::builtin_commands());
+        registry.set_acp_commands(&[agent_client_protocol::AvailableCommand::new(
+            "m".to_string(),
+            "ACP model shortcut".to_string(),
+        )]);
+        let command = registry
+            .get("m")
+            .expect("builtin alias must remain available");
+        assert_eq!(command.name(), "models");
+        assert!(registry.is_builtin("m"));
     }
 
     fn skill_command(name: &str, scope: &str) -> agent_client_protocol::AvailableCommand {
@@ -984,17 +988,9 @@ mod tests {
             skill_command("local:model", "local"),
             skill_command("user:model", "user"),
             skill_command("plugin-name:model", "plugin"),
-            skill_command("repo:m", "repo"),
-            skill_command("plugin-name:m", "plugin"),
         ]);
 
-        for name in [
-            "local:model",
-            "user:model",
-            "plugin-name:model",
-            "repo:m",
-            "plugin-name:m",
-        ] {
+        for name in ["local:model", "user:model", "plugin-name:model"] {
             assert!(registry.get(name).is_none(), "{name} must stay retired");
             assert!(
                 registry.get_for_dispatch(name).is_none(),

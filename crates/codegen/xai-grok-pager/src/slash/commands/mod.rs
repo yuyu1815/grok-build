@@ -177,7 +177,7 @@ mod tests {
         assert!(reg.get("compact").is_some());
         assert!(reg.get("models").is_some());
         assert!(reg.get("model").is_none());
-        assert!(reg.get("m").is_none());
+        assert_eq!(reg.get("m").map(|command| command.name()), Some("models"));
         assert!(reg.get("home").is_some());
         assert!(reg.get("view-plan").is_some());
         reg.set_available_tools(std::collections::HashSet::from([

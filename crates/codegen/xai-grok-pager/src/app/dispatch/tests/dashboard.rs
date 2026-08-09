@@ -1613,26 +1613,38 @@ fn seed_model(app: &mut AppView, id: &str, name: &str) {
     );
 }
 
-/// Retired model names typed on the dashboard are explicit errors and never
-/// spawn a session with the slash text as its first prompt.
+/// The removed `/model` name has no pager-specific behavior on the dashboard:
+/// like any unknown slash token, it becomes the new session's prompt.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
-fn dashboard_retired_model_names_do_not_spawn() {
-    for text in ["/model grok-4.5", "/m grok-4.5"] {
+fn dashboard_removed_model_name_uses_unknown_command_path() {
+    let mut app = test_app();
+    open_dashboard(&mut app);
+    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/model grok-4.5".into());
+    assert!(!effects.is_empty());
+    assert_eq!(app.agents.len(), 1);
+}
+
+#[serial_test::serial(GROK_AGENT_DASHBOARD)]
+#[test]
+fn dashboard_m_matches_models_surface_contract() {
+    let mut messages = Vec::new();
+    for text in ["/models", "/m", "/models grok-4.5", "/m grok-4.5"] {
         let mut app = test_app();
         open_dashboard(&mut app);
         let effects = dispatch_dashboard_dispatch_slash(&mut app, text.into());
         assert!(effects.is_empty());
         assert!(app.agents.is_empty());
-        let toast = app
-            .dashboard
-            .as_ref()
-            .unwrap()
-            .error_toast
-            .as_deref()
-            .expect("retired command must set an error toast");
-        assert!(toast.contains("/model has been removed; use /models."));
+        messages.push(
+            app.dashboard
+                .as_ref()
+                .unwrap()
+                .error_toast
+                .clone()
+                .expect("session-scoped picker must report its surface restriction"),
+        );
     }
+    assert!(messages.iter().all(|message| message == &messages[0]));
 }
 /// A tier-restricted command typed into the dashboard dispatch input must
 /// upsell via the feedback toast — not execute, and (crucially) not fall

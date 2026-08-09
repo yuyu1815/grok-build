@@ -141,7 +141,7 @@ pub trait SlashCommand: Send + Sync {
     /// Short human-readable description shown in the dropdown.
     fn description(&self) -> &str;
 
-    /// Usage string shown in help. E.g., `"/model <name>"`.
+    /// Usage string shown in help. E.g., `"/search [query]"`.
     fn usage(&self) -> &str;
 
     /// Whether the command accepts arguments at all.
@@ -157,7 +157,7 @@ pub trait SlashCommand: Send + Sync {
     /// |-------------|----------------|------------------|-------------------|
     /// | `false`     | `false`        | `/exit`          | Executes          |
     /// | `true`      | `false`        | `/compact [ctx]` | Executes          |
-    /// | `true`      | `true`         | `/model <id>`    | Blocks            |
+    /// | `true`      | `true`         | `/docs <topic>`  | Blocks            |
     fn args_required(&self) -> bool {
         false
     }
@@ -198,8 +198,8 @@ pub trait SlashCommand: Send + Sync {
     /// session-less surfaces (the agent dashboard's dispatch input).
     ///
     /// A handful of session-scoped commands have a meaningful session-less
-    /// interpretation: `/model` and `/plan` configure the *next* agent the
-    /// dashboard spawns; `/multiline` toggles compose mode on the dashboard
+    /// interpretation: `/plan` configures the *next* agent the dashboard
+    /// spawns; `/multiline` toggles compose mode on the dashboard
     /// inputs. Those override this to `true` so they appear in the dashboard
     /// dropdown even though `session_scoped()` is `true`. Has no effect for
     /// non-session-scoped commands (they're always offered).

@@ -10,6 +10,10 @@ impl SlashCommand for ModelsCommand {
         "models"
     }
 
+    fn aliases(&self) -> &[&str] {
+        &["m"]
+    }
+
     fn description(&self) -> &str {
         "Select model and reasoning effort"
     }
@@ -38,6 +42,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metadata_exposes_m_as_a_no_args_alias() {
+        assert_eq!(ModelsCommand.aliases(), &["m"]);
+        assert!(!ModelsCommand.takes_args());
+    }
+
+    #[test]
     fn empty_args_open_picker() {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
@@ -48,7 +58,7 @@ mod tests {
     }
 
     #[test]
-    fn non_empty_args_report_usage() {
+    fn non_empty_args_report_canonical_usage() {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
         assert!(matches!(
