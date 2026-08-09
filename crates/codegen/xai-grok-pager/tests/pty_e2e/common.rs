@@ -8,7 +8,7 @@ pub(crate) use std::time::{Duration, Instant};
 pub(crate) use xai_grok_pager_pty_harness::{
     ContentController, MockModel, PtyHarness, ScriptedResponse, SseEvent, keys,
     oauth_env_for_pager, pager_binary, seed_fake_oauth, select_model_from_picker, sse,
-    wait_for_labels_absent, wait_for_model_via_new_sessions,
+    start_dual_agent_type_content, wait_for_labels_absent, wait_for_model_via_new_sessions,
 };
 
 /// Default PTY size used by every e2e test. Large enough to render the

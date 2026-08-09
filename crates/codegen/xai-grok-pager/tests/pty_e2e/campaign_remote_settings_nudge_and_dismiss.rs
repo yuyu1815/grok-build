@@ -11,23 +11,26 @@ use super::common::*;
 ///   campaign nudging a *different* model → a (possibly not first — see
 ///   [`wait_for_model_via_new_sessions`]) new session opens on the
 ///   **campaign** model;
-/// - pick the config model via the `/models` picker → the remote campaign id is recorded
-///   dismissed in `campaigns_state.json`;
-/// - reboot against the *same* server settings → the **config** model wins
-///   and stays winning across `/new`.
+/// - pick a third, explicit model via the `/models` picker → the remote campaign
+///   id is recorded dismissed in `campaigns_state.json` and the picked model is
+///   persisted to `config.toml`;
+/// - reboot against the *same* server settings → the **picked** model wins and
+///   stays winning across `/new`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run with cargo test -p xai-grok-pager --test pty_e2e -- --ignored"]
 async fn campaign_remote_settings_nudge_and_dismiss() {
-    const CONFIG_MODEL: &str = "config-model";
+    const INITIAL_CONFIG_MODEL: &str = "initial-config-model";
     const CAMPAIGN_MODEL: &str = "campaign-model";
+    const PICKED_MODEL: &str = "picked-model";
     const CAMPAIGN_ID: &str = "e2e-remote-nudge";
 
     let content = ContentController::start_with_models(vec![
-        MockModel::new(CONFIG_MODEL),
+        MockModel::new(INITIAL_CONFIG_MODEL),
         MockModel::new(CAMPAIGN_MODEL),
+        MockModel::new(PICKED_MODEL),
     ])
     .await
-    .expect("start content with two models");
+    .expect("start content with three models");
 
     // Serve the campaign from the settings endpoint (replaces the preset, so
     // `allow_access` must be restated or the pager parks on the upsell screen).
@@ -43,7 +46,7 @@ async fn campaign_remote_settings_nudge_and_dismiss() {
     std::fs::create_dir_all(&grok_home).expect("create GROK_HOME");
     std::fs::write(
         grok_home.join("config.toml"),
-        format!("[models]\ndefault = \"{CONFIG_MODEL}\"\n"),
+        format!("[models]\ndefault = \"{INITIAL_CONFIG_MODEL}\"\n"),
     )
     .expect("write config.toml");
 
@@ -76,51 +79,61 @@ async fn campaign_remote_settings_nudge_and_dismiss() {
             h.screen_contents()
         );
 
-        // Explicit picker choice of the config model → persists default + dismisses.
-        select_model_from_picker(&mut h, CONFIG_MODEL, Duration::from_secs(15));
+        // Explicit picker choice of a third model → persists that choice and
+        // dismisses the campaign. Dismissal is intentionally written before
+        // config persistence, so wait for both durable postconditions.
+        select_model_from_picker(&mut h, PICKED_MODEL, Duration::from_secs(15));
 
-        // Deterministically wait for the dismiss to land on disk.
         let state_path = grok_home.join("campaigns_state.json");
+        let config_path = grok_home.join("config.toml");
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             h.update(Duration::from_millis(200));
             let dismissed = std::fs::read_to_string(&state_path)
                 .map(|s| s.contains(CAMPAIGN_ID))
                 .unwrap_or(false);
-            if dismissed {
+            let picked_persisted = std::fs::read_to_string(&config_path)
+                .map(|s| s.contains(&format!("default = \"{PICKED_MODEL}\"")))
+                .unwrap_or(false);
+            if dismissed && picked_persisted {
                 break;
             }
             assert!(
                 Instant::now() < deadline,
-                "remote campaign id should be recorded dismissed in {state_path:?}\nscreen:\n{}",
+                "remote campaign dismissal and picked model persistence must both land\nstate: {state_path:?}\nconfig: {config_path:?}\nscreen:\n{}",
                 h.screen_contents()
             );
         }
         h.quit().expect("clean quit");
     }
 
-    // ── Phase 3: reboot against the SAME settings → the config model wins. ──
+    // ── Phase 3: reboot against the SAME settings → the picked model wins. ──
     {
         let mut h = spawn();
         h.wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT)
             .expect("welcome renders after reboot");
-        h.wait_for_text(CONFIG_MODEL, Duration::from_secs(20))
+        h.wait_for_text(PICKED_MODEL, Duration::from_secs(20))
             .unwrap_or_else(|_| {
                 panic!(
-                    "after dismissal the config model must show\nscreen:\n{}",
+                    "after dismissal the explicitly picked model must show\nscreen:\n{}",
                     h.screen_contents()
                 )
             });
         // Give the settings fetch time to land, then prove a fresh session
-        // still resolves to the user's model (dismissed campaigns never
+        // still resolves to the picked model (dismissed campaigns never
         // re-apply, even once the remote campaign is in the cache).
         let _ = h.inject_keys(b"/new\r");
         h.update(Duration::from_millis(4000));
-        h.wait_for_text(CONFIG_MODEL, Duration::from_secs(10))
-            .expect("config model after post-fetch /new");
+        h.wait_for_text(PICKED_MODEL, Duration::from_secs(10))
+            .expect("picked model after post-fetch /new");
         assert!(
             !h.contains_text(CAMPAIGN_MODEL),
             "a dismissed remote campaign must not re-nudge the model\nscreen:\n{}",
+            h.screen_contents()
+        );
+        assert!(
+            !h.contains_text(INITIAL_CONFIG_MODEL),
+            "the stale initial config model must not beat the explicit pick\nscreen:\n{}",
             h.screen_contents()
         );
         h.quit().expect("clean quit");
