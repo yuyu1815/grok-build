@@ -126,13 +126,16 @@ impl SlashMru {
     }
 
     fn ensure_loaded(&mut self) {
+        self.ensure_loaded_from_path(Self::store_path());
+    }
+
+    fn ensure_loaded_from_path(&mut self, path: PathBuf) {
         if self.loaded || !self.persist_enabled {
             if !self.loaded {
                 self.loaded = true;
             }
             return;
         }
-        let path = Self::store_path();
         match fs::read(&path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 self.loaded = true;
@@ -152,13 +155,13 @@ impl SlashMru {
             Ok(bytes) => match serde_json::from_slice::<MruFile>(&bytes) {
                 Ok(file) => {
                     self.by_command = file.by_command;
-                    if self.by_command.is_empty() && !file.by_prefix.is_empty() {
-                        // Collapse legacy per-prefix buckets: max timestamp per command.
-                        for bucket in file.by_prefix.values() {
-                            for (cmd, ts) in bucket {
-                                let e = self.by_command.entry(cmd.clone()).or_insert(0);
-                                *e = (*e).max(*ts);
-                            }
+                    // Collapse every nonempty legacy per-prefix bucket into the
+                    // canonical map, even for mixed-schema files. Max preserves
+                    // the newest timestamp when both schemas contain a command.
+                    for bucket in file.by_prefix.values().filter(|bucket| !bucket.is_empty()) {
+                        for (cmd, ts) in bucket {
+                            let entry = self.by_command.entry(cmd.clone()).or_insert(0);
+                            *entry = (*entry).max(*ts);
                         }
                         self.dirty = true;
                     }
@@ -378,6 +381,58 @@ mod tests {
         assert!(snapshot["by_command"].get("model").is_none());
         assert!(snapshot["by_command"].get("m").is_none());
         assert!(!migrate_retired_model_keys(&mut map));
+    }
+
+    #[test]
+    fn mixed_schema_load_merges_and_persist_snapshot_cleans_legacy_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("slash-mru.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "by_command": {
+                    "models": 10,
+                    "model": 20,
+                    "help": 50,
+                    "shared": 15
+                },
+                "by_prefix": {
+                    "m": {
+                        "m": 30,
+                        "models": 25,
+                        "shared": 40
+                    },
+                    "h": {
+                        "help": 45,
+                        "history": 35
+                    },
+                    "empty": {}
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut mru = SlashMru::new();
+        mru.ensure_loaded_from_path(path.clone());
+        assert_eq!(mru.by_command.get("models"), Some(&30));
+        assert_eq!(mru.by_command.get("help"), Some(&50));
+        assert_eq!(mru.by_command.get("history"), Some(&35));
+        assert_eq!(mru.by_command.get("shared"), Some(&40));
+        assert!(!mru.by_command.contains_key("model"));
+        assert!(!mru.by_command.contains_key("m"));
+        assert!(mru.dirty, "mixed-schema migration must be persisted");
+
+        let snapshot = mru.take_persist_snapshot().expect("migration snapshot");
+        assert_eq!(snapshot.path, SlashMru::store_path());
+        let persisted: serde_json::Value = serde_json::from_slice(&snapshot.bytes).unwrap();
+        assert_eq!(persisted["by_command"]["models"], 30);
+        assert_eq!(persisted["by_command"]["help"], 50);
+        assert_eq!(persisted["by_command"]["history"], 35);
+        assert_eq!(persisted["by_command"]["shared"], 40);
+        assert!(persisted["by_command"].get("model").is_none());
+        assert!(persisted["by_command"].get("m").is_none());
+        assert_eq!(persisted["by_prefix"], serde_json::json!({}));
     }
 
     #[test]

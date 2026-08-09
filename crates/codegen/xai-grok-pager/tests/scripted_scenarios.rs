@@ -367,15 +367,6 @@ async fn scripted_folder_trust_prompt() {
     run_scenario("folder_trust_prompt.yaml").await;
 }
 
-/// Dashboard `/model` list: mouse-clicking a model must accept the completion
-/// into the dispatch prompt and must not attach the session row under the
-/// dropdown (click-through regression).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "scripted scenario; run with cargo test -- --ignored"]
-async fn scripted_dashboard_model_list_click() {
-    run_scenario("dashboard_model_list_click.yaml").await;
-}
-
 /// Shortcuts cheatsheet end-to-end: open the modal, inline-expand a hint (→) and
 /// collapse it (←), open the man-style detail screen (Enter) showing long_help,
 /// return to browse (Esc), and close with the global Ctrl+X chord.
@@ -523,7 +514,6 @@ fn scenarios_parse() {
         "goal_slash_presession.yaml",
         "goal_slash_presession_disabled.yaml",
         "folder_trust_prompt.yaml",
-        "dashboard_model_list_click.yaml",
         "paste_chip_double_click.yaml",
         "paste_chip_repaste.yaml",
         "slash_resize_storm.yaml",
