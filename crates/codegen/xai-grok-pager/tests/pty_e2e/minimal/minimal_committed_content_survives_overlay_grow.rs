@@ -41,14 +41,14 @@ async fn minimal_committed_content_survives_overlay_grow() {
     while Instant::now() < dropdown_deadline
         && !harness
             .screen_contents()
-            .contains("Switch the active model")
+            .contains("Select model and reasoning effort")
     {
         harness.update(Duration::from_millis(100));
     }
     assert!(
         harness
             .screen_contents()
-            .contains("Switch the active model"),
+            .contains("Select model and reasoning effort"),
         "slash dropdown must grow the viewport and render its items even when \
          committed content fills the screen\nscreen:\n{}\nscrollback:\n{}",
         harness.screen_contents(),

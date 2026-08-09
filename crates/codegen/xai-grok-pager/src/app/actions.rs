@@ -1336,7 +1336,7 @@ pub enum Effect {
         label: Option<String>,
         /// Optional branch/tag/commit to base the worktree on (CLI `--ref`).
         git_ref: Option<String>,
-        /// Staged dashboard `/model` selection, injected as `_meta.modelId`
+        /// Staged dashboard model selection, injected as `_meta.modelId`
         /// into the worktree's `NewSessionRequest` so it spawns with the
         /// right model — mirrors [`Effect::CreateSession::model_id`]. `None`
         /// for the welcome / CLI / fork paths.

@@ -206,8 +206,8 @@ pub fn render_dashboard(
                         None => state.set_peek(Some(super::peek::PeekPanelState::new(sel, fields))),
                     }
                     // `apply_fields` / `new` carry only the display snapshot;
-                    // the config badge is set live here so a `/model` switch
-                    // or yolo toggle reflects immediately.
+                    // the config badge is set live here so a model switch or
+                    // yolo toggle reflects immediately.
                     if let Some(p) = state.peek.as_mut() {
                         p.model_name = badge.model;
                         p.auto_approve = badge.yolo;
@@ -2740,8 +2740,8 @@ fn render_dispatch(
         // Bottom-right model + mode indicator, painted through the shared
         // prompt info-line renderer so its style, spacing, and position match
         // the chat prompt's info line exactly. Always shows the model the next
-        // spawned agent will use (the `/model`-staged choice, else the current
-        // default), plus the staged mode as a flag.
+        // spawned agent will use (the staged choice, else the current default),
+        // plus the staged mode as a flag.
         paint_dispatch_config_badge(buf, area, theme, state, input_focused);
         paint_record_badge(buf, area, theme, state.voice_listening);
         Rect {

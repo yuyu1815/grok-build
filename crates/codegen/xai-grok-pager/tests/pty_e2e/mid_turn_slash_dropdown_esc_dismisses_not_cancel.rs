@@ -33,11 +33,12 @@ async fn mid_turn_slash_dropdown_esc_dismisses_not_cancel() {
         .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
         .expect("stream started");
 
-    // Open the slash dropdown mid-turn. "/mod" narrows to `/model`, whose
-    // description renders only in the dropdown (not in the typed text).
+    // Open the slash dropdown mid-turn. "/mod" narrows to argumentless
+    // `/models`, whose description renders only in the dropdown (not in the
+    // typed text).
     inject_keys_paced(&mut harness, b"/mod");
     harness
-        .wait_for_text("Switch the active model", Duration::from_secs(10))
+        .wait_for_text("Select model and reasoning effort", Duration::from_secs(10))
         .expect("slash dropdown open mid-turn");
 
     // Esc: dropdown steals it (dismiss), the turn must keep running.
@@ -46,7 +47,7 @@ async fn mid_turn_slash_dropdown_esc_dismisses_not_cancel() {
 
     let screen = harness.screen_contents();
     assert!(
-        !screen.contains("Switch the active model"),
+        !screen.contains("Select model and reasoning effort"),
         "Esc must dismiss the slash dropdown\nscreen:\n{screen}"
     );
     assert!(

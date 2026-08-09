@@ -568,7 +568,7 @@ mod tests {
         assert!(rows <= MAX_DROPDOWN_ROWS);
 
         // All-short descriptions keep the one-row-per-item sizing.
-        let short = vec![row("/exit", "Quit"), row("/model", "Switch model")];
+        let short = vec![row("/exit", "Quit"), row("/theme", "Pick theme")];
         assert_eq!(desired_item_rows(&short, 60), 2);
     }
 

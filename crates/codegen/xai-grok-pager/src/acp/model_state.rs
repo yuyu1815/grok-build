@@ -187,10 +187,10 @@ impl ModelState {
         }
     }
 
-    /// Menu for a specific catalog model id (used by `/model`'s effort phase).
-    /// `parse_reasoning_efforts_meta` returns `None` for absent, non-array, or
-    /// present-but-unusable lists, so all of those fall back to the built-in menu
-    /// exactly as the shell's session picker does.
+    /// Menu for a specific catalog model id (used by the model picker's effort
+    /// controls). `parse_reasoning_efforts_meta` returns `None` for absent,
+    /// non-array, or present-but-unusable lists, so all of those fall back to the
+    /// built-in menu exactly as the shell's session picker does.
     pub(crate) fn reasoning_effort_options_for(
         &self,
         id: &acp::ModelId,

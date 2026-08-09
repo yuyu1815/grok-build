@@ -69,14 +69,13 @@ impl SlashCommand for ExportCommand {
 ///
 /// Parses the typed query to extract a directory prefix, lists its contents,
 /// and returns `ArgItem`s. Directories get a trailing `/` in `insert_text` so
-/// the dropdown stays open for drill-down (same trick `/model` uses with
-/// trailing space for effort chaining).
+/// the dropdown stays open for drill-down.
 ///
 /// The `SlashController` handles nucleo fuzzy ranking on the returned items
 /// automatically — we just provide the candidates.
 ///
-/// Synchronous `read_dir` — same pattern as `/model` and `/theme` which query
-/// `ModelState` synchronously. Local directory listing is sub-millisecond;
+/// Synchronous `read_dir` follows the other local argument providers. Local
+/// directory listing is sub-millisecond;
 /// the 1000-entry pre-sort cap guards against pathological directories.
 /// Moving to the `@`-style background daemon would require adding tick-based
 /// polling to the slash command system (which is currently event-driven only).

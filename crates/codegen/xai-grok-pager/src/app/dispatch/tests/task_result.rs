@@ -679,7 +679,7 @@ fn switch_model_complete_persists_resolved_effort_from_catalog_meta() {
         Action::TaskComplete(TaskResult::SwitchModelComplete {
             agent_id: id,
             model_id: model_id.clone(),
-            effort: None, // user typed `/model Blackbox 4.7` with no effort
+            effort: None, // user selected Blackbox 4.7 without changing effort
             result: Ok(()),
             prev_model_id: None,
         }),

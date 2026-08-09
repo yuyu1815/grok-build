@@ -6070,7 +6070,7 @@ fn pr14_string_settings_use_known_model_validator() {
                     *source,
                     DynamicEnumSource::ActiveModelCatalog,
                     "`{key}` must pull choices from the active model catalog \
-                     so the picker matches `/model`'s UX"
+                     so the setting matches the model picker's UX"
                 );
             }
             other => panic!("expected DynamicEnum kind for `{key}`, got {other:?}"),

@@ -1407,7 +1407,7 @@ impl PickerState {
     }
 
     /// Open directly in input mode (`search_active = true`) — for type-to-find
-    /// pickers (command palette, `/model` & `/theme` arg picker) so typing
+    /// pickers (command palette and `/theme` arg picker) so typing
     /// filters immediately. Under `vim_normal_first`, Esc still drops to nav and
     /// `i` re-enters input.
     pub fn input_active() -> Self {
@@ -3356,8 +3356,8 @@ mod tests {
     }
 
     /// `input_active()` opens directly in input mode; `default()` does not.
-    /// Used by type-to-find pickers (command palette, `/model` & `/theme` arg
-    /// picker) so typing filters immediately on open.
+    /// Used by type-to-find pickers (command palette and `/theme` arg picker)
+    /// so typing filters immediately on open.
     #[test]
     fn input_active_starts_in_search_mode() {
         assert!(PickerState::input_active().search_active);

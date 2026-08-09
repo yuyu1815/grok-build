@@ -183,21 +183,6 @@ pub(crate) fn spawn_polling_session_with_env(
     harness
 }
 
-// ── Agent type mismatch e2e tests ──────────────────────────────────────
-
-/// Start the mock server with two models that have different agent types,
-/// and return a `ContentController` configured for agent-type-mismatch
-/// testing. The default model is `"default-model"` (no agent type → uses
-/// `grok-build` harness).
-pub(crate) async fn start_dual_agent_type_content() -> ContentController {
-    ContentController::start_with_models(vec![
-        MockModel::new("default-model"),
-        MockModel::with_agent_type("cursor-model", "cursor"),
-    ])
-    .await
-    .expect("start content with dual agent types")
-}
-
 // ── Folder-trust welcome sub-state e2e ──────────────────────────────────
 
 /// Title line of the folder-trust question (see `render_welcome_trust`).

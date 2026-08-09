@@ -151,7 +151,7 @@ Tools can be extended with [MCP servers](05-configuration.md#mcp-servers) for in
 Type `/` in the prompt to access commands. These provide quick actions without writing a full prompt:
 
 ```
-/model grok-build                 # Switch model
+/models                          # Open model picker
 /compact                          # Compress conversation history
 /always-approve                   # Toggle always-approve mode
 /new                              # Start a new session

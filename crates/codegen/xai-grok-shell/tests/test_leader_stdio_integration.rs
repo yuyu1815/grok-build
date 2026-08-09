@@ -1353,8 +1353,8 @@ async fn test_set_model_broadcasts_to_session_subscribers() {
     assert_eq!(inv2["result"]["meta"]["model"], "grok-4");
 
     // --- Follower: must receive the broadcast (this is the fix — before
-    // this notification existed, the follower's status bar / `/model`
-    // dropdown / prompt header stayed stuck on the pre-switch model).
+    // this notification existed, the follower's status bar / model picker /
+    // prompt header stayed stuck on the pre-switch model).
     // It must NOT receive the targeted response (that one is routed
     // by request id to the invoker only).
     let follower_msg = tokio::time::timeout(Duration::from_secs(2), follower.recv())

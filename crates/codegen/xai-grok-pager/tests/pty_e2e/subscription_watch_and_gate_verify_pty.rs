@@ -227,7 +227,7 @@ fn spawn_subscription_session(
 ///
 /// Also covers W-17: after free→paid unblock the shell refreshes the model
 /// catalog with a **paid** JWT (mock IdP on `:22255`) and the paid-only model
-/// id appears in the `/model` picker — not merely that `/v1/models` was called.
+/// id appears in the `/models` picker — not merely that `/v1/models` was called.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "PTY e2e; run with cargo test -p xai-grok-pager --test pty_e2e -- --ignored"]
 async fn subscription_watch_polls_free_tier_then_goes_dormant_after_upgrade() {
@@ -290,14 +290,16 @@ async fn subscription_watch_polls_free_tier_then_goes_dormant_after_upgrade() {
         "model catalog re-fetch after free→paid subscription unblock",
     );
 
-    // Stronger than a GET count: switch to the paid-only model id. Status bar
-    // shows it on success (same pattern as same_agent_type_switch_no_modal).
+    // Stronger than a GET count: open the argumentless picker and prove the
+    // refreshed paid-only catalog entry is selectable. Do not turn `/models`
+    // into a legacy argument-taking switch command.
     harness
-        .inject_keys(format!("/model {PAID_ONLY_MODEL}\r").as_bytes())
-        .expect("switch to paid-only model");
+        .inject_keys(b"/models\r")
+        .expect("open models picker");
     harness
         .wait_for_text(PAID_ONLY_MODEL, Duration::from_secs(20))
-        .expect("paid-only model applied after upgrade catalog refresh");
+        .expect("paid-only model visible after upgrade catalog refresh");
+    harness.inject_keys(keys::ESC).expect("close models picker");
 
     // Dormancy: once the paid tier lands, a full 6s quiet window (>=6
     // would-be ticks at the 1s cadence) passes with zero new checks.
