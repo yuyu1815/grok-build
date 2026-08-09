@@ -3593,9 +3593,21 @@ impl ConfigModelOverride {
         base: Option<ModelEntry>,
         endpoints: &EndpointsConfig,
     ) -> ModelEntry {
+        let is_config_only = base.is_none();
         let mut entry = base.unwrap_or_else(|| ModelEntry::fallback(key, endpoints));
         if let Some(ref v) = self.model {
             entry.info.model = v.clone();
+        }
+        if is_config_only
+            && self.reasoning_effort.is_none()
+            && self.supports_reasoning_effort.is_none()
+            && self.reasoning_efforts.is_empty()
+            && let Some(policy) =
+                crate::remote::openai_reasoning_effort::policy_for_model(&entry.info.model)
+        {
+            entry.info.reasoning_effort = Some(policy.default);
+            entry.info.supports_reasoning_effort = true;
+            entry.info.reasoning_efforts = policy.options();
         }
         if let Some(ref v) = self.base_url {
             entry.info.base_url = v.clone();

@@ -1733,6 +1733,60 @@ mod tests {
     }
 
     #[test]
+    fn config_only_openai_model_uses_reasoning_policy() {
+        use xai_grok_sampling_types::ReasoningEffort;
+
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.6-sol".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                model: Some("gpt-5.6-sol".to_owned()),
+                api_backend: Some(crate::sampling::ApiBackend::ChatCompletions),
+                context_window: Some(272_000),
+                ..Default::default()
+            },
+        );
+
+        let resolved = crate::agent::config::resolve_model_list(&cfg, None);
+        let info = &resolved["gpt-5.6-sol"].info;
+        assert!(info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, Some(ReasoningEffort::Medium));
+        assert_eq!(
+            info.reasoning_efforts
+                .iter()
+                .map(|option| option.value)
+                .collect::<Vec<_>>(),
+            vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::Xhigh,
+                ReasoningEffort::Max,
+            ]
+        );
+    }
+
+    #[test]
+    fn config_only_openai_model_preserves_explicit_reasoning_disable() {
+        let mut cfg = crate::agent::config::Config::default();
+        cfg.config_models.insert(
+            "gpt-5.6-sol".to_owned(),
+            crate::agent::config::ConfigModelOverride {
+                model: Some("gpt-5.6-sol".to_owned()),
+                supports_reasoning_effort: Some(false),
+                ..Default::default()
+            },
+        );
+
+        let resolved = crate::agent::config::resolve_model_list(&cfg, None);
+        let info = &resolved["gpt-5.6-sol"].info;
+        assert!(!info.supports_reasoning_effort);
+        assert_eq!(info.reasoning_effort, None);
+        assert!(info.reasoning_efforts.is_empty());
+    }
+
+    #[test]
     fn config_explicit_false_disables_openai_reasoning_policy() {
         let mut cfg = crate::agent::config::Config::default();
         cfg.config_models.insert(

@@ -5,13 +5,13 @@ use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
 /// IDs are deliberately enumerated. Matching is case-sensitive and accepts only
 /// the exact ID or the final `/`-delimited segment of a provider-prefixed ID.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OpenAiReasoningEffortPolicy {
-    pub(super) allowed: &'static [ReasoningEffort],
-    pub(super) default: ReasoningEffort,
+pub(crate) struct OpenAiReasoningEffortPolicy {
+    pub(crate) allowed: &'static [ReasoningEffort],
+    pub(crate) default: ReasoningEffort,
 }
 
 impl OpenAiReasoningEffortPolicy {
-    pub(super) fn options(self) -> Vec<ReasoningEffortOption> {
+    pub(crate) fn options(self) -> Vec<ReasoningEffortOption> {
         self.allowed
             .iter()
             .copied()
@@ -58,7 +58,7 @@ const GPT_5_6: OpenAiReasoningEffortPolicy = OpenAiReasoningEffortPolicy {
     default: ReasoningEffort::Medium,
 };
 
-pub(super) fn policy_for_model(model: &str) -> Option<OpenAiReasoningEffortPolicy> {
+pub(crate) fn policy_for_model(model: &str) -> Option<OpenAiReasoningEffortPolicy> {
     let exact_id = model.rsplit('/').next()?;
     match exact_id {
         "gpt-5.5" | "gpt-5.5-2026-04-23" => Some(GPT_5_5),
