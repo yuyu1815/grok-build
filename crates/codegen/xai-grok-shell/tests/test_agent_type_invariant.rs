@@ -1,13 +1,16 @@
 //! Agent-type invariant integration tests.
 //!
 //! These tests exercise the full shell lifecycle via ACP stdio against a mock
-//! inference server, verifying that `agent_type = f(model)` holds across:
+//! inference server, verifying that `agent_type = f(model)` holds across the
+//! integration boundaries represented here:
 //!
 //! - Session creation with default models
-//! - Zero-turn model switching (harness rebuild)
-//! - Mid-session model switching (rejection)
 //! - Same-type model switching (no rebuild)
 //! - Session resume
+//! - The `GROK_AGENT` override
+//!
+//! Picker-driven incompatible switches and their confirmation modal are covered
+//! by the pager PTY suite.
 //!
 //! Each test spawns a real `grok agent stdio` process, speaks the full ACP
 //! protocol, and asserts on the inference request bodies (system prompt) and

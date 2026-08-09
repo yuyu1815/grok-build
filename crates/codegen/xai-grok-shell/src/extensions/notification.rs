@@ -715,7 +715,7 @@ pub enum SessionUpdate {
     ///
     /// Broadcast to every client subscribed to the session in leader mode so
     /// follower clients (TUI / IDE / web) mirror the change in their local
-    /// state — status bar, `/model` dropdown, prompt header, etc. The
+    /// state — status bar, model picker, prompt header, etc. The
     /// originating client also receives this (the leader broadcasts to all
     /// subscribers of the session) but skips applying it because its in-flight
     /// `SetSessionModel` response is the authority for its local state and

@@ -1169,7 +1169,7 @@ impl PromptWidget {
         let text_len = self.textarea.text().len();
 
         let applied = if snap.cursor_in_command {
-            // Replace the command range (e.g., "/mo" → "/model ").
+            // Replace the command range (e.g., "/th" → "/theme ").
             if let Some(ref range) = snap.command_range {
                 // Guard: range must be valid for the current text.
                 if range.end <= text_len
@@ -1178,8 +1178,8 @@ impl PromptWidget {
                 {
                     // The row's trailing space is its args separator; absorb
                     // an existing plain-text one so accepting mid-token in
-                    // `/mod grok-4` yields `/model grok-4`, not `/model  grok-4`
-                    // — absorb (rather than trim the insert) so the cursor
+                    // `/th dark` yields `/theme dark`, not `/theme  dark` —
+                    // absorb (rather than trim the insert) so the cursor
                     // lands after the separator, in the args phase. Never
                     // absorb an element's byte: a chip's leading space is chip
                     // data, and replace_range expands any overlap to the whole

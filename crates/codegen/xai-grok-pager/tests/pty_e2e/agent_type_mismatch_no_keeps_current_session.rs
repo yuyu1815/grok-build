@@ -2,9 +2,9 @@
 #[allow(unused_imports)]
 use super::common::*;
 
-/// 7. **Agent type mismatch — "No" returns to current session.**
-/// Selecting "No" dismisses the modal and keeps the current session
-/// with its original model.
+/// **Agent type mismatch — picker switch then "No" keeps the current session.**
+/// Selecting a different-harness model through `/models` opens the confirmation
+/// modal; choosing "No" dismisses it and keeps the original session/model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn agent_type_mismatch_no_keeps_current_session() {
@@ -30,9 +30,7 @@ async fn agent_type_mismatch_no_keeps_current_session() {
         .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
         .expect("response rendered");
 
-    harness
-        .inject_keys(b"/model cursor-model\r")
-        .expect("type model switch");
+    select_model_from_picker(&mut harness, "cursor-model", Duration::from_secs(15));
 
     // Wait for the modal.
     harness

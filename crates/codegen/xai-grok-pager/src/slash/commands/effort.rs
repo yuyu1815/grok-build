@@ -1,7 +1,7 @@
 //! `/effort` — set reasoning effort on the current model without re-picking it.
 //!
 //! Thin wrapper over `Action::SwitchModel` with the session's current model
-//! id and the chosen effort (same wire path as `/model <name> <effort>`).
+//! id and the chosen effort (the same wire path used by the model picker).
 
 use crate::app::actions::Action;
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};

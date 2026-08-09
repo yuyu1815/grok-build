@@ -1,4 +1,4 @@
-//! Shared reasoning-effort dropdown levels for `/model` and `/effort`.
+//! Shared reasoning-effort dropdown levels for `/effort`.
 
 use xai_grok_shell::sampling::types::{ReasoningEffort, ReasoningEffortOption};
 
@@ -44,9 +44,8 @@ pub(crate) fn legacy_effort_options() -> Vec<ReasoningEffortOption> {
 /// Build effort rows for autocomplete from a per-model option list.
 ///
 /// - `mark_active` + `current_effort` mark the current session effort with `(active)`.
-/// - `insert_text_for` controls what is inserted on select:
-///   - `/effort`: the option id (`"deep"`)
-///   - `/model` chained phase: `"ModelName deep"`
+/// `insert_text_for` controls what is inserted on select; `/effort` inserts the
+/// option id (for example, `"deep"`).
 ///
 /// `match_text` gets an `a `/`b `/…` sort prefix so the matcher's alphabetical
 /// tiebreak preserves the option order.

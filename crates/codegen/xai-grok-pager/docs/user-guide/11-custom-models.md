@@ -26,21 +26,17 @@ grok -p "Hello" -m grok-build
 
 ### Slash Command
 
-In the TUI, switch models during a session:
+In the TUI, open the model picker during a session:
 
 ```
-/model grok-build
+/models
 ```
 
-Or use the alias:
-
-```
-/m grok-build
-```
+The command is argumentless; select the model from the picker.
 
 ### Model Picker (Ctrl+M)
 
-Press `Ctrl+M` from the scrollback pane to open the model picker. It lists all available models, both built-in and custom, and lets you switch with a single keystroke. With the prompt focused, `Ctrl+M` toggles multiline input instead -- use `/model` to switch without leaving the prompt.
+Press `Ctrl+M` from the scrollback pane to open the model picker. It lists all available models, both built-in and custom, and lets you switch with a single keystroke. With the prompt focused, `Ctrl+M` toggles multiline input instead -- use `/models` to open the picker without leaving the prompt.
 
 ### Config Default
 
@@ -311,8 +307,8 @@ supports_backend_search = true
 # List available models (including custom)
 grok models
 
-# Use in the TUI via slash command
-/model my-model
+# Open the TUI model picker
+/models
 
 # Use in headless mode
 grok -p "Hello" -m my-model

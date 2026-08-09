@@ -948,8 +948,8 @@ fn dashboard_confirm_worktree_without_git_repo_creates_nothing() {
     );
 }
 
-/// The worktree dispatch path threads the dashboard's staged `/model` +
-/// `/plan` through the same way the normal path does: the model id rides on
+/// The worktree dispatch path threads the dashboard's staged model + plan-mode
+/// choices through the same way the normal path does: the model id rides on
 /// the `CreateWorktreeSession` effect, the effort is stashed as a deferred
 /// switch, and plan mode is deferred + optimistic. Regression — the worktree
 /// branch used to drop the staged config entirely.
@@ -1604,7 +1604,7 @@ fn dashboard_roster_switches_on_leader_mode() {
     assert_eq!(app.dashboard_roster()[0].session_id, "local-sess");
 }
 
-/// Seed a model into the app catalog for `/model` tests.
+/// Seed a model into the app catalog for model-selection tests.
 fn seed_model(app: &mut AppView, id: &str, name: &str) {
     let model_id = acp::ModelId::new(std::sync::Arc::from(id));
     app.models.available.insert(

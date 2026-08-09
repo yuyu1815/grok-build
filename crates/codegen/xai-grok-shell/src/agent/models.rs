@@ -398,7 +398,7 @@ impl ModelsManager {
 
     pub fn set_current_model_id(&self, id: acp::ModelId) {
         // Only bump the model-switch generation on a real change.
-        // The pager's `/model` handler can call this with the
+        // The pager's model-selection handler can call this with the
         // already-active id during re-resolution; bumping the counter
         // in that case would needlessly cancel a healthy in-flight
         // classifier call and zero the per-session nudge counter.
@@ -1611,7 +1611,7 @@ fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {
 /// Map a model id (catalog key or routing slug) to its catalog key.
 ///
 /// Sessions persist the routing slug (`[model.X].model`, e.g. `grok-4.5`);
-/// the catalog and `/model` picker use config keys (e.g. `enterprise-grok-build`).
+/// the catalog and model picker use config keys (e.g. `enterprise-grok-build`).
 /// Last slug match wins so user overrides beat defaults (matches `MvpAgent::resolve_model_id`).
 pub(crate) fn resolve_catalog_key(
     models: &IndexMap<String, ModelEntry>,
@@ -2696,7 +2696,7 @@ mod tests {
         let prefetched = make_prefetched(&["grok-3", "grok-4"]);
         mgr.apply_refresh_result(&cfg, Some(prefetched), None);
 
-        // User runs /model grok-4.
+        // User selects grok-4 in the model picker.
         mgr.set_current_model_id(acp::ModelId::new("grok-4"));
 
         // Auth refresh races — clears prefetched/etag.

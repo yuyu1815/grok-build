@@ -7,8 +7,8 @@ pub(crate) use std::path::Path;
 pub(crate) use std::time::{Duration, Instant};
 pub(crate) use xai_grok_pager_pty_harness::{
     ContentController, MockModel, PtyHarness, ScriptedResponse, SseEvent, keys,
-    oauth_env_for_pager, pager_binary, seed_fake_oauth, sse, wait_for_labels_absent,
-    wait_for_model_via_new_sessions,
+    oauth_env_for_pager, pager_binary, seed_fake_oauth, select_model_from_picker, sse,
+    start_dual_agent_type_content, wait_for_labels_absent, wait_for_model_via_new_sessions,
 };
 
 /// Default PTY size used by every e2e test. Large enough to render the
@@ -181,21 +181,6 @@ pub(crate) fn spawn_polling_session_with_env(
         .wait_for_text(MOCK_RESPONSE_SENTINEL, Duration::from_secs(30))
         .expect("session response");
     harness
-}
-
-// ── Agent type mismatch e2e tests ──────────────────────────────────────
-
-/// Start the mock server with two models that have different agent types,
-/// and return a `ContentController` configured for agent-type-mismatch
-/// testing. The default model is `"default-model"` (no agent type → uses
-/// `grok-build` harness).
-pub(crate) async fn start_dual_agent_type_content() -> ContentController {
-    ContentController::start_with_models(vec![
-        MockModel::new("default-model"),
-        MockModel::with_agent_type("cursor-model", "cursor"),
-    ])
-    .await
-    .expect("start content with dual agent types")
 }
 
 // ── Folder-trust welcome sub-state e2e ──────────────────────────────────

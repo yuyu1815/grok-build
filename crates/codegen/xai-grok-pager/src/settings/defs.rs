@@ -753,7 +753,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             hidden_in_minimal: false,
         },
         // SHELL-owned. Reads from `pager.current_model_name` (not
-        // `cfg.models.default`) so the modal reflects `/model` switches.
+        // `cfg.models.default`) so the modal reflects live model switches.
         // Empty-string default = "no opinion" / use shell's resolution.
         SettingMeta {
             key: "default_model",

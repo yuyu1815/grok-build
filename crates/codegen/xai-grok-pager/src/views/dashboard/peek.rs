@@ -400,7 +400,7 @@ pub struct PeekModeBadge {
 }
 
 /// The peeked row's current config-badge state. Sourced live (not via
-/// [`PeekFields`]) so it always reflects a `/model` switch or a Shift+Tab mode
+/// [`PeekFields`]) so it always reflects a model switch or a Shift+Tab mode
 /// change. A subagent shows its own model when its view is loaded, else the
 /// parent's; always-approve and auto follow the parent (subagents run under the
 /// parent's permission mode) and subagents have no plan mode of their own.

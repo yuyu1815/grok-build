@@ -1000,8 +1000,8 @@ pub struct ModelsConfig {
     /// default with the catalog guard; see `ModelOverrideConfig::resolve`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_suggestion: Option<String>,
-    /// Restricts which models are user-selectable for normal chat (picker,
-    /// `/model`, `-m`). Non-matching models stay in the catalog but are never
+    /// Restricts which models are user-selectable for normal chat (model picker
+    /// and CLI `-m`). Non-matching models stay in the catalog but are never
     /// shown, defaulted to, or selectable. Special/internal models (web_search,
     /// image_description, subagents, fork secondary) are exempt.
     ///
@@ -3699,8 +3699,8 @@ pub struct ModelInfo {
     pub model: String,
     /// The base URL of the model (session endpoint). e.g. "https://cli-chat-proxy.grok.com/v1"
     pub base_url: String,
-    /// Human-readable name of the model. Honored by both the picker
-    /// (`/model`) and `/session-info` -- when set, that's the label shown
+    /// Human-readable name of the model. Honored by both the model picker and
+    /// `/session-info` -- when set, that's the label shown
     /// to users in either consumer.
     pub name: Option<String>,
     pub description: Option<String>,

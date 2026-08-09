@@ -223,7 +223,7 @@
     /// A follower client (no in-flight switch of its own) receives the
     /// leader's `ModelChanged` broadcast and silently mirrors the new model
     /// into its local state — no scrollback entry, no toast, just enough
-    /// state for the status bar / `/model` dropdown to render correctly.
+    /// state for the status bar and model picker to render correctly.
     #[test]
     fn model_changed_updates_state_silently_on_follower() {
         let mut app = make_app_with_agent("sess-1");
@@ -363,7 +363,7 @@
 
     /// A `ModelChanged` broadcast carrying a model id the local catalog
     /// doesn't know about must be dropped — applying it would render an
-    /// unresolvable id in the status bar and desync the `/model` dropdown.
+    /// unresolvable id in the status bar and desync the model picker.
     /// This can happen when leader and a follower client briefly disagree
     /// on the model catalog (etag drift, custom-model config skew).
     #[test]

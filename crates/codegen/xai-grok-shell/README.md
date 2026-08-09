@@ -439,7 +439,7 @@ Type `/` in the input to access commands:
 
 | Command                            | Alias     | Description                                              |
 | ---------------------------------- | --------- | -------------------------------------------------------- |
-| `/model <name>`                    | `/m`      | Switch to a different model                              |
+| `/models`                         |           | Open the model and reasoning-effort picker               |
 | `/new`                             |           | Start a new session (clears context)                     |
 | `/load [workspace] [session]`      | `/resume` | Load a previous session                                  |
 | `/rewind <prompt>`                 |           | Rewind to a previous prompt (restores files)             |
@@ -458,7 +458,7 @@ Type `/` in the input to access commands:
 
 ```bash
 # Example usage in TUI:
-/model grok-build
+/models
 /new
 /rewind
 /feedback Something isn't working
@@ -1803,8 +1803,8 @@ env_key = "OPENAI_API_KEY"
 # List available models (including custom)
 grok models
 
-# Use in TUI via slash command
-/model my-model
+# Open the TUI model picker
+/models
 
 # Use in headless mode
 grok -p "Hello" -m my-model

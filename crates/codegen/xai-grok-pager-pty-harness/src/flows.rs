@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::{ContentController, PtyHarness};
+use crate::{ContentController, MockModel, PtyHarness};
 
 /// Pump PTY output until every label in `labels` is absent from the screen, or
 /// until `timeout` elapses. Reattach tests use this to wait out a slow replay
@@ -117,6 +117,17 @@ pub fn oauth_env_for_pager(content: &ContentController) -> Vec<(String, String)>
     env
 }
 
+/// Start the mock server with the default `test-model` catalog entry plus a
+/// `cursor-model` entry that resolves to a different agent harness.
+pub async fn start_dual_agent_type_content() -> ContentController {
+    ContentController::start_with_models(vec![
+        MockModel::new("test-model"),
+        MockModel::with_agent_type("cursor-model", "cursor"),
+    ])
+    .await
+    .expect("start content with dual agent types")
+}
+
 /// Drive `/new` until `model` shows on screen. Campaigns apply to **new
 /// sessions only** and the pager's settings prefetch is deliberately 2s-capped,
 /// so on a loaded runner the first session can legitimately open pre-campaign;
@@ -132,5 +143,49 @@ pub fn wait_for_model_via_new_sessions(h: &mut PtyHarness, model: &str, timeout:
         }
         let _ = h.inject_keys(b"/new\r");
         h.update(Duration::from_millis(3000));
+    }
+}
+
+/// Select `model` through the argumentless `/models` picker.
+///
+/// The picker opens with search input active, so entering the exact model id
+/// narrows the catalog and Enter commits the remaining row. This intentionally
+/// drives the real user interaction rather than reviving the retired
+/// `/model <id>` command contract.
+pub fn select_model_from_picker(h: &mut PtyHarness, model: &str, timeout: Duration) {
+    inject_keys_paced(h, b"/models", "open models picker");
+    h.inject_keys(b"\r").expect("submit /models");
+    h.wait_for_text("Model selection", timeout)
+        .unwrap_or_else(|_| {
+            panic!(
+                "model picker did not open while selecting {model:?}\nscreen:\n{}",
+                h.screen_contents()
+            )
+        });
+
+    inject_keys_paced(h, model.as_bytes(), "filter models picker by model id");
+    h.wait_for_text(model, timeout).unwrap_or_else(|_| {
+        panic!(
+            "model {model:?} did not appear in filtered picker\nscreen:\n{}",
+            h.screen_contents()
+        )
+    });
+    h.inject_keys(b"\r").expect("select filtered model");
+
+    // Drain until the picker closes (or a short cap expires) so callers can
+    // immediately wait on the modal, persisted config, or other post-selection
+    // state rather than racing the Enter write still sitting in the PTY queue.
+    let close_deadline = Instant::now() + Duration::from_secs(2);
+    while h.contains_text("Model selection") && Instant::now() < close_deadline {
+        h.update(Duration::from_millis(100));
+    }
+}
+
+fn inject_keys_paced(h: &mut PtyHarness, keys: &[u8], context: &str) {
+    for &byte in keys {
+        h.inject_keys(&[byte]).unwrap_or_else(|err| {
+            panic!("failed to {context}: {err}");
+        });
+        h.update(Duration::from_millis(50));
     }
 }

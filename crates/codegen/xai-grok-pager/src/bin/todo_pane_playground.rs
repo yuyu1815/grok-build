@@ -40,7 +40,7 @@ fn scenarios() -> Vec<Scenario> {
             "Default show_done=true lists rows; press h → should NOT say All done.",
             vec![
                 item("Wire vim mode into command palette", TodoStatus::Completed),
-                item("Wire vim mode into /model picker", TodoStatus::Completed),
+                item("Wire vim mode into model picker", TodoStatus::Completed),
                 item("Wire vim mode into /theme picker", TodoStatus::Completed),
                 item("Wire vim mode into /resume picker", TodoStatus::Completed),
                 item("Wire vim mode into sessions modal", TodoStatus::Completed),

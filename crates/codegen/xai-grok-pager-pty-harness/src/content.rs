@@ -43,8 +43,8 @@ impl ContentController {
     }
 
     /// Start the mock server with a custom set of models returned by
-    /// `GET /v1/models`. Use [`MockModel::with_agent_type`] to configure
-    /// models with different harness types for agent-type-mismatch tests.
+    /// `GET /v1/models`. Use [`MockModel::with_agent_type`] when a test needs
+    /// model metadata that selects a different agent harness.
     pub async fn start_with_models(models: Vec<MockModel>) -> Result<Self> {
         let server = MockInferenceServer::start_with_models(models)
             .await

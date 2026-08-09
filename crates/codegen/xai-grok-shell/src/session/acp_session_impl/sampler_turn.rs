@@ -818,7 +818,7 @@ impl SessionActor {
                     "\n\n  '{}' is not in your available models.",
                     current_model
                 ));
-                msg.push_str("\n  Switch models with /model or start a new session.");
+                msg.push_str("\n  Switch models with /models or start a new session.");
             }
             msg
         } else {

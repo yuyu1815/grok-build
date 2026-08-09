@@ -175,7 +175,7 @@ pub enum SessionCommand {
         /// Re-resolved auto-compact threshold for the new model. Computed
         /// by `MvpAgent` against the new model id so per-model remote settings
         /// and per-model user TOML overrides target the right model after a
-        /// `/model` switch. The session actor stores this on
+        /// model switch. The session actor stores this on
         /// `compaction.threshold_percent` (which is `Cell<u8>` so it can
         /// update without `&mut self`).
         auto_compact_threshold_percent: u8,

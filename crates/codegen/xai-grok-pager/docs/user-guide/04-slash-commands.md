@@ -126,17 +126,15 @@ Aliases: `/title`
 
 ## Model and Mode
 
-### `/model <name>`
+### `/models`
 
-Switch to a different model. Accepts model IDs or display names (case-insensitive). For reasoning models you can also pass an effort level as a second argument:
+Open the model picker. Choose a model from the catalog and, when supported, adjust its reasoning effort before confirming.
 
 ```
-/model grok-build
-/model Grok Build
-/model Reasoning X high
+/models
 ```
 
-Aliases: `/m`
+`/models` does not accept arguments. Use `/effort` to change only the current model's reasoning effort.
 
 ### `/effort <level>`
 

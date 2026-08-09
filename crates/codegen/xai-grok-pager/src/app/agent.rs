@@ -119,7 +119,7 @@ impl QueuedPrompt {
 /// Each variant carries the data needed for execution and display.
 /// Using an enum instead of a String gives us:
 /// - Type safety (can't misspell command names)
-/// - Variant-specific data (e.g., `/model` would carry target model)
+/// - Variant-specific data (e.g., model-switch actions carry a target model)
 /// - Proper rendering per command type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentCommand {
@@ -681,20 +681,20 @@ pub struct AgentSession {
     /// `Some(_)` enables tool-gating in the slash registry; `None` keeps
     /// every command visible (avoids bootstrap flicker).
     pub available_tools: Option<HashSet<String>>,
-    /// Whether a `/model` switch is in flight. Dims the status-bar model name
+    /// Whether a model switch is in flight. Dims the status-bar model name
     /// and holds the queue drain (`maybe_drain_queue`) so a queued prompt isn't
     /// sent on the old harness mid-switch. Cleared on
     /// `SwitchModelComplete`, or by `begin_session_reload` when a reconnect
     /// drops the in-flight RPC — else a lost completion jams the queue forever.
     pub model_switch_pending: bool,
-    /// Model the user chose this session via `/model` / the model picker, or
+    /// Model the user chose this session via the model picker, or
     /// the last successfully applied live remote `ModelChanged` (leader-mode
     /// fan-out). Survives reconnect (`begin_session_reload` does **not** clear
     /// it). History-replay silent-revert of a prior choice is suppressed on the
     /// shell side via `ReconnectState::user_selected_model`; the pager still
     /// applies live remote switches and updates this field to match.
     pub user_model_preference: Option<acp::ModelId>,
-    /// `/model X [effort]` issued before the session was ready, applied on SessionCreated.
+    /// Model/effort choice made before the session was ready, applied on SessionCreated.
     pub deferred_model_switch: Option<(acp::ModelId, Option<ReasoningEffort>)>,
     /// Central bg task state, keyed by task_id.
     pub bg_tasks: BTreeMap<String, BgTaskState>,
