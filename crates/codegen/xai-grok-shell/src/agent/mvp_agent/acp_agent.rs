@@ -958,10 +958,9 @@ impl acp::Agent for MvpAgent {
                         origin_client.clone(),
                     )
             });
-        if let Some(effort) = self.models_manager.current_reasoning_effort()
-            && self
-                .models_manager
-                .model_supports_reasoning_effort(&session_sampling.model)
+        if let Some(effort) = self
+            .models_manager
+            .current_reasoning_effort_for_model(&session_sampling.model)
         {
             session_sampling.reasoning_effort = Some(effort);
         }

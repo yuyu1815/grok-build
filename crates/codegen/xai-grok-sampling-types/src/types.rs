@@ -770,6 +770,7 @@ pub enum ReasoningEffort {
     Medium,
     High,
     Xhigh,
+    Max,
 }
 
 impl ReasoningEffort {
@@ -780,7 +781,7 @@ impl ReasoningEffort {
             Self::Low => crate::rs::ReasoningEffort::Low,
             Self::Medium => crate::rs::ReasoningEffort::Medium,
             Self::High => crate::rs::ReasoningEffort::High,
-            Self::Xhigh => crate::rs::ReasoningEffort::Xhigh,
+            Self::Xhigh | Self::Max => crate::rs::ReasoningEffort::Xhigh,
         }
     }
 
@@ -805,6 +806,7 @@ impl ReasoningEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Xhigh => "xhigh",
+            Self::Max => "max",
         }
     }
 
@@ -815,7 +817,9 @@ impl ReasoningEffort {
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
             Self::High => Some("high"),
-            Self::Xhigh => Some("max"),
+            // Anthropic's strongest tier is named `max`. Preserve the existing
+            // Xhigh mapping while also passing canonical OpenAI Max through.
+            Self::Xhigh | Self::Max => Some("max"),
         }
     }
 }
@@ -836,7 +840,8 @@ impl std::str::FromStr for ReasoningEffort {
             "low" => Ok(Self::Low),
             "medium" => Ok(Self::Medium),
             "high" => Ok(Self::High),
-            "xhigh" | "max" => Ok(Self::Xhigh), // max is a CLI/UX alias of xhigh
+            "xhigh" => Ok(Self::Xhigh),
+            "max" => Ok(Self::Max),
             _ => Err(format!(
                 "invalid reasoning effort: {s:?} (expected one of: none, minimal, low, medium, high, xhigh, max)"
             )),
@@ -844,13 +849,28 @@ impl std::str::FromStr for ReasoningEffort {
     }
 }
 
-/// Canonical wire parse only (`max` → `Xhigh`); remapped menu ids need a model catalog.
+/// Canonical wire parse only; remapped menu ids need a model catalog.
 pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
     token.parse().ok()
 }
 
 pub const REASONING_EFFORT_META_KEY: &str = "reasoningEffort";
 pub const SUPPORTS_REASONING_EFFORT_META_KEY: &str = "supportsReasoningEffort";
+/// Internal response metadata used when async-openai cannot represent the
+/// echoed OpenAI `max` effort distinctly from `xhigh`.
+pub const RESPONSE_REASONING_EFFORT_META_KEY: &str = "xai.reasoning_effort";
+
+/// Preserve canonical OpenAI `max` on the Responses API wire until
+/// async-openai adds a distinct variant. Other efforts already serialize
+/// correctly through its typed request.
+pub fn patch_responses_reasoning_effort(
+    body: &mut serde_json::Value,
+    effort: Option<ReasoningEffort>,
+) {
+    if effort == Some(ReasoningEffort::Max) {
+        body["reasoning"]["effort"] = serde_json::Value::String("max".to_string());
+    }
+}
 
 pub fn supports_reasoning_effort_meta(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
@@ -1059,10 +1079,14 @@ pub struct SamplingConfig {
 /// Wrapper around `async_openai::types::responses::CreateResponse` that adds
 /// custom header fields for xAI request tracking, similar to
 /// `ChatCompletionRequest`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateResponseWrapper {
     /// The inner Responses API request.
     pub inner: crate::rs::CreateResponse,
+
+    /// Canonical effort before conversion to async-openai's wire type. Kept
+    /// separately because async-openai currently has no distinct `max` variant.
+    reasoning_effort: Option<ReasoningEffort>,
 
     /// Custom header: conversation ID for tracking.
     pub x_grok_conv_id: Option<String>,
@@ -1086,10 +1110,18 @@ pub struct CreateResponseWrapper {
 }
 
 impl CreateResponseWrapper {
-    /// Create a new wrapper from an existing `CreateResponse`.
-    pub fn new(inner: crate::rs::CreateResponse) -> Self {
+    /// Wrap a typed Responses request together with its canonical effort.
+    ///
+    /// The effort is mandatory constructor input because async-openai's typed
+    /// request cannot distinguish OpenAI `max` from `xhigh`. Omitting it would
+    /// silently lose information before the body is patched for transmission.
+    pub fn new(
+        inner: crate::rs::CreateResponse,
+        reasoning_effort: Option<ReasoningEffort>,
+    ) -> Self {
         Self {
             inner,
+            reasoning_effort,
             x_grok_conv_id: None,
             x_grok_req_id: None,
             x_grok_session_id: None,
@@ -1100,6 +1132,11 @@ impl CreateResponseWrapper {
             trace: None,
             extra_raw_tools: vec![],
         }
+    }
+
+    /// Canonical effort retained for post-serialization wire correction.
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
     }
 
     /// Set the conversation ID header.
@@ -1118,12 +1155,6 @@ impl CreateResponseWrapper {
     pub fn with_trace(mut self, trace: impl TraceContext + 'static) -> Self {
         self.trace = Some(Box::new(trace));
         self
-    }
-}
-
-impl From<crate::rs::CreateResponse> for CreateResponseWrapper {
-    fn from(inner: crate::rs::CreateResponse) -> Self {
-        Self::new(inner)
     }
 }
 
@@ -1207,6 +1238,7 @@ mod tests {
             ReasoningEffort::Medium,
             ReasoningEffort::High,
             ReasoningEffort::Xhigh,
+            ReasoningEffort::Max,
         ] {
             let json = serde_json::to_string(&v).unwrap();
             assert_eq!(json, format!("\"{}\"", v.as_str()), "serialize {v:?}");
@@ -1214,31 +1246,31 @@ mod tests {
             assert_eq!(back, v, "round-trip {v:?}");
         }
         assert!(serde_json::from_str::<ReasoningEffort>("\"BOGUS\"").is_err());
-        assert!(serde_json::from_str::<ReasoningEffort>("\"max\"").is_err());
     }
 
     #[test]
-    fn reasoning_effort_from_str_accepts_max_as_xhigh() {
+    fn reasoning_effort_from_str_distinguishes_max_from_xhigh() {
         assert_eq!(
             "max".parse::<ReasoningEffort>().unwrap(),
-            ReasoningEffort::Xhigh
+            ReasoningEffort::Max
         );
         assert_eq!(
             "MAX".parse::<ReasoningEffort>().unwrap(),
-            ReasoningEffort::Xhigh
+            ReasoningEffort::Max
         );
         assert_eq!(
             "xhigh".parse::<ReasoningEffort>().unwrap(),
             ReasoningEffort::Xhigh
         );
         assert_eq!(ReasoningEffort::Xhigh.as_str(), "xhigh");
+        assert_eq!(ReasoningEffort::Max.as_str(), "max");
     }
 
     #[test]
     fn parse_canonical_effort_token_helper() {
         assert_eq!(
             parse_canonical_effort_token("max"),
-            Some(ReasoningEffort::Xhigh)
+            Some(ReasoningEffort::Max)
         );
         assert_eq!(
             parse_canonical_effort_token("high"),

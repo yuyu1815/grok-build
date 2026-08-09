@@ -440,6 +440,12 @@ impl ModelsManager {
         *self.inner.current_reasoning_effort.read()
     }
 
+    /// Current effort only when the target model actually offers it.
+    pub fn current_reasoning_effort_for_model(&self, model_id: &str) -> Option<ReasoningEffort> {
+        self.current_reasoning_effort()
+            .filter(|effort| self.model_offers_reasoning_effort(model_id, *effort))
+    }
+
     pub fn set_current_reasoning_effort(&self, effort: Option<ReasoningEffort>) {
         *self.inner.current_reasoning_effort.write() = effort;
     }
@@ -452,6 +458,13 @@ impl ModelsManager {
             .get(model_id)
             .map(|e| e.info().supports_reasoning_effort)
             .unwrap_or(false)
+    }
+
+    /// Whether `effort` is offered by this model's explicit menu or the legacy fallback.
+    pub fn model_offers_reasoning_effort(&self, model_id: &str, effort: ReasoningEffort) -> bool {
+        let models = self.inner.models.read();
+        config::find_model_by_id(&models, model_id)
+            .is_some_and(|entry| entry.info().offers_reasoning_effort(effort))
     }
 
     /// The catalog default reasoning effort for `model_id`, if the catalog
@@ -1873,11 +1886,11 @@ pub fn resolve_model_catalog(
     }
 
     // Persisted default first; CLI override below wins when set.
-    // Only apply if the model supports reasoning effort.
+    // Apply only when the model's explicit menu or legacy fallback offers it.
     if let Some(effort) = cfg.models.default_reasoning_effort
         && let Some(default_id) = cfg.models.default.as_deref()
         && let Some(entry) = catalog.get_mut(default_id)
-        && entry.info.supports_reasoning_effort
+        && entry.info.offers_reasoning_effort(effort)
     {
         entry.info.reasoning_effort = Some(effort);
     }
@@ -1887,35 +1900,13 @@ pub fn resolve_model_catalog(
     // must not stamp `none` onto grok-4.5, which only offers low/medium/high).
     if let Some(effort) = cfg.reasoning_effort_override {
         for entry in catalog.values_mut() {
-            if model_offers_reasoning_effort(&entry.info, effort) {
+            if entry.info.offers_reasoning_effort(effort) {
                 entry.info.reasoning_effort = Some(effort);
             }
         }
     }
 
     catalog
-}
-
-/// Whether `effort` is a value this model will accept on the wire.
-///
-/// Uses the server `reasoning_efforts` menu when present; otherwise the
-/// built-in low/medium/high/xhigh set (same as the pager legacy menu — no
-/// `none`/`minimal`).
-fn model_offers_reasoning_effort(info: &config::ModelInfo, effort: ReasoningEffort) -> bool {
-    if !info.supports_reasoning_effort {
-        return false;
-    }
-    if info.reasoning_efforts.is_empty() {
-        matches!(
-            effort,
-            ReasoningEffort::Low
-                | ReasoningEffort::Medium
-                | ReasoningEffort::High
-                | ReasoningEffort::Xhigh
-        )
-    } else {
-        info.reasoning_efforts.iter().any(|opt| opt.value == effort)
-    }
 }
 
 /// True when an active `allowed_models` allowlist leaves no selectable model.
@@ -2232,6 +2223,52 @@ mod tests {
     }
 
     #[test]
+    fn model_offer_validation_uses_explicit_menu_or_legacy_fallback() {
+        let mgr = test_manager();
+        let mut legacy = ModelEntry {
+            info: config::ModelInfo::fallback("legacy"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        legacy.info.supports_reasoning_effort = true;
+        mgr.insert_test_entry("legacy-key", legacy);
+
+        let mut explicit = ModelEntry {
+            info: config::ModelInfo::fallback("explicit"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        explicit.info.supports_reasoning_effort = true;
+        explicit.info.reasoning_efforts = vec![ReasoningEffortOption {
+            id: "max".into(),
+            value: ReasoningEffort::Max,
+            label: "Max".into(),
+            description: None,
+            default: true,
+        }];
+        mgr.insert_test_entry("explicit-key", explicit);
+
+        assert!(mgr.model_offers_reasoning_effort("legacy", ReasoningEffort::Xhigh));
+        assert!(!mgr.model_offers_reasoning_effort("legacy", ReasoningEffort::Max));
+        assert!(mgr.model_offers_reasoning_effort("explicit", ReasoningEffort::Max));
+        assert!(!mgr.model_offers_reasoning_effort("explicit", ReasoningEffort::High));
+
+        mgr.set_current_reasoning_effort(Some(ReasoningEffort::Max));
+        assert_eq!(mgr.current_reasoning_effort_for_model("legacy"), None);
+        assert_eq!(
+            mgr.current_reasoning_effort_for_model("explicit"),
+            Some(ReasoningEffort::Max)
+        );
+        mgr.set_current_reasoning_effort(Some(ReasoningEffort::Xhigh));
+        assert_eq!(
+            mgr.current_reasoning_effort_for_model("legacy"),
+            Some(ReasoningEffort::Xhigh)
+        );
+    }
+
+    #[test]
     fn current_reasoning_effort_seeded_from_config() {
         let tmp = std::env::temp_dir().join("grok-test-models-manager-seed");
         let auth_manager = Arc::new(AuthManager::new(&tmp, GrokComConfig::default()));
@@ -2295,6 +2332,49 @@ mod tests {
     }
 
     #[test]
+    fn persisted_default_reasoning_effort_requires_model_offer() {
+        let mut cfg = config::Config::default();
+        cfg.models.default = Some("legacy-fallback".to_string());
+        cfg.models.default_reasoning_effort = Some(ReasoningEffort::Max);
+
+        let mut legacy = ModelEntry {
+            info: config::ModelInfo::fallback("legacy-fallback"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        legacy.info.supports_reasoning_effort = true;
+        legacy.info.reasoning_effort = Some(ReasoningEffort::High);
+        let catalog = resolve_model_catalog(
+            &cfg,
+            Some(IndexMap::from([("legacy-fallback".to_string(), legacy)])),
+        );
+        assert_eq!(
+            catalog["legacy-fallback"].info.reasoning_effort,
+            Some(ReasoningEffort::High),
+            "persisted max must not override a model whose legacy fallback omits max"
+        );
+
+        cfg.models.default_reasoning_effort = Some(ReasoningEffort::Xhigh);
+        let mut legacy = ModelEntry {
+            info: config::ModelInfo::fallback("legacy-fallback"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        legacy.info.supports_reasoning_effort = true;
+        let catalog = resolve_model_catalog(
+            &cfg,
+            Some(IndexMap::from([("legacy-fallback".to_string(), legacy)])),
+        );
+        assert_eq!(
+            catalog["legacy-fallback"].info.reasoning_effort,
+            Some(ReasoningEffort::Xhigh),
+            "existing valid legacy effort must remain accepted"
+        );
+    }
+
+    #[test]
     fn reasoning_effort_override_skips_models_that_do_not_offer_level() {
         use indexmap::IndexMap;
         use xai_grok_sampling_types::ReasoningEffortOption;
@@ -2350,6 +2430,31 @@ mod tests {
             catalog["legacy-none"].info.reasoning_effort,
             Some(ReasoningEffort::None),
             "models that list none should still accept the override"
+        );
+    }
+
+    #[test]
+    fn reasoning_effort_override_rejects_max_without_catalog_option() {
+        let cfg = config::Config {
+            reasoning_effort_override: Some(ReasoningEffort::Max),
+            ..Default::default()
+        };
+        let mut entry = ModelEntry {
+            info: config::ModelInfo::fallback("legacy-fallback"),
+            api_key: None,
+            env_key: None,
+            api_base_url: None,
+        };
+        entry.info.supports_reasoning_effort = true;
+        entry.info.reasoning_effort = Some(ReasoningEffort::High);
+        let catalog = resolve_model_catalog(
+            &cfg,
+            Some(IndexMap::from([("legacy-fallback".to_string(), entry)])),
+        );
+        assert_eq!(
+            catalog["legacy-fallback"].info.reasoning_effort,
+            Some(ReasoningEffort::High),
+            "PR1 must not add max to the model-agnostic fallback menu"
         );
     }
 

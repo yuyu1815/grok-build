@@ -231,8 +231,8 @@ impl ModelState {
         {
             return Some(option.value);
         }
-        // Canonical level (e.g. "high", "max"→xhigh) only if the model menu
-        // actually offers that value — not free-form power-user aliases that
+        // Canonical level (e.g. "high" or "max") only if the model menu
+        // actually offers that exact value — not free-form power-user tokens that
         // would 400 on the server (e.g. `none` on grok-4.5).
         let parsed = token.parse::<ReasoningEffort>().ok()?;
         options
@@ -611,13 +611,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_effort_token_legacy_menu_rejects_none() {
-        // supportsReasoningEffort without a server list → built-in low..xhigh.
+    fn resolve_effort_token_legacy_menu_rejects_unoffered_canonical_levels() {
+        // PR1 keeps the fallback menu at low..xhigh. `max` is now a distinct
+        // canonical value, but models without a catalog `max` option must reject
+        // it until the model-specific fallback work lands separately.
         let state = state_with_meta(Some(serde_json::json!({
             "supportsReasoningEffort": true,
         })));
-        assert!(state.resolve_effort_token("none").is_none());
-        assert!(state.resolve_effort_token("minimal").is_none());
+        for token in ["none", "minimal", "max"] {
+            assert!(
+                state.resolve_effort_token(token).is_none(),
+                "fallback menu must reject unoffered canonical token {token}"
+            );
+        }
         assert_eq!(
             state.resolve_effort_token("low"),
             Some(ReasoningEffort::Low)

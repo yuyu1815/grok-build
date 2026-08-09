@@ -1935,10 +1935,17 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
     // The server echoes the applied reasoning config; record the effort with
     // the same per-response provenance as `model`/`system_fingerprint`.
     let reasoning_effort = response
-        .reasoning
+        .metadata
         .as_ref()
-        .and_then(|r| r.effort.clone())
-        .map(crate::ReasoningEffort::from_responses_api);
+        .and_then(|m| m.get(crate::RESPONSE_REASONING_EFFORT_META_KEY))
+        .and_then(|s| s.parse().ok())
+        .or_else(|| {
+            response
+                .reasoning
+                .as_ref()
+                .and_then(|r| r.effort.clone())
+                .map(crate::ReasoningEffort::from_responses_api)
+        });
 
     let mut items: Vec<ConversationItem> = Vec::with_capacity(response.output.len() + 1);
     let mut content = String::new();
@@ -5078,6 +5085,7 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "max"),
+            (crate::ReasoningEffort::Max, "max"),
         ] {
             let req = messages_test_request(Some(variant));
             let msgs = build_messages_request(&req);
@@ -5126,6 +5134,7 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "xhigh"),
+            (crate::ReasoningEffort::Max, "max"),
         ] {
             let req = ConversationRequest::from_items(vec![ConversationItem::user("hi")])
                 .with_model("test");
@@ -5165,6 +5174,7 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "xhigh"),
+            (crate::ReasoningEffort::Max, "max"),
         ] {
             let req = ConversationRequest {
                 reasoning_effort: Some(variant),
@@ -5172,7 +5182,8 @@ mod tests {
                     .with_model("test")
             };
             let resp: crate::rs::CreateResponse = (&req).into();
-            let json = serde_json::to_value(&resp).unwrap();
+            let mut json = serde_json::to_value(&resp).unwrap();
+            crate::patch_responses_reasoning_effort(&mut json, req.reasoning_effort);
             assert_eq!(
                 json.pointer("/reasoning/effort").and_then(|v| v.as_str()),
                 Some(expected),

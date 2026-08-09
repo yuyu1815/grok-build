@@ -2258,8 +2258,14 @@ impl MvpAgent {
         let override_effort = session_id
             .and_then(|sid| self.sessions.borrow().get(sid).map(|h| h.reasoning_effort))
             .flatten()
-            .or_else(|| self.models_manager.current_reasoning_effort());
+            .or_else(|| {
+                self.models_manager
+                    .current_reasoning_effort_for_model(model_id.0.as_ref())
+            });
         if let Some(override_effort) = override_effort
+            && self
+                .models_manager
+                .model_offers_reasoning_effort(model_id.0.as_ref(), override_effort)
             && let Some(info) = available_models
                 .iter_mut()
                 .find(|info| info.model_id == model_id)
@@ -2305,11 +2311,18 @@ impl MvpAgent {
                     self.sessions.borrow().get(sid).map(|h| h.reasoning_effort)
                 })
                 .flatten()
-                .or_else(|| self.models_manager.current_reasoning_effort())
+                .or_else(|| {
+                    self.models_manager
+                        .current_reasoning_effort_for_model(model_id.0.as_ref())
+                })
                 .or_else(|| {
                     self
                         .models_manager
                         .model_default_reasoning_effort(model_id.0.as_ref())
+                })
+                .filter(|effort| {
+                    self.models_manager
+                        .model_offers_reasoning_effort(model_id.0.as_ref(), *effort)
                 })
         } else {
             None
