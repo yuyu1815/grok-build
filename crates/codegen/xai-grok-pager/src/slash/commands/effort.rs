@@ -203,16 +203,15 @@ mod tests {
     }
 
     #[test]
-    fn canonical_levels_rejected_when_model_menu_omits_them() {
-        // PR1 keeps the legacy fallback menu at low..xhigh. Canonical values
-        // outside that menu, including the new distinct `max`, are rejected
-        // instead of being silently remapped or sent to an unsupported model.
+    fn none_and_minimal_rejected_when_model_menu_omits_them() {
+        // Legacy fallback menu is low..xhigh — `none`/`minimal` used to pass
+        // through and 400 on grok-4.5; reject at the TUI instead.
         let mut state = ModelState::default();
         let (id, info) = model_with_reasoning("reasoning-x", "Reasoning X");
         state.available.insert(id.clone(), info);
         state.current = Some(id);
         let mut ctx = dummy_exec_ctx(&state);
-        for token in ["none", "minimal", "max"] {
+        for token in ["none", "minimal"] {
             let result = EffortCommand.run(&mut ctx, token);
             match result {
                 CommandResult::Error(ref msg) => {

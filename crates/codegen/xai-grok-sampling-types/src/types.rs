@@ -856,21 +856,6 @@ pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
 
 pub const REASONING_EFFORT_META_KEY: &str = "reasoningEffort";
 pub const SUPPORTS_REASONING_EFFORT_META_KEY: &str = "supportsReasoningEffort";
-/// Internal response metadata used when async-openai cannot represent the
-/// echoed OpenAI `max` effort distinctly from `xhigh`.
-pub const RESPONSE_REASONING_EFFORT_META_KEY: &str = "xai.reasoning_effort";
-
-/// Preserve canonical OpenAI `max` on the Responses API wire until
-/// async-openai adds a distinct variant. Other efforts already serialize
-/// correctly through its typed request.
-pub fn patch_responses_reasoning_effort(
-    body: &mut serde_json::Value,
-    effort: Option<ReasoningEffort>,
-) {
-    if effort == Some(ReasoningEffort::Max) {
-        body["reasoning"]["effort"] = serde_json::Value::String("max".to_string());
-    }
-}
 
 pub fn supports_reasoning_effort_meta(
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
@@ -1079,14 +1064,10 @@ pub struct SamplingConfig {
 /// Wrapper around `async_openai::types::responses::CreateResponse` that adds
 /// custom header fields for xAI request tracking, similar to
 /// `ChatCompletionRequest`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateResponseWrapper {
     /// The inner Responses API request.
     pub inner: crate::rs::CreateResponse,
-
-    /// Canonical effort before conversion to async-openai's wire type. Kept
-    /// separately because async-openai currently has no distinct `max` variant.
-    reasoning_effort: Option<ReasoningEffort>,
 
     /// Custom header: conversation ID for tracking.
     pub x_grok_conv_id: Option<String>,
@@ -1110,18 +1091,10 @@ pub struct CreateResponseWrapper {
 }
 
 impl CreateResponseWrapper {
-    /// Wrap a typed Responses request together with its canonical effort.
-    ///
-    /// The effort is mandatory constructor input because async-openai's typed
-    /// request cannot distinguish OpenAI `max` from `xhigh`. Omitting it would
-    /// silently lose information before the body is patched for transmission.
-    pub fn new(
-        inner: crate::rs::CreateResponse,
-        reasoning_effort: Option<ReasoningEffort>,
-    ) -> Self {
+    /// Create a new wrapper from an existing `CreateResponse`.
+    pub fn new(inner: crate::rs::CreateResponse) -> Self {
         Self {
             inner,
-            reasoning_effort,
             x_grok_conv_id: None,
             x_grok_req_id: None,
             x_grok_session_id: None,
@@ -1132,11 +1105,6 @@ impl CreateResponseWrapper {
             trace: None,
             extra_raw_tools: vec![],
         }
-    }
-
-    /// Canonical effort retained for post-serialization wire correction.
-    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
-        self.reasoning_effort
     }
 
     /// Set the conversation ID header.
@@ -1155,6 +1123,12 @@ impl CreateResponseWrapper {
     pub fn with_trace(mut self, trace: impl TraceContext + 'static) -> Self {
         self.trace = Some(Box::new(trace));
         self
+    }
+}
+
+impl From<crate::rs::CreateResponse> for CreateResponseWrapper {
+    fn from(inner: crate::rs::CreateResponse) -> Self {
+        Self::new(inner)
     }
 }
 
