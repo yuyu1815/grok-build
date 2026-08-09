@@ -8,8 +8,8 @@ pub(crate) use serde_json::json;
 pub(crate) use std::time::{Duration, Instant};
 pub(crate) use xai_grok_pager_pty_harness::{
     ContentController, LeaderCluster, MockModel, PtyHarness, inference_request_count, keys,
-    oauth_env_for_pager, pager_binary, seed_fake_oauth, submit_turn, wait_for_labels_absent,
-    wait_for_model_via_new_sessions,
+    oauth_env_for_pager, pager_binary, seed_fake_oauth, select_model_from_picker, submit_turn,
+    wait_for_labels_absent, wait_for_model_via_new_sessions,
 };
 
 /// Default PTY size used by every e2e test (same as `pty_e2e`).

@@ -38,8 +38,8 @@ pub mod timing;
 pub use content::{ContentController, MockModel, ScriptedResponse, SseEvent, sse};
 pub use env::pager_binary;
 pub use flows::{
-    inference_request_count, oauth_env_for_pager, seed_fake_oauth, submit_turn,
-    wait_for_labels_absent, wait_for_model_via_new_sessions,
+    inference_request_count, oauth_env_for_pager, seed_fake_oauth, select_model_from_picker,
+    submit_turn, wait_for_labels_absent, wait_for_model_via_new_sessions,
 };
 pub use host_clipboard::HostClipboardTextGuard;
 pub use leader::LeaderCluster;

@@ -29,6 +29,7 @@ mod common;
 mod scroll;
 
 mod agent_response;
+mod agent_type_mismatch_no_keeps_current_session;
 mod ansi_scrollback_content_integrity;
 mod auto_compact_top_row;
 mod auto_wake_cancel_preserves_queued_user_prompt;
@@ -41,6 +42,7 @@ mod bash_mode_tab_completion_dropdown;
 mod bash_queued_mid_turn_drains_as_bash;
 mod bracketed_ime_paste_skips_clipboard_image_linux;
 mod bracketed_ime_paste_skips_clipboard_image_macos;
+mod campaign_remote_settings_nudge_and_dismiss;
 mod cancel_discards_buffered_interjection;
 mod cancel_then_resend_prompt_appears_once;
 mod continue_resumes_session_with_history;

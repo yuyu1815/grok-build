@@ -291,7 +291,7 @@ async fn subscription_watch_polls_free_tier_then_goes_dormant_after_upgrade() {
     );
 
     // Stronger than a GET count: open the argumentless picker and prove the
-    // refreshed paid-only catalog entry is selectable. Do not turn `/models`
+    // refreshed paid-only catalog entry is visible. Do not turn `/models`
     // into a legacy argument-taking switch command.
     harness
         .inject_keys(b"/models\r")

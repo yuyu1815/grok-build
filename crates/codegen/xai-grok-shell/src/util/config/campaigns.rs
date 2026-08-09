@@ -540,8 +540,8 @@ mod tests {
 
     /// Contract: `persist_user_choice(["models","default"], ..)` dismisses only
     /// campaigns that touch that path, never a sibling-field campaign. The full
-    /// wiring (set_default_model -> persist -> dismiss) is covered end to end by
-    /// the pager `pty_e2e` campaign test.
+    /// `/models` picker -> set_default_model -> persist -> dismiss wiring is
+    /// covered end to end by the pager campaign PTY tests.
     #[test]
     fn models_default_persist_targets_only_model_campaigns() {
         let model_campaign = CampaignEntry {

@@ -134,3 +134,29 @@ pub fn wait_for_model_via_new_sessions(h: &mut PtyHarness, model: &str, timeout:
         h.update(Duration::from_millis(3000));
     }
 }
+
+/// Select `model` through the argumentless `/models` picker.
+///
+/// The picker opens with search input active, so entering the exact model id
+/// narrows the catalog and Enter commits the remaining row. This intentionally
+/// drives the real user interaction rather than reviving the retired
+/// `/model <id>` command contract.
+pub fn select_model_from_picker(h: &mut PtyHarness, model: &str, timeout: Duration) {
+    h.inject_keys(b"/models\r").expect("open models picker");
+    h.wait_for_text("Model selection", timeout)
+        .unwrap_or_else(|_| {
+            panic!(
+                "model picker did not open while selecting {model:?}\nscreen:\n{}",
+                h.screen_contents()
+            )
+        });
+    h.inject_keys(model.as_bytes())
+        .expect("filter models picker by model id");
+    h.wait_for_text(model, timeout).unwrap_or_else(|_| {
+        panic!(
+            "model {model:?} did not appear in filtered picker\nscreen:\n{}",
+            h.screen_contents()
+        )
+    });
+    h.inject_keys(b"\r").expect("select filtered model");
+}
