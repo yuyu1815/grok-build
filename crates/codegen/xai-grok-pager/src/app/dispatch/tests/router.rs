@@ -33,6 +33,37 @@ fn seed_foreign_resume_hint(
         }),
     );
 }
+
+#[test]
+fn open_models_picker_with_empty_catalog_reports_system_message() {
+    let mut app = test_app_with_agent();
+    let effects = dispatch(Action::OpenModelsPicker, &mut app);
+    assert!(effects.is_empty());
+    let agent = app.agents.get(&AgentId(0)).unwrap();
+    assert!(agent.active_modal.is_none());
+    assert_eq!(last_system_text(&app, AgentId(0)), "No available models");
+}
+
+#[test]
+fn open_models_picker_with_catalog_opens_component_modal() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_id = acp::ModelId::new(std::sync::Arc::from("model-a"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.models.available.insert(
+        model_id.clone(),
+        acp::ModelInfo::new(model_id.clone(), "Model A".to_string()),
+    );
+    agent.session.models.current = Some(model_id);
+
+    let effects = dispatch(Action::OpenModelsPicker, &mut app);
+    assert!(effects.is_empty());
+    assert!(matches!(
+        app.agents[&id].active_modal,
+        Some(crate::views::modal::ActiveModal::ModelsPicker { .. })
+    ));
+}
+
 /// Sending feedback is a submit: it retires the active ephemeral tip.
 #[test]
 fn send_feedback_clears_active_ephemeral_tip() {
