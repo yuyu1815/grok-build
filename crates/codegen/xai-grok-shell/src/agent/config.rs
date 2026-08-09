@@ -3759,29 +3759,6 @@ pub struct ModelInfo {
     pub laziness_detector: LazinessDetectorPerModelConfig,
 }
 impl ModelInfo {
-    /// Whether `effort` is accepted by this model's explicit menu or legacy fallback.
-    ///
-    /// An explicit menu is authoritative. Models without one retain the legacy
-    /// low/medium/high/xhigh set; notably, that fallback does not include max.
-    pub(crate) fn offers_reasoning_effort(&self, effort: ReasoningEffort) -> bool {
-        if !self.supports_reasoning_effort {
-            return false;
-        }
-        if self.reasoning_efforts.is_empty() {
-            matches!(
-                effort,
-                ReasoningEffort::Low
-                    | ReasoningEffort::Medium
-                    | ReasoningEffort::High
-                    | ReasoningEffort::Xhigh
-            )
-        } else {
-            self.reasoning_efforts
-                .iter()
-                .any(|option| option.value == effort)
-        }
-    }
-
     /// Minimal fallback descriptor for an unknown model slug.
     /// Used when a configured model ID isn't found in presets or remote models.
     pub fn fallback(slug: &str) -> Self {
@@ -4620,9 +4597,6 @@ pub fn sampling_config_for_model(
     user_id: Option<String>,
 ) -> SamplerConfig {
     let info = model.info();
-    let reasoning_effort = info
-        .reasoning_effort
-        .filter(|effort| info.offers_reasoning_effort(*effort));
     let model_name = info.model.clone();
     let max_completion_tokens = info.max_completion_tokens;
     let temperature = info.temperature;
@@ -4646,7 +4620,7 @@ pub fn sampling_config_for_model(
         extra_headers,
         context_window: info.context_window.get(),
         client_version,
-        reasoning_effort,
+        reasoning_effort: info.reasoning_effort,
         force_http1: false,
         max_retries: info.max_retries,
         stream_tool_calls: info.stream_tool_calls.unwrap_or(false),
@@ -5443,51 +5417,6 @@ reasoning_effort = "low"
         ));
         assert!(!effective_classifier_supports_re(None, "missing", &models));
     }
-    #[test]
-    fn sampling_config_only_uses_reasoning_effort_offered_by_model() {
-        let mut legacy = test_model_entry("legacy", "https://x/v1", None, None, None);
-        legacy.info.supports_reasoning_effort = true;
-        legacy.info.reasoning_effort = Some(ReasoningEffort::Max);
-        let sampling = sampling_config_for_model(
-            &legacy,
-            resolve_credentials(&legacy, None),
-            None,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(sampling.reasoning_effort, None);
-
-        legacy.info.reasoning_effort = Some(ReasoningEffort::Xhigh);
-        let sampling = sampling_config_for_model(
-            &legacy,
-            resolve_credentials(&legacy, None),
-            None,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(sampling.reasoning_effort, Some(ReasoningEffort::Xhigh));
-
-        legacy.info.reasoning_effort = Some(ReasoningEffort::Max);
-        legacy.info.reasoning_efforts = vec![ReasoningEffortOption {
-            id: "max".into(),
-            value: ReasoningEffort::Max,
-            label: "Max".into(),
-            description: None,
-            default: true,
-        }];
-        let sampling = sampling_config_for_model(
-            &legacy,
-            resolve_credentials(&legacy, None),
-            None,
-            None,
-            None,
-            None,
-        );
-        assert_eq!(sampling.reasoning_effort, Some(ReasoningEffort::Max));
-    }
-
     #[test]
     fn sampling_config_uses_model_api_key_over_fallback() {
         let model = test_model_entry(

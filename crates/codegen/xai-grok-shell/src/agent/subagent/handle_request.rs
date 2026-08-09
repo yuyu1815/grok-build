@@ -469,22 +469,14 @@ pub(crate) async fn handle_subagent_request(
             return;
         }
     }
-    if let Some(raw) = effective_runtime.reasoning_effort.as_deref() {
+    if let Some(raw) = effective_runtime.reasoning_effort.as_deref()
+        && ctx
+            .models_manager
+            .model_supports_reasoning_effort(effective_model_id.0.as_ref())
+    {
         use xai_grok_sampling_types::ReasoningEffort;
         match raw.parse::<ReasoningEffort>() {
-            Ok(eff)
-                if ctx
-                    .models_manager
-                    .model_offers_reasoning_effort(effective_model_id.0.as_ref(), eff) =>
-            {
-                effective_sampling_config.reasoning_effort = Some(eff);
-            }
-            Ok(eff) => {
-                tracing::warn!(
-                    model_id = %effective_model_id.0, effort = %eff,
-                    "subagent reasoning_effort: model does not offer override, ignoring"
-                );
-            }
+            Ok(eff) => effective_sampling_config.reasoning_effort = Some(eff),
             Err(err) => {
                 tracing::warn!(
                     value = raw, error = % err,

@@ -97,19 +97,11 @@ impl GrokRequestHeaders<'_> {
 /// the API doesn't emit `context_details` (older deployments) `total_tokens`
 /// passes through unchanged.
 fn deserialize_response_event(data: &str) -> Result<rs::ResponseStreamEvent> {
-    let mut normalized = serde_json::from_str::<serde_json::Value>(data).ok();
-    if let Some(value) = normalized.as_mut() {
-        normalize_response_reasoning_effort(value, "/response");
-    }
-    let mut event = match normalized
-        .clone()
-        .map(serde_json::from_value::<rs::ResponseStreamEvent>)
-        .unwrap_or_else(|| serde_json::from_str::<rs::ResponseStreamEvent>(data))
-    {
+    let mut event = match serde_json::from_str::<rs::ResponseStreamEvent>(data) {
         Ok(event) => event,
         Err(first_err) => {
-            // Try sanitizing: strip unknown tools and retry.
-            if let Some(mut value) = normalized {
+            // Try sanitizing: parse as Value, strip unknown tools, retry.
+            if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) {
                 // Strip tools that async_openai's rs::Tool can't deserialize
                 // (e.g., xAI-specific "x_search"). Instead of maintaining a
                 // hardcoded allowlist, try deserializing each tool entry —
@@ -164,11 +156,10 @@ fn apply_terminal_event_overrides(event: &mut rs::ResponseStreamEvent, data: &st
         rs::ResponseStreamEvent::ResponseIncomplete(e) => &mut e.response,
         _ => return,
     };
-    // Re-parse for fields async_openai's types omit (reasoning max, context total, cost ticks).
+    // Re-parse for fields async_openai's types omit (context total, cost ticks).
     let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
         return;
     };
-    preserve_response_reasoning_effort(response, &value, "/response");
     // Stash cost ticks in metadata for stream_responses.
     if let Some(ticks) = xai_grok_sampling_types::reported_cost_ticks(
         value
@@ -200,36 +191,6 @@ fn extract_context_total(value: &serde_json::Value) -> Option<u32> {
     let i = u32::try_from(cd.get("input_tokens")?.as_u64()?).ok()?;
     let o = u32::try_from(cd.get("output_tokens")?.as_u64()?).ok()?;
     Some(i.saturating_add(o))
-}
-
-/// Stash the raw echoed effort in response metadata when async-openai cannot
-/// deserialize it (`max`) without collapsing it to its typed `Xhigh` stand-in.
-fn preserve_response_reasoning_effort(
-    response: &mut rs::Response,
-    value: &serde_json::Value,
-    response_pointer: &str,
-) {
-    let effort_pointer = format!("{response_pointer}/reasoning/effort");
-    if value.pointer(&effort_pointer).and_then(|v| v.as_str()) == Some("max") {
-        response
-            .metadata
-            .get_or_insert_with(Default::default)
-            .insert(
-                xai_grok_sampling_types::RESPONSE_REASONING_EFFORT_META_KEY.to_string(),
-                "max".to_string(),
-            );
-    }
-}
-
-/// async-openai 0.33 rejects the newer OpenAI `max` response value. Normalize
-/// only the typed-deserialization copy; the raw value is preserved separately.
-fn normalize_response_reasoning_effort(value: &mut serde_json::Value, response_pointer: &str) {
-    let effort_pointer = format!("{response_pointer}/reasoning/effort");
-    if value.pointer(&effort_pointer).and_then(|v| v.as_str()) == Some("max")
-        && let Some(effort) = value.pointer_mut(&effort_pointer)
-    {
-        *effort = serde_json::Value::String("xhigh".to_string());
-    }
 }
 
 /// Record `success=false` + `error` on the active inference span when a stream
@@ -1176,10 +1137,6 @@ impl SamplingClient {
             tracing::error!("Failed to serialize responses request: {}", e);
             SamplingError::Serialization(e)
         })?;
-        xai_grok_sampling_types::patch_responses_reasoning_effort(
-            &mut request_body,
-            request.reasoning_effort(),
-        );
         // async-openai's ReasoningTextContent struct omits the `type`
         // discriminator that the Responses API requires on input. Patch
         // it in post-serialize. This is the last surviving piece of the
@@ -1236,24 +1193,15 @@ impl SamplingClient {
             });
         }
 
-        let raw_value = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| {
+        let response_obj = serde_json::from_slice::<rs::Response>(&bytes).map_err(|e| {
             let raw_body = String::from_utf8_lossy(&bytes);
-            tracing::error!(error = %e, raw_body = %raw_body, "Failed to parse rs::Response JSON");
+            tracing::error!(
+                error = %e,
+                raw_body = %raw_body,
+                "Failed to deserialize rs::Response"
+            );
             SamplingError::Serialization(e)
         })?;
-        let mut typed_value = raw_value.clone();
-        normalize_response_reasoning_effort(&mut typed_value, "");
-        let mut response_obj =
-            serde_json::from_value::<rs::Response>(typed_value).map_err(|e| {
-                let raw_body = String::from_utf8_lossy(&bytes);
-                tracing::error!(
-                    error = %e,
-                    raw_body = %raw_body,
-                    "Failed to deserialize rs::Response"
-                );
-                SamplingError::Serialization(e)
-            })?;
-        preserve_response_reasoning_effort(&mut response_obj, &raw_value, "");
         Ok(response_obj)
     }
 
@@ -1338,10 +1286,6 @@ impl SamplingClient {
                 request_body["tools"] = serde_json::Value::Array(extra_raw_tools);
             }
         }
-        xai_grok_sampling_types::patch_responses_reasoning_effort(
-            &mut request_body,
-            request.reasoning_effort(),
-        );
         xai_grok_sampling_types::patch_reasoning_text_types(&mut request_body);
         // Fresh per attempt so signals never leak across retries; `None`
         // (check disabled) sends no header and does no peek work per event.
@@ -1908,7 +1852,7 @@ impl SamplingClient {
 
         let responses_request: rs::CreateResponse = (&request).into();
 
-        let mut wrapper = CreateResponseWrapper::new(responses_request, request.reasoning_effort);
+        let mut wrapper = CreateResponseWrapper::new(responses_request);
         wrapper.x_grok_conv_id = x_grok_conv_id;
         wrapper.x_grok_req_id = x_grok_req_id;
         wrapper.x_grok_session_id = x_grok_session_id;
@@ -1941,7 +1885,7 @@ impl SamplingClient {
 
         let responses_request: rs::CreateResponse = (&request).into();
 
-        let mut wrapper = CreateResponseWrapper::new(responses_request, request.reasoning_effort);
+        let mut wrapper = CreateResponseWrapper::new(responses_request);
         wrapper.x_grok_conv_id = x_grok_conv_id;
         wrapper.x_grok_req_id = x_grok_req_id;
         wrapper.x_grok_session_id = x_grok_session_id;
@@ -2068,59 +2012,6 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use xai_grok_sampling_types::types::ChatRequestMessage;
-
-    #[test]
-    fn responses_max_effort_is_patched_on_wire() {
-        let mut body = serde_json::json!({ "reasoning": { "effort": "xhigh" } });
-        xai_grok_sampling_types::patch_responses_reasoning_effort(
-            &mut body,
-            Some(xai_grok_sampling_types::ReasoningEffort::Max),
-        );
-        assert_eq!(
-            body.pointer("/reasoning/effort").and_then(|v| v.as_str()),
-            Some("max")
-        );
-    }
-
-    #[test]
-    fn responses_max_effort_deserializes_and_preserves_canonical_value() {
-        let raw = serde_json::json!({
-            "id": "resp_1",
-            "object": "response",
-            "created_at": 0,
-            "status": "completed",
-            "error": null,
-            "incomplete_details": null,
-            "instructions": null,
-            "max_output_tokens": null,
-            "model": "test-model",
-            "output": [],
-            "parallel_tool_calls": true,
-            "previous_response_id": null,
-            "reasoning": { "effort": "max", "summary": null },
-            "store": false,
-            "temperature": null,
-            "text": { "format": { "type": "text" } },
-            "tool_choice": "auto",
-            "tools": [],
-            "top_p": null,
-            "truncation": "disabled",
-            "usage": null
-        });
-        let mut typed = raw.clone();
-        normalize_response_reasoning_effort(&mut typed, "");
-        let mut response: rs::Response = serde_json::from_value(typed).unwrap();
-        preserve_response_reasoning_effort(&mut response, &raw, "");
-        let items = xai_grok_sampling_types::response_to_conversation_items(response);
-        let xai_grok_sampling_types::ConversationItem::Assistant(assistant) = items.last().unwrap()
-        else {
-            panic!("expected trailing assistant")
-        };
-        assert_eq!(
-            assistant.reasoning_effort,
-            Some(xai_grok_sampling_types::ReasoningEffort::Max)
-        );
-    }
 
     fn minimal_config() -> SamplerConfig {
         SamplerConfig {
@@ -2673,47 +2564,6 @@ mod tests {
         let client = SamplingClient::new(cfg).expect("client should build");
         // Must not panic.
         client.record_401_attribution(crate::attribution::SamplingConsumer::ChatCompletions);
-    }
-
-    #[test]
-    fn deserialize_terminal_response_events_restore_canonical_max_effort() {
-        for (event_type, status) in [
-            ("response.completed", "completed"),
-            ("response.incomplete", "incomplete"),
-        ] {
-            let sse = format!(
-                r#"{{
-                    "type": "{event_type}",
-                    "sequence_number": 0,
-                    "response": {{
-                        "id": "resp_1",
-                        "object": "response",
-                        "created_at": 0,
-                        "model": "grok-build",
-                        "status": "{status}",
-                        "output": [],
-                        "reasoning": {{ "effort": "max", "summary": null }}
-                    }}
-                }}"#
-            );
-            let event = deserialize_response_event(&sse).expect("terminal max event parses");
-            let response = match event {
-                rs::ResponseStreamEvent::ResponseCompleted(e) => e.response,
-                rs::ResponseStreamEvent::ResponseIncomplete(e) => e.response,
-                other => panic!("expected terminal response event, got {other:?}"),
-            };
-            let items = xai_grok_sampling_types::response_to_conversation_items(response);
-            let xai_grok_sampling_types::ConversationItem::Assistant(assistant) =
-                items.last().expect("trailing assistant")
-            else {
-                panic!("expected trailing assistant")
-            };
-            assert_eq!(
-                assistant.reasoning_effort,
-                Some(xai_grok_sampling_types::ReasoningEffort::Max),
-                "{event_type} must restore canonical max"
-            );
-        }
     }
 
     /// `response.completed` carrying
