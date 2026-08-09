@@ -817,6 +817,11 @@ impl AgentView {
                                     .trim_end_matches(' ')
                                     .to_string();
 
+                                if trimmed == "models" {
+                                    self.active_modal = None;
+                                    return InputOutcome::Action(Action::OpenModelsPicker);
+                                }
+
                                 if trimmed == "resume" {
                                     let prev = {
                                         let ActiveModal::CommandPalette { entries, state, .. } =
@@ -2817,6 +2822,30 @@ mod command_palette_vim_input_tests {
             Some(ActiveModal::CommandPalette { state, .. }) => state,
             _ => panic!("expected open command palette"),
         }
+    }
+
+    #[test]
+    fn switch_model_palette_selection_routes_through_open_models_picker() {
+        let mut agent = make_agent();
+        open_command_palette(&mut agent);
+        let switch_model_index =
+            crate::views::modal::default_palette_entries(agent.sharing_enabled)
+                .iter()
+                .position(|entry| entry.label == "Switch Model")
+                .expect("Switch Model palette entry");
+        if let Some(ActiveModal::CommandPalette { state, .. }) = agent.active_modal.as_mut() {
+            state.selected = switch_model_index;
+        }
+
+        let outcome = agent.handle_modal_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(crate::app::actions::Action::OpenModelsPicker)
+        ));
+        assert!(
+            agent.active_modal.is_none(),
+            "palette selection must not open the legacy model ArgPicker"
+        );
     }
 
     /// Headline command-palette vim flow — a CI-runnable mirror of the ignored
