@@ -1018,7 +1018,7 @@ impl AgentView {
                 });
                 InputOutcome::Changed
             }
-            ActionId::ModelPicker => InputOutcome::Action(Action::OpenModelsPicker),
+            ActionId::OpenModelsPicker => InputOutcome::Action(Action::OpenModelsPicker),
             ActionId::ShortcutsHelp => {
                 use crate::views::shortcuts_help;
                 let reg = crate::actions::ActionRegistry::defaults();
