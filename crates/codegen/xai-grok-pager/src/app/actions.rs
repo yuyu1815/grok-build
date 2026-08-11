@@ -615,6 +615,8 @@ pub enum Action {
     PrivacyBannerOptIn,
     /// Privacy banner `[Opt out]` (ack now, then record the decline).
     PrivacyBannerOptOut,
+    /// Open the cohesive one-screen model picker (`/models`).
+    OpenModelsPicker,
     /// Open the command palette (`/help`). The keybinding path (Ctrl+P) opens it
     /// directly in `handle_agent_action`; this lets a slash command reach the
     /// same modal through dispatch.

@@ -1293,7 +1293,7 @@ impl AgentView {
         }
         let action_id = registry.lookup(key, When::AgentScreen)?;
         match action_id {
-            ActionId::ModelPicker | ActionId::CommandPalette => {
+            ActionId::OpenModelsPicker | ActionId::CommandPalette => {
                 if typing
                     && !key
                         .modifiers
@@ -1371,27 +1371,7 @@ impl AgentView {
                 });
                 InputOutcome::Changed
             }
-            ActionId::ModelPicker => {
-                let command = "model";
-                if let Some(cmd) = self.prompt.slash_controller.registry().get(command) {
-                    let ctx = self.prompt.slash_controller.app_ctx(&self.session.models);
-                    if let Some(items) = cmd.suggest_args(&ctx, "")
-                        && !items.is_empty()
-                    {
-                        self.active_modal = Some(crate::views::modal::ActiveModal::ArgPicker {
-                            command: command.to_string(),
-                            args_query: String::new(),
-                            items: items.clone(),
-                            original_items: items,
-                            state: crate::views::picker::PickerState::input_active(),
-                            previous_palette: None,
-                            window: crate::views::modal_window::ModalWindowState::new(),
-                        });
-                        return InputOutcome::Changed;
-                    }
-                }
-                InputOutcome::Changed
-            }
+            ActionId::OpenModelsPicker => InputOutcome::Action(Action::OpenModelsPicker),
             ActionId::ShortcutsHelp => {
                 use crate::views::shortcuts_help;
                 let mut contexts = active_contexts_for_pane(self.active_pane);
