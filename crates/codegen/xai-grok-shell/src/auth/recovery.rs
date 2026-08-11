@@ -29,6 +29,7 @@ pub(crate) fn manual_auth_reason(err: &AuthError) -> Option<ManualAuthReason> {
     Some(match err {
         AuthError::Refresh(RefreshTokenError::Permanent(e)) => match e.reason {
             RefreshTokenFailedReason::RefreshTokenRejected => R::RefreshTokenRejected,
+            RefreshTokenFailedReason::ProviderInteractiveRequired => R::ProviderInteractiveRequired,
             // Self-healing via the TTL, not a manual re-auth.
             RefreshTokenFailedReason::ClientRejected | RefreshTokenFailedReason::Other => {
                 return None;
@@ -217,7 +218,7 @@ enum RecoveryStep {
 }
 
 /// State machine that walks through recovery strategies after a 401.
-pub struct UnauthorizedRecovery {
+pub(crate) struct UnauthorizedRecovery {
     auth_manager: Arc<AuthManager>,
     /// The token that was rejected by the server.
     rejected_token: String,
@@ -265,7 +266,7 @@ impl UnauthorizedRecovery {
         skip(self),
         fields(step = ?self.step, token_type = tracing::field::Empty),
     )]
-    pub async fn next(&mut self) -> Result<GrokAuth, AuthError> {
+    pub(crate) async fn next(&mut self) -> Result<GrokAuth, AuthError> {
         let span = tracing::Span::current();
         if !span.is_disabled() {
             // Only acquire the inner-lock when tracing actually
@@ -324,7 +325,10 @@ impl UnauthorizedRecovery {
                     // preferred_method=api_key forbids automatic OIDC mint.
                     if !self.auth_manager.grok_com_config().blocks_automatic_oidc()
                         && self.auth_manager.is_devbox_environment()
-                        && let Ok(auth) = self.auth_manager.try_devbox_recovery().await
+                        && let Ok(auth) = self
+                            .auth_manager
+                            .try_devbox_recovery(Some(&self.rejected_token))
+                            .await
                     {
                         return Ok(auth);
                     }
@@ -373,7 +377,7 @@ impl UnauthorizedRecovery {
                 "auth recovery: disk token expired",
                 None,
                 Some(serde_json::json!({
-                    "disk_key_prefix": crate::auth::token_suffix(&disk_auth.key),
+                    "disk_key_prefix": xai_grok_auth::bearer_suffix(&disk_auth.key),
                     "expires_at": disk_auth.expires_at.map(|e| e.to_rfc3339()),
                 })),
             );
@@ -385,7 +389,7 @@ impl UnauthorizedRecovery {
                 "auth recovery: adopted disk token",
                 None,
                 Some(serde_json::json!({
-                    "adopted_key_prefix": crate::auth::token_suffix(&disk_auth.key),
+                    "adopted_key_prefix": xai_grok_auth::bearer_suffix(&disk_auth.key),
                     "expires_at": disk_auth.expires_at.map(|e| e.to_rfc3339()),
                 })),
             );
@@ -428,7 +432,7 @@ impl UnauthorizedRecovery {
             "auth recovery: fresh mint, refresh skipped",
             None,
             Some(serde_json::json!({
-                "key_prefix": crate::auth::token_suffix(&auth.key),
+                "key_prefix": xai_grok_auth::bearer_suffix(&auth.key),
                 "mint_age_seconds": mint_age_seconds,
                 "guard_seconds": FRESH_MINT_GUARD_SECS,
                 "expires_at": auth.expires_at.map(|e| e.to_rfc3339()),
@@ -472,7 +476,7 @@ impl UnauthorizedRecovery {
                             None,
                             Some(serde_json::json!({
                                 "token_type": format!("{tt:?}"),
-                                "new_key_prefix": crate::auth::token_suffix(&auth.key),
+                                "new_key_prefix": xai_grok_auth::bearer_suffix(&auth.key),
                                 "expires_at": auth.expires_at.map(|e| e.to_rfc3339()),
                             })),
                         );
@@ -844,10 +848,9 @@ mod tests {
             expires_at: Some(Utc::now() + Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, fresh);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let mut rec = m.unauthorized_recovery(rejected_cred(), RecoverySource::Background);
         let auth = rec
@@ -871,10 +874,9 @@ mod tests {
             expires_at: Some(Utc::now() + Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, same);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let calls = Arc::new(AtomicU32::new(0));
         m.set_refresher(Arc::new(OkRefresher {
@@ -1025,10 +1027,9 @@ mod tests {
             expires_at: Some(Utc::now() - Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, expired_different);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let calls = Arc::new(AtomicU32::new(0));
         m.set_refresher(Arc::new(OkRefresher {
@@ -1120,8 +1121,7 @@ mod tests {
         seed(&m, AuthMode::Oidc, Some("rt"));
 
         // Disk: a different, non-expired, *wrong-team* token a sibling wrote.
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(
             scope,
             GrokAuth {
@@ -1132,7 +1132,7 @@ mod tests {
                 ..GrokAuth::test_default()
             },
         );
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let mut rec = m.unauthorized_recovery(rejected_cred(), RecoverySource::Background);
         let err = rec.next().await.unwrap_err();

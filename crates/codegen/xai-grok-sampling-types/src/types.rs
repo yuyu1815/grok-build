@@ -781,7 +781,8 @@ impl ReasoningEffort {
             Self::Low => crate::rs::ReasoningEffort::Low,
             Self::Medium => crate::rs::ReasoningEffort::Medium,
             Self::High => crate::rs::ReasoningEffort::High,
-            Self::Xhigh | Self::Max => crate::rs::ReasoningEffort::Xhigh,
+            Self::Xhigh => crate::rs::ReasoningEffort::Xhigh,
+            Self::Max => crate::rs::ReasoningEffort::Max,
         }
     }
 
@@ -795,6 +796,7 @@ impl ReasoningEffort {
             crate::rs::ReasoningEffort::Medium => Self::Medium,
             crate::rs::ReasoningEffort::High => Self::High,
             crate::rs::ReasoningEffort::Xhigh => Self::Xhigh,
+            crate::rs::ReasoningEffort::Max => Self::Max,
         }
     }
 
@@ -810,16 +812,10 @@ impl ReasoningEffort {
         }
     }
 
-    /// Anthropic Messages API `output_config.effort` string; `None` for unsupported variants.
     pub fn to_messages_api(self) -> Option<&'static str> {
         match self {
             Self::None | Self::Minimal => None,
-            Self::Low => Some("low"),
-            Self::Medium => Some("medium"),
-            Self::High => Some("high"),
-            // Anthropic's strongest tier is named `max`. Preserve the existing
-            // Xhigh mapping while also passing canonical OpenAI Max through.
-            Self::Xhigh | Self::Max => Some("max"),
+            _ => Some(self.as_str()),
         }
     }
 }
@@ -849,7 +845,6 @@ impl std::str::FromStr for ReasoningEffort {
     }
 }
 
-/// Canonical wire parse only; remapped menu ids need a model catalog.
 pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
     token.parse().ok()
 }
@@ -1032,6 +1027,18 @@ impl ApiBackend {
     pub fn supports_native_schema(&self) -> bool {
         matches!(self, Self::ChatCompletions | Self::Responses)
     }
+
+    /// Whether replayed reasoning must be stripped. Only the Messages API rejects thinking blocks sent without a top-level `thinking` config.
+    pub fn requires_reasoning_strip(&self) -> bool {
+        matches!(self, Self::Messages)
+    }
+
+    /// Whether [`ConversationRequest::prompt_cache_key`] reaches the wire. Only the Responses mapping sends it, so a key set elsewhere is inert.
+    ///
+    /// [`ConversationRequest::prompt_cache_key`]: crate::conversation::ConversationRequest::prompt_cache_key
+    pub fn forwards_prompt_cache_key(&self) -> bool {
+        matches!(self, Self::Responses)
+    }
 }
 
 /// Sampling client configuration (API key excluded — that stays in the client).
@@ -1048,6 +1055,13 @@ pub struct SamplingConfig {
     /// Extra headers to send with requests (e.g., for BYOK scenarios).
     #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
     pub extra_headers: indexmap::IndexMap<String, String>,
+    /// Query parameters folded into every request URL (percent-encoded).
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub query_params: indexmap::IndexMap<String, String>,
+    /// Header name to environment variable; only the mapping persists, not the
+    /// resolved secret.
+    #[serde(default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+    pub env_http_headers: indexmap::IndexMap<String, String>,
     /// Total context window size in tokens. Used for auto-compact thresholds.
     pub context_window: NonZeroU64,
     /// Reasoning effort level for reasoning models.
@@ -1087,7 +1101,7 @@ pub struct CreateResponseWrapper {
     /// xAI-specific tool definitions that can't be expressed via
     /// `async_openai`'s `rs::Tool` enum (e.g., `x_search`). Injected
     /// as raw JSON into the serialized request body's `tools` array.
-    pub extra_raw_tools: Vec<serde_json::Value>,
+    pub extra_tool_entries: Vec<serde_json::Value>,
 }
 
 impl CreateResponseWrapper {
@@ -1103,7 +1117,7 @@ impl CreateResponseWrapper {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
-            extra_raw_tools: vec![],
+            extra_tool_entries: vec![],
         }
     }
 
@@ -1223,21 +1237,15 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_from_str_distinguishes_max_from_xhigh() {
+    fn reasoning_effort_from_str_parses_max_and_xhigh_as_distinct_tiers() {
         assert_eq!(
             "max".parse::<ReasoningEffort>().unwrap(),
-            ReasoningEffort::Max
-        );
-        assert_eq!(
-            "MAX".parse::<ReasoningEffort>().unwrap(),
             ReasoningEffort::Max
         );
         assert_eq!(
             "xhigh".parse::<ReasoningEffort>().unwrap(),
             ReasoningEffort::Xhigh
         );
-        assert_eq!(ReasoningEffort::Xhigh.as_str(), "xhigh");
-        assert_eq!(ReasoningEffort::Max.as_str(), "max");
     }
 
     #[test]

@@ -81,7 +81,7 @@ pub enum ConfigUpdate {
 /// Runs on `tokio::spawn` (`Send`). Receives raw [`ConfigChangeEvent`]s from
 /// the file watcher, diffs against last-known state, and sends [`ConfigUpdate`]
 /// messages to the agent via an `mpsc` channel.
-pub struct ConfigReloader {
+pub(crate) struct ConfigReloader {
     last_auth_key_hash: u64,
     last_global_config: toml::Value,
     /// Per-cwd content hash of the project MCP config files, used to
@@ -99,7 +99,7 @@ pub struct ConfigReloader {
 }
 
 impl ConfigReloader {
-    pub fn new(
+    pub(crate) fn new(
         grok_home: PathBuf,
         initial_auth_key_hash: u64,
         initial_config: toml::Value,
@@ -123,7 +123,7 @@ impl ConfigReloader {
     }
 
     /// Main loop. Batches all events from each debounce tick before processing.
-    pub async fn run(
+    pub(crate) async fn run(
         mut self,
         mut events: mpsc::UnboundedReceiver<ConfigChangeEvent>,
         cancel: CancellationToken,
@@ -182,7 +182,7 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = self.grok_home.join("auth").join("grok.json");
+                        let path = self.grok_home.join("auth.json");
                         xai_grok_telemetry::unified_log::error(
                             "auth reload: auth.json unreadable, keeping previous credentials",
                             None,
@@ -273,8 +273,8 @@ impl ConfigReloader {
         }
     }
 
-    fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = self.grok_home.join("auth").join("grok.json");
+    pub(crate) fn reload_auth(&mut self) -> anyhow::Result<()> {
+        let auth_path = self.grok_home.join("auth.json");
         let store = read_auth_json(&auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {
@@ -538,12 +538,6 @@ mod tests {
     use crate::auth::GrokAuth;
     use std::collections::BTreeMap;
 
-    fn auth_path(home: &Path) -> PathBuf {
-        let path = home.join("auth").join("grok.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        path
-    }
-
     fn make_auth(key: &str) -> GrokAuth {
         GrokAuth {
             key: key.to_string(),
@@ -560,7 +554,7 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let initial_hash = hash_auth_key("same-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -591,7 +585,7 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("old-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -623,7 +617,7 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert("https://other.example.com".to_string(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        std::fs::write(tmp.path().join("auth.json"), &json).unwrap();
 
         let old_hash = hash_auth_key("had-a-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -647,7 +641,7 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_malformed_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(auth_path(tmp.path()), "not valid json{{{").unwrap();
+        std::fs::write(tmp.path().join("auth.json"), "not valid json{{{").unwrap();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());

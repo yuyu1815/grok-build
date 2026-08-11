@@ -5,18 +5,19 @@
 //! and assert the mode banner / status shows Auto without conflating
 //! Always-Approve.
 //!
-//! Auth: seeds `HOME/.grok/auth/grok.json` from `GROK_AUTH_JSON` (path) or the
-//! developer's `~/.grok/auth/grok.json` so the pager skips device-login when
+//! Auth: seeds `HOME/.grok/auth.json` from `GROK_AUTH_JSON` (path) or the
+//! developer's `~/.grok/auth.json` so the pager skips device-login when
 //! credentials exist. Without auth the test records an environmental
 //! failure (login screen) and still asserts the harness API surface.
 //!
 //! Run with:
 //! `cargo test -p xai-grok-pager --test pty_auto_mode -- --ignored --nocapture`
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use xai_grok_pager_pty_harness::{PtyHarness, pager_binary};
+use xai_grok_test_support::TestSandbox;
 
 const ROWS: u16 = 40;
 const COLS: u16 = 120;
@@ -26,7 +27,7 @@ const WELCOME_SCREEN_SENTINEL: &str = "Quit";
 /// Back-tab / Shift+Tab (CSI Z) — pager binds this to CycleMode.
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
 
-/// Prefer explicit path, else the user's real `~/.grok/auth/grok.json`.
+/// Prefer explicit path, else the user's real `~/.grok/auth.json`.
 fn auth_json_source() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GROK_AUTH_JSON") {
         let pb = PathBuf::from(p);
@@ -35,7 +36,7 @@ fn auth_json_source() -> Option<PathBuf> {
         }
     }
     dirs_next_home()
-        .map(|h| h.join(".grok/auth").join("grok.json"))
+        .map(|h| h.join(".grok/auth.json"))
         .filter(|p| p.is_file())
 }
 
@@ -48,12 +49,15 @@ fn dirs_next_home() -> Option<PathBuf> {
 /// Sandbox HOME + optional auth.json seed (no secrets logged), with the
 /// auto-permission-mode feature gate pinned explicitly via `gate_on` so each
 /// test is self-contained and deterministic regardless of the runner's shell.
-fn prepare_sandbox(home: &Path, gate_on: bool) -> Vec<(String, String)> {
-    let grok = home.join(".grok");
-    let auth_dir = grok.join("auth");
-    let _ = std::fs::create_dir_all(&auth_dir);
+fn prepare_sandbox(sandbox: &mut TestSandbox, gate_on: bool) -> Vec<(String, String)> {
+    // Remove rather than empty the fake API key so seeded OIDC remains authoritative.
+    sandbox.remove_env("XAI_API_KEY");
+
+    let home = sandbox.home();
+    let grok = sandbox.grok_home();
+    let _ = std::fs::create_dir_all(grok);
     if let Some(src) = auth_json_source() {
-        let dest = auth_dir.join("grok.json");
+        let dest = grok.join("auth.json");
         if let Err(e) = std::fs::copy(&src, &dest) {
             eprintln!("pty_auto_mode: could not copy auth.json ({e}); login may block mode cycle");
         } else {
@@ -64,13 +68,11 @@ fn prepare_sandbox(home: &Path, gate_on: bool) -> Vec<(String, String)> {
             );
         }
     } else {
-        eprintln!("pty_auto_mode: no ~/.grok/auth/grok.json — may hit device login");
+        eprintln!("pty_auto_mode: no ~/.grok/auth.json — may hit device login");
     }
 
     let home_s = home.display().to_string();
     let mut env = vec![
-        ("HOME".into(), home_s.clone()),
-        ("GROK_HOME".into(), grok.display().to_string()),
         ("XDG_CONFIG_HOME".into(), format!("{home_s}/.config")),
         ("XDG_DATA_HOME".into(), format!("{home_s}/.local/share")),
         ("XDG_CACHE_HOME".into(), format!("{home_s}/.cache")),
@@ -79,7 +81,6 @@ fn prepare_sandbox(home: &Path, gate_on: bool) -> Vec<(String, String)> {
         ("NO_COLOR".into(), "0".into()),
         ("TERM_PROGRAM".into(), "".into()),
         ("TMUX".into(), "".into()),
-        // Do not set XAI_API_KEY — prefer OIDC entry in auth.json (pty_e2e pattern).
     ];
     // Pin the feature gate explicitly so the cycle is deterministic regardless
     // of the developer's shell. `GROK_AUTO_PERMISSION_MODE` is the highest gate
@@ -116,15 +117,16 @@ fn pty_shift_tab_cycles_to_auto_mode_banner() {
         Ok(b) => b,
         Err(e) => panic!("resolve pager binary via harness env: {e:#}"),
     };
-    let tmp = tempfile::tempdir().expect("temp HOME");
-    let env_owned = prepare_sandbox(tmp.path(), true);
+    let mut sandbox = TestSandbox::new();
+    let env_owned = prepare_sandbox(&mut sandbox, true);
     let env_refs: Vec<(&str, &str)> = env_owned
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let mut harness = PtyHarness::new(&binary, ROWS, COLS, &[], &env_refs)
-        .expect("spawn pager in PTY (xai-grok-pager-pty-harness)");
+    let mut harness =
+        PtyHarness::new_in_sandbox(&binary, ROWS, COLS, &[], &sandbox, &env_refs, None)
+            .expect("spawn pager in PTY (xai-grok-pager-pty-harness)");
 
     // Drain startup; welcome or agent chrome.
     let _ = harness.wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT);
@@ -146,8 +148,9 @@ fn pty_shift_tab_cycles_to_auto_mode_banner() {
              see the permission_auto_mode SessionActor wire tests for coverage."
         );
         // Still prove we exercised PtyHarness spawn (not a no-op).
+        let running = harness.is_running().expect("poll pager liveness");
         assert!(
-            harness.is_running() || !early.is_empty(),
+            running || !early.is_empty(),
             "pager must have produced output even on login screen"
         );
         let _ = harness.inject_keys(b"\x11"); // ctrl+q if bound
@@ -200,15 +203,16 @@ fn pty_shift_tab_skips_auto_when_gate_off() {
         Ok(b) => b,
         Err(e) => panic!("resolve pager binary via harness env: {e:#}"),
     };
-    let tmp = tempfile::tempdir().expect("temp HOME");
-    let env_owned = prepare_sandbox(tmp.path(), false);
+    let mut sandbox = TestSandbox::new();
+    let env_owned = prepare_sandbox(&mut sandbox, false);
     let env_refs: Vec<(&str, &str)> = env_owned
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let mut harness = PtyHarness::new(&binary, ROWS, COLS, &[], &env_refs)
-        .expect("spawn pager in PTY (xai-grok-pager-pty-harness)");
+    let mut harness =
+        PtyHarness::new_in_sandbox(&binary, ROWS, COLS, &[], &sandbox, &env_refs, None)
+            .expect("spawn pager in PTY (xai-grok-pager-pty-harness)");
 
     let _ = harness.wait_for_text(WELCOME_SCREEN_SENTINEL, WELCOME_TIMEOUT);
     let early = harness.screen_contents();
@@ -220,8 +224,9 @@ fn pty_shift_tab_skips_auto_when_gate_off() {
         eprintln!(
             "pty_auto_mode(gate off): login/device-auth screen blocked cycle; env auth limit"
         );
+        let running = harness.is_running().expect("poll pager liveness");
         assert!(
-            harness.is_running() || !early.is_empty(),
+            running || !early.is_empty(),
             "pager must have produced output even on login screen"
         );
         let _ = harness.inject_keys(b"\x11");

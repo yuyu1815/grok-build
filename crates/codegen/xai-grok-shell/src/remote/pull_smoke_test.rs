@@ -11,7 +11,7 @@ mod tests {
     use std::sync::Arc;
 
     fn load_prod_auth() -> Option<GrokAuth> {
-        let path = crate::auth::default_auth_path(&crate::util::grok_home::grok_home());
+        let path = crate::util::grok_home::grok_home().join("auth.json");
         let contents = std::fs::read_to_string(&path).ok()?;
         let store: BTreeMap<String, GrokAuth> = serde_json::from_str(&contents).ok()?;
         let scope = crate::auth::GrokComConfig::default().auth_scope();
@@ -57,6 +57,7 @@ mod tests {
             subagent_role: None,
             fork_context_source: None,
             subagent_depth: None,
+            title_is_manual: None,
         };
 
         let sync = RemoteSync::new(

@@ -56,7 +56,7 @@ Start Grok by running:
 grok
 ```
 
-On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth/grok.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
+On first launch, Grok opens your browser to authenticate with grok.com. After you sign in, Grok stores your credentials in `~/.grok/auth.json`, where they persist across sessions. Grok refreshes your credentials automatically and prompts you to sign in again when they can no longer be renewed.
 
 If you prefer API key authentication (e.g., for CI/CD or environments without a browser), set the `XAI_API_KEY` environment variable instead:
 
@@ -78,7 +78,7 @@ Once authenticated, Grok presents a full-screen TUI with two main areas:
 
 Type a message and press `Enter` to send it. Grok reads files, runs commands, and edits code as needed. Each tool run streams into the scrollback in real time.
 
-Press `Tab` to move focus between the prompt and the scrollback. While a turn is running, `Ctrl+C` cancels it (or clears a non-empty draft first); `Esc` is a no-op mid-turn. Idle, press `Esc` twice within 800ms to clear a non-empty prompt, or (with an empty prompt and conversation messages) to open rewind — see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape). With the scrollback focused, use the arrow keys to select entries and to collapse or expand them. To navigate with `j`/`k` and fold with `h`/`l` instead, enable Vim mode.
+Press `Tab` to move focus between the prompt and the scrollback. While a turn is running, `Esc` cancels it (the exception is fullscreen vim scrollback mode, where mid-turn `Esc` is a no-op; minimal mode cancels even with vim on); `Ctrl+C` cancels once the composer is empty — with a draft, the first press only clears it. Idle, press `Esc` twice within 800ms to clear a non-empty prompt, or (with an empty prompt and conversation messages) to open rewind — see [Keyboard Shortcuts](03-keyboard-shortcuts.md#escape). With the scrollback focused, use the arrow keys to select entries and to collapse or expand them. To navigate with `j`/`k` and fold with `h`/`l` instead, enable Vim mode.
 
 ### File References
 
