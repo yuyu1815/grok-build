@@ -184,6 +184,10 @@ pub enum ActiveModal {
         /// Shared modal window chrome state.
         window: ModalWindowState,
     },
+    /// Cohesive one-screen model and reasoning-effort picker (`/models`).
+    ModelsPicker {
+        picker: crate::views::model_picker::ModelPicker,
+    },
     /// Argument picker for commands with pre-defined choices (model, theme).
     /// Opens when selecting such a command from the command palette.
     ArgPicker {
@@ -464,8 +468,8 @@ pub(crate) fn default_palette_entries(
         },
         PaletteEntry {
             label: "Switch Model".into(),
-            shortcut: "/model".into(),
-            command: PaletteCommand::SlashCommand("/model ".into()),
+            shortcut: "/models".into(),
+            command: PaletteCommand::SlashCommand("/models".into()),
         },
         PaletteEntry {
             label: "Always Approve Mode".into(),
@@ -645,6 +649,7 @@ impl ActiveModal {
                 .map(|o| (o.key, o.result.label()))
                 .collect(),
             ActiveModal::CommandPalette { .. }
+            | ActiveModal::ModelsPicker { .. }
             | ActiveModal::ArgPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
@@ -666,6 +671,7 @@ impl ActiveModal {
                 }
             }
             ActiveModal::CommandPalette { .. } => "Commands",
+            ActiveModal::ModelsPicker { .. } => "Model selection",
             ActiveModal::SessionPicker { .. } => "Resume session",
             ActiveModal::ArgPicker {
                 command,
@@ -1404,6 +1410,20 @@ mod palette_sharing_tests {
                 .any(|entry| matches!(entry.command, PaletteCommand::EditPromptExternal))
         );
     }
+    #[test]
+    fn switch_model_palette_entry_uses_models_command() {
+        let entries = default_palette_entries(true, &slash(crate::app::ScreenMode::Fullscreen));
+        let entry = entries
+            .iter()
+            .find(|entry| entry.label == "Switch Model")
+            .expect("Switch Model palette entry");
+        assert_eq!(entry.shortcut, "/models");
+        assert!(matches!(
+            &entry.command,
+            PaletteCommand::SlashCommand(command) if command == "/models"
+        ));
+    }
+
     #[test]
     fn default_palette_omits_share_when_disabled() {
         let entries = default_palette_entries(false, &slash(crate::app::ScreenMode::Fullscreen));
