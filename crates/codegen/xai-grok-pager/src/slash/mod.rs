@@ -2151,6 +2151,7 @@ mod tests {
             "/session-info",
             "/find",
             "/doctor",
+            "/models",
         ] {
             assert!(
                 !names.contains(&hide),
@@ -2176,6 +2177,7 @@ mod tests {
         assert!(names.iter().any(|d| d == "/compact"));
         assert!(names.iter().any(|d| d == "/fork"));
         assert!(names.iter().any(|d| d == "/doctor"));
+        assert!(names.iter().any(|d| d == "/models"));
     }
 
     /// `/cd` is dashboard-only: it appears in the dropdown on the

@@ -822,9 +822,9 @@ pub(super) fn default_actions(
             ),
         },
         ActionDef {
-            id: ActionId::ModelPicker,
-            label: "model",
-            description: "Pick model",
+            id: ActionId::OpenModelsPicker,
+            label: "models",
+            description: "Open model picker",
             default_key: key!('m', CONTROL),
             alt_keys: vec![],
             category: Category::Session,

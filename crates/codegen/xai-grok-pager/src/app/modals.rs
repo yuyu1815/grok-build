@@ -18,6 +18,28 @@ use super::app_view::InputOutcome;
 use crate::theme::Theme;
 use crate::views::modal::{self, ActiveModal};
 
+fn live_models_picker_action(
+    models: &crate::acp::model_state::ModelState,
+    selection: crate::views::model_picker::ModelPickerSelection,
+) -> Option<Action> {
+    use crate::views::model_picker::ModelPickerSelection;
+
+    match selection {
+        ModelPickerSelection::DefaultModel { model_id } => models
+            .available
+            .contains_key(&model_id)
+            .then_some(Action::SetDefaultModel(model_id)),
+        ModelPickerSelection::ExplicitEffort { model_id, effort } => models
+            .resolve_effort_for_model(&model_id, &effort.id)
+            .ok()
+            .filter(|live_effort| *live_effort == effort.value)
+            .map(|live_effort| Action::SwitchModel {
+                model_id,
+                effort: Some(live_effort),
+            }),
+    }
+}
+
 impl AgentView {
     /// `suggest_args` falls back to model rows when the query is not in effort
     /// phase. Model-phase reasoning rows use a trailing space in `insert_text`;
@@ -121,6 +143,15 @@ impl AgentView {
 
         // Picker-based modals: route Esc through ModalWindow chrome first,
         // then delegate remaining keys to the picker input handler.
+        if matches!(modal, ActiveModal::ModelsPicker { .. }) {
+            let Some(ActiveModal::ModelsPicker { mut picker }) = self.active_modal.take() else {
+                unreachable!()
+            };
+            let outcome = picker.handle_event(&Event::Key(*key));
+            self.active_modal = Some(ActiveModal::ModelsPicker { picker });
+            return self.apply_models_picker_outcome(outcome);
+        }
+
         if matches!(
             modal,
             ActiveModal::CommandPalette { .. }
@@ -507,6 +538,7 @@ impl AgentView {
                 pending_target,
             } => self.handle_edit_confirm_choice(confirm, pending_target, ch),
             ActiveModal::CommandPalette { .. }
+            | ActiveModal::ModelsPicker { .. }
             | ActiveModal::ArgPicker { .. }
             | ActiveModal::SessionPicker { .. }
             | ActiveModal::DocPicker { .. }
@@ -528,6 +560,14 @@ impl AgentView {
         use crate::views::modal::ActiveModal;
 
         let event = crossterm::event::Event::Paste(text.to_owned());
+        if matches!(self.active_modal, Some(ActiveModal::ModelsPicker { .. })) {
+            let Some(ActiveModal::ModelsPicker { mut picker }) = self.active_modal.take() else {
+                unreachable!()
+            };
+            let outcome = picker.handle_event(&event);
+            self.active_modal = Some(ActiveModal::ModelsPicker { picker });
+            return self.apply_models_picker_outcome(outcome);
+        }
         if matches!(self.active_modal, Some(ActiveModal::DocPicker { .. })) {
             return self.handle_doc_input(&event);
         }
@@ -566,6 +606,28 @@ impl AgentView {
             InputOutcome::Changed
         } else {
             InputOutcome::Unchanged
+        }
+    }
+
+    /// Thin app adapter for the component-owned `/models` picker outcome.
+    fn apply_models_picker_outcome(
+        &mut self,
+        outcome: crate::views::model_picker::ModelPickerOutcome,
+    ) -> InputOutcome {
+        use crate::views::model_picker::ModelPickerOutcome;
+
+        match outcome {
+            ModelPickerOutcome::Changed => InputOutcome::Changed,
+            ModelPickerOutcome::Unchanged => InputOutcome::Unchanged,
+            ModelPickerOutcome::Closed => {
+                self.active_modal = None;
+                InputOutcome::Changed
+            }
+            ModelPickerOutcome::Selected(selection) => {
+                let action = live_models_picker_action(&self.session.models, selection);
+                self.active_modal = None;
+                action.map_or(InputOutcome::Changed, InputOutcome::Action)
+            }
         }
     }
 
@@ -875,6 +937,11 @@ impl AgentView {
                                     .trim_start_matches('/')
                                     .trim_end_matches(' ')
                                     .to_string();
+
+                                if trimmed == "models" {
+                                    self.active_modal = None;
+                                    return InputOutcome::Action(Action::OpenModelsPicker);
+                                }
 
                                 if trimmed == "resume" {
                                     let prev = {
@@ -1402,6 +1469,15 @@ impl AgentView {
         use crate::views::modal_window::{self as mw, ModalWindowOutcome};
         use crossterm::event::MouseEventKind;
 
+        if matches!(self.active_modal, Some(ActiveModal::ModelsPicker { .. })) {
+            let Some(ActiveModal::ModelsPicker { mut picker }) = self.active_modal.take() else {
+                unreachable!()
+            };
+            let outcome = picker.handle_event(&Event::Mouse(*mouse));
+            self.active_modal = Some(ActiveModal::ModelsPicker { picker });
+            return self.apply_models_picker_outcome(outcome);
+        }
+
         // Picker-based modals: route through ModalWindow chrome first,
         // then delegate content events to the picker input handler.
         if matches!(
@@ -1763,7 +1839,9 @@ impl AgentView {
             // EditConfirm has no draw arm and is no longer armed anywhere (the
             // dirty pane-switch lock blocks instead) — arming it would capture
             // all input invisibly.
-            if let modal::ActiveModal::CommandPalette {
+            if let modal::ActiveModal::ModelsPicker { picker } = active_modal {
+                picker.render(buf, area, &theme, compact);
+            } else if let modal::ActiveModal::CommandPalette {
                 entries: _,
                 state,
                 window,
@@ -2462,6 +2540,120 @@ impl AgentView {
 }
 
 #[cfg(test)]
+mod models_picker_live_validation_tests {
+    use std::sync::Arc;
+
+    use agent_client_protocol as acp;
+    use xai_grok_shell::sampling::types::{ReasoningEffort, ReasoningEffortOption};
+
+    use super::*;
+    use crate::views::model_picker::ModelPickerSelection;
+
+    fn live_models() -> crate::acp::model_state::ModelState {
+        let mut models = crate::acp::model_state::ModelState::default();
+        for id in ["alpha", "beta"] {
+            let model_id = acp::ModelId::new(Arc::from(id));
+            let meta = serde_json::json!({
+                "supportsReasoningEffort": true,
+                "reasoningEfforts": [
+                    { "id": "low", "value": "low", "label": "Low" },
+                    { "id": "deep", "value": "xhigh", "label": "Deep" }
+                ]
+            });
+            models.available.insert(
+                model_id.clone(),
+                acp::ModelInfo::new(model_id, id.to_string()).meta(meta.as_object().cloned()),
+            );
+        }
+        models
+    }
+
+    fn explicit(model_id: &str, id: &str, value: ReasoningEffort) -> ModelPickerSelection {
+        ModelPickerSelection::ExplicitEffort {
+            model_id: acp::ModelId::new(Arc::from(model_id)),
+            effort: ReasoningEffortOption {
+                id: id.to_string(),
+                value,
+                label: id.to_string(),
+                description: None,
+                default: false,
+            },
+        }
+    }
+
+    #[test]
+    fn live_validation_accepts_snapshot_after_catalog_reorder() {
+        let mut models = live_models();
+        models.available.swap_indices(0, 1);
+        assert!(matches!(
+            live_models_picker_action(
+                &models,
+                ModelPickerSelection::DefaultModel {
+                    model_id: acp::ModelId::new(Arc::from("alpha")),
+                },
+            ),
+            Some(Action::SetDefaultModel(ref id)) if id.0.as_ref() == "alpha"
+        ));
+    }
+
+    #[test]
+    fn live_validation_rejects_removed_model() {
+        let mut models = live_models();
+        models
+            .available
+            .shift_remove(&acp::ModelId::new(Arc::from("alpha")));
+        assert!(
+            live_models_picker_action(
+                &models,
+                ModelPickerSelection::DefaultModel {
+                    model_id: acp::ModelId::new(Arc::from("alpha")),
+                },
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn live_validation_rejects_removed_or_remapped_effort() {
+        let mut models = live_models();
+        assert!(matches!(
+            live_models_picker_action(&models, explicit("alpha", "deep", ReasoningEffort::Xhigh),),
+            Some(Action::SwitchModel {
+                effort: Some(ReasoningEffort::Xhigh),
+                ..
+            })
+        ));
+
+        let alpha = acp::ModelId::new(Arc::from("alpha"));
+        models.available.get_mut(&alpha).unwrap().meta = serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "id": "deep", "value": "high", "label": "Deep" }
+            ]
+        })
+        .as_object()
+        .cloned();
+        assert!(
+            live_models_picker_action(&models, explicit("alpha", "deep", ReasoningEffort::Xhigh),)
+                .is_none()
+        );
+
+        models.available.get_mut(&alpha).unwrap().meta = serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "id": "low", "value": "low", "label": "Low" }
+            ]
+        })
+        .as_object()
+        .cloned();
+        assert!(
+            live_models_picker_action(&models, explicit("alpha", "deep", ReasoningEffort::Xhigh),)
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
 mod session_picker_delete_tests {
     use crate::app::actions::Action;
     use crate::app::agent_view::AgentView;
@@ -2903,6 +3095,32 @@ mod command_palette_vim_input_tests {
             Some(ActiveModal::CommandPalette { state, .. }) => state,
             _ => panic!("expected open command palette"),
         }
+    }
+
+    #[test]
+    fn switch_model_palette_selection_routes_through_open_models_picker() {
+        let mut agent = make_agent();
+        open_command_palette(&mut agent);
+        let switch_model_index = crate::views::modal::default_palette_entries(
+            agent.sharing_enabled,
+            &agent.prompt.slash_controller,
+        )
+        .iter()
+        .position(|entry| entry.label == "Switch Model")
+        .expect("Switch Model palette entry");
+        if let Some(ActiveModal::CommandPalette { state, .. }) = agent.active_modal.as_mut() {
+            state.selected = switch_model_index;
+        }
+
+        let outcome = agent.handle_modal_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(crate::app::actions::Action::OpenModelsPicker)
+        ));
+        assert!(
+            agent.active_modal.is_none(),
+            "palette selection must not open the legacy model ArgPicker"
+        );
     }
 
     #[test]
