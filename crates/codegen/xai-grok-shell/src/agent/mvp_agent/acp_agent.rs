@@ -679,7 +679,6 @@ impl acp::Agent for MvpAgent {
                 Ok(self.auth_response_with_meta())
             }
             auth_method::GROK_COM_METHOD_ID | auth_method::OIDC_METHOD_ID => {
-                let grok_ctx = self.auth_manager.grok_com_config();
                 let auth_meta = AuthRequestMeta::from_json(arguments.meta.as_ref());
                 tracing::info!(
                     method = arguments.method_id.0.as_ref(), headless = auth_meta
@@ -717,37 +716,44 @@ impl acp::Agent for MvpAgent {
                     ),
                 );
                 let login_override = auth_meta.login_override();
+                let provider = crate::provider::GrokProvider::new(
+                    self.auth_manager.clone(),
+                    self.models_manager.clone(),
+                );
                 let (auth, _did_auth) = if !auth_meta.headless {
                     let (url_tx, url_rx) = tokio::sync::oneshot::channel();
                     let (code_tx, code_rx) = tokio::sync::mpsc::channel(1);
                     *self.auth_code_tx.borrow_mut() = Some(code_tx);
                     *self.auth_url_rx.borrow_mut() = Some(url_rx);
-                    let result = crate::auth::run_auth_flow_with_stderr_bridge(
-                            &self.auth_manager,
-                            grok_ctx,
+                    let result = provider
+                        .login_with_channels(
                             crate::auth::AuthChannels {
                                 url_tx: Some(url_tx),
                                 code_rx,
                             },
                             auth_meta.reauth,
+                            true,
                             auth_meta.force_interactive,
                             login_override,
                         )
                         .await;
                     *self.auth_code_tx.borrow_mut() = None;
                     *self.auth_url_rx.borrow_mut() = None;
-                    result
+                    result.map(|auth| (auth, true))
                 } else {
-                    crate::auth::run_auth_flow(
-                                &self.auth_manager,
-                                grok_ctx,
-                                auth_meta.reauth,
-                                None,
-                                None,
-                                None,
-                                login_override,
-                            )
-                            .await
+                    provider
+                        .login_with_channels(
+                            crate::auth::AuthChannels {
+                                url_tx: None,
+                                code_rx: tokio::sync::mpsc::channel(1).1,
+                            },
+                            auth_meta.reauth,
+                            false,
+                            false,
+                            login_override,
+                        )
+                        .await
+                        .map(|auth| (auth, true))
                 }
                     .map_err(|e| {
                         emit_login_span(
@@ -781,7 +787,6 @@ impl acp::Agent for MvpAgent {
                     crate::managed_config::post_login_sync(Some(auth.clone())),
                 );
                 self.set_auth_method(arguments.method_id.clone());
-                self.models_manager.on_auth_changed().await;
                 if crate::agent::chat_modes::process_chat_mode_enabled() {
                     self.chat_modes.warm_in_background();
                 }
