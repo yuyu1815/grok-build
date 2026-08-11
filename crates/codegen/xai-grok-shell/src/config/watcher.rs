@@ -98,15 +98,15 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for `config.toml` and `models_cache.json`, plus
-/// `~/.grok/auth/` for `grok.json` and any extra paths (project
-/// `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
+/// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json`
+/// changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`,
+/// etc.) provided at startup.
 ///
 /// Uses `notify-debouncer-mini` for built-in debounce that coalesces rapid
 /// editor writes (including write-then-rename patterns).
 ///
 /// Self-write suppression is intentionally omitted. When the agent writes
-/// `auth/grok.json` or `config.toml`, the watcher will fire and the
+/// `auth.json` or `config.toml`, the watcher will fire and the
 /// [`ConfigReloader`](super::reloader::ConfigReloader) will re-read the file.
 /// The reloader's own content-based deduplication (auth key hash, toml value
 /// comparison) skips the update when nothing actually changed, so the
@@ -149,8 +149,6 @@ impl ConfigFileWatcher {
         let debounce = debounce.unwrap_or(DEFAULT_DEBOUNCE);
         let (tx, rx) = mpsc::unbounded_channel();
         let grok_home_buf = grok_home.to_path_buf();
-        let auth_dir_buf = grok_home.join("auth");
-        let _ = std::fs::create_dir_all(&auth_dir_buf);
         // `~/.claude.json` is consumed by **every**
         // session (see `load_claude_json_mcp_servers_as_configs`), so
         // a write to it must broadcast through the unit
@@ -181,7 +179,7 @@ impl ConfigFileWatcher {
                 let parent = path.parent();
 
                 let change = match name {
-                    Some("grok.json") if parent == Some(auth_dir_buf.as_path()) => {
+                    Some("auth.json") if parent == Some(grok_home_buf.as_path()) => {
                         Some(ConfigChangeEvent::AuthChanged)
                     }
                     Some("config.toml") if parent == Some(grok_home_buf.as_path()) => {
@@ -232,18 +230,6 @@ impl ConfigFileWatcher {
                     path = %grok_home.display(),
                     error = %e,
                     "failed to watch grok home directory"
-                )
-            })
-            .ok()?;
-
-        debouncer
-            .watcher()
-            .watch(&grok_home.join("auth"), RecursiveMode::NonRecursive)
-            .map_err(|e| {
-                tracing::warn!(
-                    path = %grok_home.join("auth").display(),
-                    error = %e,
-                    "failed to watch auth directory"
                 )
             })
             .ok()?;
@@ -669,18 +655,13 @@ mod tests {
     )]
     fn watcher_detects_auth_json_change() {
         let tmp = TempDir::new().unwrap();
-        fs::create_dir_all(tmp.path().join("auth")).unwrap();
-        fs::write(tmp.path().join("auth").join("grok.json"), "{}").unwrap();
+        fs::write(tmp.path().join("auth.json"), "{}").unwrap();
 
         let (_w, mut rx) =
             ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
                 .expect("watcher should start");
 
-        fs::write(
-            tmp.path().join("auth").join("grok.json"),
-            r#"{"new":"token"}"#,
-        )
-        .unwrap();
+        fs::write(tmp.path().join("auth.json"), r#"{"new":"token"}"#).unwrap();
         wait_ms(300);
 
         let mut found = false;
@@ -705,8 +686,7 @@ mod tests {
     fn watcher_ignores_reads_of_watched_files() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("config.toml"), "a = 1").unwrap();
-        fs::create_dir_all(tmp.path().join("auth")).unwrap();
-        fs::write(tmp.path().join("auth").join("grok.json"), "{}").unwrap();
+        fs::write(tmp.path().join("auth.json"), "{}").unwrap();
 
         let (_w, mut rx) =
             ConfigFileWatcher::start(tmp.path(), &[], None, Some(Duration::from_millis(50)))
@@ -718,7 +698,7 @@ mod tests {
         // files. Repeatedly, to defeat any incidental coalescing.
         for _ in 0..5 {
             let _ = fs::read(tmp.path().join("config.toml")).unwrap();
-            let _ = fs::read(tmp.path().join("auth").join("grok.json")).unwrap();
+            let _ = fs::read(tmp.path().join("auth.json")).unwrap();
             wait_ms(20);
         }
         wait_ms(300);

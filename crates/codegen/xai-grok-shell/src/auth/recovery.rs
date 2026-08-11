@@ -844,10 +844,9 @@ mod tests {
             expires_at: Some(Utc::now() + Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, fresh);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let mut rec = m.unauthorized_recovery(rejected_cred(), RecoverySource::Background);
         let auth = rec
@@ -871,10 +870,9 @@ mod tests {
             expires_at: Some(Utc::now() + Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, same);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let calls = Arc::new(AtomicU32::new(0));
         m.set_refresher(Arc::new(OkRefresher {
@@ -1025,10 +1023,9 @@ mod tests {
             expires_at: Some(Utc::now() - Duration::hours(1)),
             ..GrokAuth::test_default()
         };
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(scope, expired_different);
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let calls = Arc::new(AtomicU32::new(0));
         m.set_refresher(Arc::new(OkRefresher {
@@ -1120,8 +1117,7 @@ mod tests {
         seed(&m, AuthMode::Oidc, Some("rt"));
 
         // Disk: a different, non-expired, *wrong-team* token a sibling wrote.
-        let mut store =
-            read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
+        let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
         store.insert(
             scope,
             GrokAuth {
@@ -1132,7 +1128,7 @@ mod tests {
                 ..GrokAuth::test_default()
             },
         );
-        write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
+        write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
 
         let mut rec = m.unauthorized_recovery(rejected_cred(), RecoverySource::Background);
         let err = rec.next().await.unwrap_err();

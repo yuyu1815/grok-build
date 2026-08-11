@@ -105,7 +105,7 @@ pub enum ActionId {
     NewSessionInWorktree,
     ExitSession,
     CommandPalette,
-    OpenModelsPicker,
+    ModelPicker,
     ShortcutsHelp,
 
     // Settings
@@ -642,7 +642,7 @@ mod tests {
         assert_eq!(registry.lookup(&ctrl_r, When::PromptFocused), None);
         assert_eq!(
             registry.lookup(&ctrl_m, When::AgentScreen),
-            Some(ActionId::OpenModelsPicker)
+            Some(ActionId::ModelPicker)
         );
         assert_eq!(
             registry.lookup(&ctrl_m, When::PromptFocused),

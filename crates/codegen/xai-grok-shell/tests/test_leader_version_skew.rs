@@ -345,7 +345,7 @@ async fn eviction_leaves_single_leader_and_single_auth_owner() {
                 .await
                 .expect("no live old leader");
 
-            let auth_path = home.path().join(".grok").join("auth").join("grok.json");
+            let auth_path = home.path().join(".grok").join("auth.json");
             let auth_before = std::fs::metadata(&auth_path)
                 .ok()
                 .and_then(|m| m.modified().ok());

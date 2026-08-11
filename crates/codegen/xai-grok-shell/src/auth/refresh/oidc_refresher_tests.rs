@@ -66,7 +66,7 @@ async fn start_mock_oidc_and_proxy() -> (String, tokio::task::JoinHandle<()>) {
 }
 
 fn write_auth_to_disk(dir: &std::path::Path, scope: &str, auth: &GrokAuth) {
-    let path = dir.join("auth").join("grok.json");
+    let path = dir.join("auth.json");
     let mut map = crate::auth::read_auth_json(&path).unwrap_or_default();
     map.insert(scope.to_owned(), auth.clone());
     let json = serde_json::to_string_pretty(&map).unwrap();
@@ -460,8 +460,7 @@ async fn oidc_refresher_e2e_invalid_client_adopts_valid_sibling_disk_token() {
     let mut store = std::collections::BTreeMap::new();
     store.insert(scope, disk_auth);
     let json = serde_json::to_string_pretty(&store).unwrap();
-    std::fs::create_dir_all(dir.path().join("auth")).unwrap();
-    std::fs::write(dir.path().join("auth").join("grok.json"), json).unwrap();
+    std::fs::write(dir.path().join("auth.json"), json).unwrap();
 
     // In-memory auth has the OLD client_id that the server rejects.
     let expired = GrokAuth {
@@ -681,8 +680,7 @@ async fn lock_timeout_falls_through_to_refresh() {
     mgr.hot_swap(expired);
 
     // Hold the lock file externally so the refresher times out.
-    let lock_path = dir.path().join("auth").join("grok.json.lock");
-    std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    let lock_path = dir.path().join("auth.json.lock");
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -819,7 +817,7 @@ async fn refresher_retries_with_disk_token_after_invalid_grant() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = GrokComConfig::default();
     let scope = cfg.auth_scope();
-    let auth_path = dir.path().join("auth").join("grok.json");
+    let auth_path = dir.path().join("auth.json");
 
     let attempts = Arc::new(AtomicU32::new(0));
     let success_rts = std::collections::HashMap::from([(
@@ -887,7 +885,7 @@ async fn refresher_disk_retry_invalid_client_with_different_client_id_preserves_
     let dir = tempfile::tempdir().unwrap();
     let cfg = GrokComConfig::default();
     let scope = cfg.auth_scope();
-    let auth_path = dir.path().join("auth").join("grok.json");
+    let auth_path = dir.path().join("auth.json");
 
     let attempts = Arc::new(AtomicU32::new(0));
     let attempts_for_handler = attempts.clone();
@@ -1015,7 +1013,7 @@ async fn refresher_disk_retry_is_one_shot() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = GrokComConfig::default();
     let scope = cfg.auth_scope();
-    let auth_path = dir.path().join("auth").join("grok.json");
+    let auth_path = dir.path().join("auth.json");
 
     let attempts = Arc::new(AtomicU32::new(0));
     // Empty success_rts; disk rotates after the first attempt

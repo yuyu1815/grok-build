@@ -4281,7 +4281,7 @@ fn dashboard_action_for_id(
         | ActionId::ExitSession
         | ActionId::NewSessionInWorktree
         | ActionId::CommandPalette
-        | ActionId::OpenModelsPicker
+        | ActionId::ModelPicker
         | ActionId::ShortcutsHelp
         | ActionId::OpenSettings
         | ActionId::OpenDashboard

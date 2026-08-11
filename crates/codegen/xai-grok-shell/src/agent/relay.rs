@@ -824,7 +824,7 @@ mod tests {
     }
     /// Helper: write a GrokAuth to disk under the given scope.
     fn write_test_auth_to_disk(dir: &std::path::Path, scope: &str, auth: &GrokAuth) {
-        let path = dir.join("auth").join("grok.json");
+        let path = dir.join("auth.json");
         let mut map = crate::auth::read_auth_json(&path).unwrap_or_default();
         map.insert(scope.to_owned(), auth.clone());
         let json = serde_json::to_string_pretty(&map).unwrap();
@@ -877,7 +877,7 @@ mod tests {
         };
         am.hot_swap(expired_session.clone());
         assert!(
-            !dir.path().join("auth").join("grok.json").exists(),
+            !dir.path().join("auth.json").exists(),
             "precondition: no auth.json on disk"
         );
         let calls = Arc::new(AtomicU32::new(0));
@@ -892,7 +892,7 @@ mod tests {
         assert!(!cancel.is_cancelled(), "relay must keep running");
         assert_eq!(calls.load(Ordering::SeqCst), 1, "exactly one IdP refresh");
         assert_eq!(config.auth.key, "fresh-from-authority");
-        let store = crate::auth::read_auth_json(&dir.path().join("auth").join("grok.json"))
+        let store = crate::auth::read_auth_json(&dir.path().join("auth.json"))
             .expect("auth.json must be recreated");
         let healed = store.get(&scope).expect("scope entry restored");
         assert_eq!(healed.key, "fresh-from-authority");

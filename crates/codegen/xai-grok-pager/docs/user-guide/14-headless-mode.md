@@ -519,7 +519,7 @@ Grok stores data in `~/.grok` (override with `GROK_HOME`; see [Environment Varia
 | Path                     | Contents                              |
 | ------------------------ | ------------------------------------- |
 | `config.toml`            | User configuration                    |
-| `auth/grok.json`         | Cached Grok OAuth2/API credentials    |
+| `auth.json`              | Cached OAuth2/API credentials         |
 | `version.json`           | Version cache for update checks       |
 | `sessions/`              | Session transcripts (SQLite)          |
 | `memory/`                | Cross-session memory store            |
@@ -535,7 +535,7 @@ Grok stores data in `~/.grok` (override with `GROK_HOME`; see [Environment Varia
 
 For containers or CI, mount `~/.grok` read-only:
 
-- Pre-populate `auth/grok.json` or use `XAI_API_KEY`
+- Pre-populate `auth.json` or use `XAI_API_KEY`
 - Session persistence fails silently (ephemeral)
 - Update checks log a warning and skip
 

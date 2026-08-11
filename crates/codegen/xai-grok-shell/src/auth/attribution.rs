@@ -454,7 +454,7 @@ mod tests {
     use super::*;
 
     /// Test helper: build a fresh `AuthManager` rooted at a tempdir so
-    /// nothing from a developer's actual `~/.grok/auth/grok.json` leaks in.
+    /// nothing from a developer's actual `~/.grok/auth.json` leaks in.
     fn empty_auth_manager() -> (tempfile::TempDir, AuthManager) {
         let dir = tempfile::tempdir().expect("tempdir");
         let cfg = GrokComConfig::default();

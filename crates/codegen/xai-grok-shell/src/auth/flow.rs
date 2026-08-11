@@ -1184,7 +1184,7 @@ mod tests {
             "rejected external login must persist nothing"
         );
         assert!(
-            !dir.path().join("auth").join("grok.json").exists(),
+            !dir.path().join("auth.json").exists(),
             "rejected external login must not write auth.json"
         );
     }
@@ -1948,7 +1948,7 @@ mod tests {
                 ..GrokAuth::test_default()
             },
         );
-        let auth_path = dir.path().join("auth").join("grok.json");
+        let auth_path = dir.path().join("auth.json");
         crate::auth::storage::write_auth_json(&auth_path, &store).unwrap();
 
         // Same engine as `try_ensure_fresh_auth`.

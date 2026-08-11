@@ -793,9 +793,9 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             ),
         },
         ActionDef {
-            id: ActionId::OpenModelsPicker,
-            label: "models",
-            description: "Open model picker",
+            id: ActionId::ModelPicker,
+            label: "model",
+            description: "Pick model",
             default_key: key!('m', CONTROL),
             alt_keys: vec![],
             category: Category::Session,

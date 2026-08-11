@@ -1,5 +1,4 @@
 pub mod find_protoc;
-mod protoc_dependency;
 
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -116,7 +115,9 @@ impl XaiProtoBuilder {
         // Can only process one input file when using --dependency_out=FILE.
         for proto in protos {
             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
-            let dependency_output = protoc_dependency::configure(&mut command)?;
+            command
+                .arg("--dependency_out=/dev/stdout")
+                .arg("--descriptor_set_out=/dev/null");
 
             // Add protoc's well-known types include directory first (if found).
             // This is needed for Bazel sandboxed builds where protoc and its
@@ -142,13 +143,14 @@ impl XaiProtoBuilder {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
-            let output = protoc_dependency::read(&dependency_output, output)?;
+            let output =
+                String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
 
             let mut lines = output.lines();
             let first_line = lines.next().context("protoc command output is empty")?;
-            let prefix = protoc_dependency::prefix();
+            let prefix = "/dev/null:";
             let rem = first_line.strip_prefix(prefix).with_context(|| {
-                format!("protoc command output must start with {prefix} {output:?}")
+                format!("protoc command output must start with /dev/null: {output:?}")
             })?;
             for line in iter::once(rem).chain(lines) {
                 let line = line.trim();

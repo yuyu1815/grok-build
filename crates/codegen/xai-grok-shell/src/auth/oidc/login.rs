@@ -650,8 +650,7 @@ mod tests {
         assert!(auth.expires_at.is_some());
         assert_eq!(auth.oidc_issuer.as_deref(), Some(issuer.as_str()));
 
-        let auth_json =
-            std::fs::read_to_string(temp_dir.path().join("auth").join("grok.json")).unwrap();
+        let auth_json = std::fs::read_to_string(temp_dir.path().join("auth.json")).unwrap();
         assert!(auth_json.contains("mock-access-token"));
         assert!(auth_json.contains("user-42"));
 
