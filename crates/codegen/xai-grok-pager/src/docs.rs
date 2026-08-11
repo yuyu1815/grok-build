@@ -1,7 +1,7 @@
 //! In-app how-to documentation data (embedded markdown).
 //!
-//! Single source of truth: two static arrays (`USER_GUIDE`, `REFERENCE_DOCS`)
-//! hold every doc. All lookups are zero-allocation; `DocEntry` exists only for
+//! Locale-specific user-guide tables embed every guide explicitly. Reference
+//! docs remain a separate canonical-English table. `DocEntry` exists only for
 //! backward compatibility with the TUI doc picker.
 
 /// A compile-time document entry. All fields are `&'static str`.
@@ -35,128 +35,288 @@ impl From<&Doc> for DocEntry {
 // ── Static doc tables ────────────────────────────────────────────────────────
 
 macro_rules! guide {
-    ($file:literal, $title:literal, $desc:literal) => {
+    ($file:literal, $title:literal, $desc:literal, $content:expr) => {
         Doc {
             filename: $file,
             title: $title,
             description: $desc,
-            content: include_str!(concat!("../docs/user-guide/", $file)),
+            content: $content,
         }
     };
 }
 
-pub static USER_GUIDE: &[Doc] = &[
+pub static USER_GUIDE_EN_US: &[Doc] = &[
     guide!(
         "01-getting-started.md",
         "Getting Started",
-        "Installation, first launch, and basic interaction"
+        "Installation, first launch, and basic interaction",
+        include_str!("../docs/user-guide/01-getting-started.md")
     ),
     guide!(
         "02-authentication.md",
         "Authentication",
-        "Browser login, API keys, OIDC, external auth providers"
+        "Browser login, API keys, OIDC, external auth providers",
+        include_str!("../docs/user-guide/02-authentication.md")
     ),
     guide!(
         "03-keyboard-shortcuts.md",
         "Keyboard Shortcuts",
-        "Complete reference for all TUI key bindings"
+        "Complete reference for all TUI key bindings",
+        include_str!("../docs/user-guide/03-keyboard-shortcuts.md")
     ),
     guide!(
         "04-slash-commands.md",
         "Slash Commands",
-        "All / commands for session management, models, memory, hooks"
+        "All / commands for session management, models, memory, hooks",
+        include_str!("../docs/user-guide/04-slash-commands.md")
     ),
     guide!(
         "05-configuration.md",
         "Configuration",
-        "config.toml, pager.toml, environment variables, file locations"
+        "config.toml, pager.toml, environment variables, file locations",
+        include_str!("../docs/user-guide/05-configuration.md")
     ),
     guide!(
         "06-theming.md",
         "Theming and Appearance",
-        "Themes, color support, pager.toml customization"
+        "Themes, color support, pager.toml customization",
+        include_str!("../docs/user-guide/06-theming.md")
     ),
     guide!(
         "07-mcp-servers.md",
         "MCP Servers",
-        "Setting up external tool integrations via MCP"
+        "Setting up external tool integrations via MCP",
+        include_str!("../docs/user-guide/07-mcp-servers.md")
     ),
     guide!(
         "08-skills.md",
         "Skills",
-        "Creating and using reusable prompt packages"
+        "Creating and using reusable prompt packages",
+        include_str!("../docs/user-guide/08-skills.md")
     ),
     guide!(
         "09-plugins.md",
         "Plugins and Marketplace",
-        "Installing, managing, and creating plugin packages"
+        "Installing, managing, and creating plugin packages",
+        include_str!("../docs/user-guide/09-plugins.md")
     ),
     guide!(
         "10-hooks.md",
         "Hooks",
-        "Project lifecycle scripts for pre/post tool-use events"
+        "Project lifecycle scripts for pre/post tool-use events",
+        include_str!("../docs/user-guide/10-hooks.md")
     ),
     guide!(
         "11-custom-models.md",
         "Custom Models",
-        "BYOK, Ollama, OpenAI-compatible endpoints"
+        "BYOK, Ollama, OpenAI-compatible endpoints",
+        include_str!("../docs/user-guide/11-custom-models.md")
     ),
     guide!(
         "12-project-rules.md",
         "Project Rules (AGENTS.md)",
-        "Per-directory instructions and precedence rules"
+        "Per-directory instructions and precedence rules",
+        include_str!("../docs/user-guide/12-project-rules.md")
     ),
     guide!(
         "13-memory.md",
         "Memory",
-        "Cross-session knowledge persistence and search"
+        "Cross-session knowledge persistence and search",
+        include_str!("../docs/user-guide/13-memory.md")
     ),
     guide!(
         "14-headless-mode.md",
         "Headless Mode and Scripting",
-        "Non-interactive CLI for automation and CI/CD"
+        "Non-interactive CLI for automation and CI/CD",
+        include_str!("../docs/user-guide/14-headless-mode.md")
     ),
     guide!(
         "15-agent-mode.md",
         "Agent Mode and IDE Integration",
-        "ACP stdio transport, WebSocket relay, SDK integration"
+        "ACP stdio transport, WebSocket relay, SDK integration",
+        include_str!("../docs/user-guide/15-agent-mode.md")
     ),
     guide!(
         "16-subagents.md",
         "Subagents and Personas",
-        "Spawning parallel child agents with specialized roles"
+        "Spawning parallel child agents with specialized roles",
+        include_str!("../docs/user-guide/16-subagents.md")
     ),
     guide!(
         "17-sessions.md",
         "Session Management",
-        "Save, load, resume, rewind, and compact sessions"
+        "Save, load, resume, rewind, and compact sessions",
+        include_str!("../docs/user-guide/17-sessions.md")
     ),
     guide!(
         "18-sandbox.md",
         "Sandbox Mode",
-        "OS-level filesystem and network isolation"
+        "OS-level filesystem and network isolation",
+        include_str!("../docs/user-guide/18-sandbox.md")
     ),
     guide!(
         "19-plan-mode.md",
         "Plan Mode",
-        "Structured planning with approval dialogs"
+        "Structured planning with approval dialogs",
+        include_str!("../docs/user-guide/19-plan-mode.md")
     ),
     guide!(
         "20-background-tasks.md",
         "Background Tasks and Monitoring",
-        "Background commands, /loop, monitor, scheduler"
+        "Background commands, /loop, monitor, scheduler",
+        include_str!("../docs/user-guide/20-background-tasks.md")
     ),
     guide!(
         "21-terminal-support.md",
         "Terminal Support and Troubleshooting",
-        "tmux, Byobu, Zellij, SSH, truecolor, clipboard, and diagnostics"
+        "tmux, Byobu, Zellij, SSH, truecolor, clipboard, and diagnostics",
+        include_str!("../docs/user-guide/21-terminal-support.md")
     ),
     guide!(
         "22-permissions-and-safety.md",
         "Permissions and Safety",
-        "Tool approval, sandbox, security"
+        "Tool approval, sandbox, security",
+        include_str!("../docs/user-guide/22-permissions-and-safety.md")
     ),
 ];
+
+pub static USER_GUIDE_JA_JP: &[Doc] = &[
+    guide!(
+        "01-getting-started.md",
+        "Getting Started",
+        "Installation, first launch, and basic interaction",
+        include_str!("../docs/user-guide/ja-JP/01-getting-started.md")
+    ),
+    guide!(
+        "02-authentication.md",
+        "Authentication",
+        "Browser login, API keys, OIDC, external auth providers",
+        include_str!("../docs/user-guide/ja-JP/02-authentication.md")
+    ),
+    guide!(
+        "03-keyboard-shortcuts.md",
+        "Keyboard Shortcuts",
+        "Complete reference for all TUI key bindings",
+        include_str!("../docs/user-guide/ja-JP/03-keyboard-shortcuts.md")
+    ),
+    guide!(
+        "04-slash-commands.md",
+        "Slash Commands",
+        "All / commands for session management, models, memory, hooks",
+        include_str!("../docs/user-guide/ja-JP/04-slash-commands.md")
+    ),
+    guide!(
+        "05-configuration.md",
+        "Configuration",
+        "config.toml, pager.toml, environment variables, file locations",
+        include_str!("../docs/user-guide/ja-JP/05-configuration.md")
+    ),
+    guide!(
+        "06-theming.md",
+        "Theming and Appearance",
+        "Themes, color support, pager.toml customization",
+        include_str!("../docs/user-guide/ja-JP/06-theming.md")
+    ),
+    guide!(
+        "07-mcp-servers.md",
+        "MCP Servers",
+        "Setting up external tool integrations via MCP",
+        include_str!("../docs/user-guide/ja-JP/07-mcp-servers.md")
+    ),
+    guide!(
+        "08-skills.md",
+        "Skills",
+        "Creating and using reusable prompt packages",
+        include_str!("../docs/user-guide/ja-JP/08-skills.md")
+    ),
+    guide!(
+        "09-plugins.md",
+        "Plugins and Marketplace",
+        "Installing, managing, and creating plugin packages",
+        include_str!("../docs/user-guide/ja-JP/09-plugins.md")
+    ),
+    guide!(
+        "10-hooks.md",
+        "Hooks",
+        "Project lifecycle scripts for pre/post tool-use events",
+        include_str!("../docs/user-guide/ja-JP/10-hooks.md")
+    ),
+    guide!(
+        "11-custom-models.md",
+        "Custom Models",
+        "BYOK, Ollama, OpenAI-compatible endpoints",
+        include_str!("../docs/user-guide/ja-JP/11-custom-models.md")
+    ),
+    guide!(
+        "12-project-rules.md",
+        "Project Rules (AGENTS.md)",
+        "Per-directory instructions and precedence rules",
+        include_str!("../docs/user-guide/ja-JP/12-project-rules.md")
+    ),
+    guide!(
+        "13-memory.md",
+        "Memory",
+        "Cross-session knowledge persistence and search",
+        include_str!("../docs/user-guide/ja-JP/13-memory.md")
+    ),
+    guide!(
+        "14-headless-mode.md",
+        "Headless Mode and Scripting",
+        "Non-interactive CLI for automation and CI/CD",
+        include_str!("../docs/user-guide/ja-JP/14-headless-mode.md")
+    ),
+    guide!(
+        "15-agent-mode.md",
+        "Agent Mode and IDE Integration",
+        "ACP stdio transport, WebSocket relay, SDK integration",
+        include_str!("../docs/user-guide/ja-JP/15-agent-mode.md")
+    ),
+    guide!(
+        "16-subagents.md",
+        "Subagents and Personas",
+        "Spawning parallel child agents with specialized roles",
+        include_str!("../docs/user-guide/ja-JP/16-subagents.md")
+    ),
+    guide!(
+        "17-sessions.md",
+        "Session Management",
+        "Save, load, resume, rewind, and compact sessions",
+        include_str!("../docs/user-guide/ja-JP/17-sessions.md")
+    ),
+    guide!(
+        "18-sandbox.md",
+        "Sandbox Mode",
+        "OS-level filesystem and network isolation",
+        include_str!("../docs/user-guide/ja-JP/18-sandbox.md")
+    ),
+    guide!(
+        "19-plan-mode.md",
+        "Plan Mode",
+        "Structured planning with approval dialogs",
+        include_str!("../docs/user-guide/ja-JP/19-plan-mode.md")
+    ),
+    guide!(
+        "20-background-tasks.md",
+        "Background Tasks and Monitoring",
+        "Background commands, /loop, monitor, scheduler",
+        include_str!("../docs/user-guide/ja-JP/20-background-tasks.md")
+    ),
+    guide!(
+        "21-terminal-support.md",
+        "Terminal Support and Troubleshooting",
+        "tmux, Byobu, Zellij, SSH, truecolor, clipboard, and diagnostics",
+        include_str!("../docs/user-guide/ja-JP/21-terminal-support.md")
+    ),
+    guide!(
+        "22-permissions-and-safety.md",
+        "Permissions and Safety",
+        "Tool approval, sandbox, security",
+        include_str!("../docs/user-guide/ja-JP/22-permissions-and-safety.md")
+    ),
+];
+
+/// Backward-compatible canonical English table.
+pub static USER_GUIDE: &[Doc] = USER_GUIDE_EN_US;
 
 /// Non-user-guide reference docs. Separate from USER_GUIDE because they
 /// live under `docs/` (not `docs/user-guide/`), are not extracted to disk,
@@ -179,38 +339,64 @@ static REFERENCE_DOCS: &[Doc] = &[
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/// Find a doc by title (case-insensitive). Returns the static entry.
+pub fn user_guide_for(locale: crate::i18n::Locale) -> &'static [Doc] {
+    match locale {
+        crate::i18n::Locale::EnUs => USER_GUIDE_EN_US,
+        crate::i18n::Locale::JaJp => USER_GUIDE_JA_JP,
+    }
+}
+
+fn active_user_guide() -> &'static [Doc] {
+    user_guide_for(crate::i18n::locale())
+}
+
+/// Find a doc by canonical English title (case-insensitive).
 pub fn find_doc(title: &str) -> Option<&'static Doc> {
-    USER_GUIDE
+    if let Some(index) = USER_GUIDE_EN_US
         .iter()
-        .chain(REFERENCE_DOCS.iter())
-        .find(|d| d.title.eq_ignore_ascii_case(title))
+        .position(|doc| doc.title.eq_ignore_ascii_case(title))
+    {
+        return active_user_guide().get(index);
+    }
+    REFERENCE_DOCS
+        .iter()
+        .find(|doc| doc.title.eq_ignore_ascii_case(title))
 }
 
-/// All doc titles, zero allocation.
+/// All canonical English docs, including reference docs, zero allocation.
+pub fn all_docs() -> impl Iterator<Item = &'static Doc> {
+    USER_GUIDE_EN_US.iter().chain(REFERENCE_DOCS.iter())
+}
+
+/// All canonical English doc titles, zero allocation.
 pub fn all_titles() -> impl Iterator<Item = &'static str> {
-    USER_GUIDE
-        .iter()
-        .chain(REFERENCE_DOCS.iter())
-        .map(|d| d.title)
+    all_docs().map(|doc| doc.title)
 }
 
-/// Returns the content of a how-to document by exact title match (case-insensitive).
+/// Returns the content of a how-to document by canonical English title.
 pub fn get_howto_doc(title: &str) -> Option<&'static str> {
-    find_doc(title).map(|d| d.content)
+    find_doc(title).map(|doc| doc.content)
 }
 
-/// Returns a list of available how-to titles for the model to choose from.
+/// Returns a list of available canonical English titles for model lookup.
 pub fn list_howto_titles() -> Vec<String> {
     all_titles().map(String::from).collect()
 }
 
 /// Returns all docs as owned `DocEntry` values for the TUI doc picker.
 pub fn default_howto_entries() -> Vec<DocEntry> {
-    USER_GUIDE
+    active_user_guide()
         .iter()
-        .chain(REFERENCE_DOCS.iter())
-        .map(DocEntry::from)
+        .map(|doc| DocEntry {
+            title: crate::i18n::localized_doc_title(doc.title).into_owned(),
+            description: crate::i18n::localized_doc_description(doc.description).into_owned(),
+            content: doc.content,
+        })
+        .chain(REFERENCE_DOCS.iter().map(|doc| DocEntry {
+            title: crate::i18n::localized_doc_title(doc.title).into_owned(),
+            description: crate::i18n::localized_doc_description(doc.description).into_owned(),
+            content: doc.content,
+        }))
         .collect()
 }
 
@@ -223,16 +409,16 @@ pub fn extract_user_guide_docs(grok_home: &std::path::Path) {
         tracing::warn!(error = %e, "Failed to create user-guide docs directory");
         return;
     }
-    for doc in USER_GUIDE {
+    let guide = active_user_guide();
+    for doc in guide {
         if let Err(e) = std::fs::write(docs_dir.join(doc.filename), doc.content) {
             tracing::debug!(error = %e, filename = doc.filename, "Failed to extract user-guide doc");
         }
     }
-    // Clean up stale managed docs (files removed from USER_GUIDE since last run).
+    // Clean up stale managed docs (files removed from the active guide since last run).
     // Only remove files matching the managed naming pattern (NN-*.md).
     if let Ok(entries) = std::fs::read_dir(&docs_dir) {
-        let valid: std::collections::HashSet<&str> =
-            USER_GUIDE.iter().map(|d| d.filename).collect();
+        let valid: std::collections::HashSet<&str> = guide.iter().map(|d| d.filename).collect();
         for dir_entry in entries.flatten() {
             if let Some(name) = dir_entry.file_name().to_str() {
                 let is_managed = name.len() > 3

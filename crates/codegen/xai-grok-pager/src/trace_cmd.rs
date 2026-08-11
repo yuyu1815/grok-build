@@ -53,7 +53,7 @@ pub async fn run(args: TraceArgs, agent_config: &AgentConfig) -> Result<()> {
                 "Trace uploads disabled. Set [telemetry] trace_upload = true in {}",
                 crate::util::display_user_grok_path("config.toml")
             );
-            eprintln!("Falling back to local export.");
+            eprintln!("{}", crate::tr!("Falling back to local export."));
         }
         return run_export(
             &args.session_id,
@@ -196,7 +196,10 @@ fn append_bytes<W: std::io::Write>(archive: &mut tar::Builder<W>, path: &str, da
     set_mtime(&mut header);
     if let Err(e) = archive.append_data(&mut header, path, data) {
         tracing::warn!(error = %e, "trace_cmd: failed to add file to archive");
-        eprintln!("  Warning: failed to add {path}: {e}");
+        eprintln!(
+            "{}",
+            crate::tr!("  Warning: failed to add {path}: {e}", path, e)
+        );
     }
 }
 
@@ -377,8 +380,14 @@ async fn run_export(
 ) -> Result<()> {
     let session_dir = find_session_dir(session_id)?;
     if !json {
-        eprintln!("Found session at: {}", session_dir.display());
-        eprintln!("Building session trace archive...");
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "Found session at: {path}",
+                &[("path", session_dir.display().to_string())]
+            )
+        );
+        eprintln!("{}", crate::tr!("Building session trace archive..."));
     }
 
     let archive = build_session_tar(&session_dir, session_id, agent_config)?;
@@ -395,7 +404,10 @@ async fn run_export(
         println!("{}", serde_json::to_string(&result)?);
     } else {
         let size_kb = archive.len() / 1024;
-        eprintln!("Session trace exported ({size_kb} KB):");
+        eprintln!(
+            "{}",
+            crate::tr!("Session trace exported ({size_kb} KB):", size_kb)
+        );
         eprintln!("  {}", output_path.display());
         println!("{}", output_path.display());
     }
@@ -415,7 +427,13 @@ async fn run_upload(
 ) -> Result<()> {
     let session_dir = find_session_dir(session_id)?;
     if !json {
-        eprintln!("Found session at: {}", session_dir.display());
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "Found session at: {path}",
+                &[("path", session_dir.display().to_string())]
+            )
+        );
     }
 
     let upload_method = resolve_upload_method(agent_config).await;
@@ -435,7 +453,7 @@ async fn run_upload(
     };
 
     if !json {
-        eprintln!("Building session trace archive...");
+        eprintln!("{}", crate::tr!("Building session trace archive..."));
     }
     let archive = build_session_tar(&session_dir, session_id, agent_config)?;
     let archive_size = archive.len();
@@ -485,7 +503,10 @@ async fn run_upload(
     );
     if !json {
         let size_kb = archive_size / 1024;
-        eprintln!("Uploading session trace ({size_kb} KB)...");
+        eprintln!(
+            "{}",
+            crate::tr!("Uploading session trace ({size_kb} KB)...", size_kb)
+        );
         eprintln!("{method_desc}");
     }
 
@@ -503,7 +524,7 @@ async fn run_upload(
                 println!("{}", serde_json::to_string(&result)?);
             } else {
                 eprintln!();
-                eprintln!("Session trace uploaded successfully.");
+                eprintln!("{}", crate::tr!("Session trace uploaded successfully."));
                 eprintln!("  {url}");
                 println!("{url}");
             }
@@ -542,7 +563,10 @@ impl UploadAttempt<'_> {
 
         let export_path = save_local_bundle(self.archive, self.session_id, self.output)
             .unwrap_or_else(|write_err| {
-                eprintln!("Failed to save local bundle: {write_err}");
+                eprintln!(
+                    "{}",
+                    crate::tr!("Failed to save local bundle: {write_err}", write_err)
+                );
                 export_dir.join(format!("{}.tar.gz", self.session_id))
             });
 
@@ -559,10 +583,28 @@ impl UploadAttempt<'_> {
             println!("{}", serde_json::to_string(&result).unwrap_or_default());
         } else {
             eprintln!();
-            eprintln!("Trace upload failed: {error}");
-            eprintln!("  Bundle: {}", export_path.display());
-            eprintln!("  Log:    {}", log_path.display());
-            eprintln!("  Retry:  grok trace {}", self.session_id);
+            eprintln!("{}", crate::tr!("Trace upload failed: {error}", error));
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  Bundle: {path}",
+                    &[("path", export_path.display().to_string())]
+                )
+            );
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  Log:    {path}",
+                    &[("path", log_path.display().to_string())]
+                )
+            );
+            eprintln!(
+                "{}",
+                crate::i18n::format(
+                    "  Retry:  grok trace {session_id}",
+                    &[("session_id", self.session_id.to_string())]
+                )
+            );
             println!("{}", export_path.display());
         }
 
@@ -596,7 +638,10 @@ impl UploadAttempt<'_> {
         let _ = writeln!(log, "Full error chain:\n  {error:?}");
 
         if let Err(e) = std::fs::write(&log_path, &log) {
-            eprintln!("  Warning: failed to write debug log: {e}");
+            eprintln!(
+                "{}",
+                crate::tr!("  Warning: failed to write debug log: {e}", e)
+            );
         }
         log_path
     }
@@ -631,7 +676,13 @@ async fn upload_with_retries(
     .retry(backoff)
     .notify(|err, dur| {
         tracing::warn!(error = %err, retry_in = ?dur, "trace_cmd: upload attempt failed, retrying");
-        eprintln!("  Upload failed, retrying in {}s...", dur.as_secs());
+        eprintln!(
+            "{}",
+            crate::i18n::format(
+                "  Upload failed, retrying in {seconds}s...",
+                &[("seconds", dur.as_secs().to_string())]
+            )
+        );
     })
     .await
 }

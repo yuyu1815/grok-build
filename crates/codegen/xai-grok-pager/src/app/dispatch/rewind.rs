@@ -92,7 +92,7 @@ pub(super) fn dispatch_rewind(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast("No active session");
+        app.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -133,7 +133,7 @@ pub(super) fn dispatch_rewind_show_picker(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast("No active session");
+        app.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
 
@@ -497,7 +497,7 @@ pub(super) fn dispatch_inline_edit_submit(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     };
     let Some(session_id) = agent.session.session_id.clone() else {
-        app.show_toast("No active session");
+        app.show_toast(crate::i18n::text("No active session").as_ref());
         return vec![];
     };
     let Some(edit) = agent.inline_edit.as_ref() else {
@@ -605,18 +605,18 @@ pub(super) fn dispatch_rewind_success(
     // re-appearing at the same spot is self-explanatory. (Files-only keeps
     // it: nothing is resubmitted there, so the revert needs its signal.)
     if inline_resubmit.is_none() || is_files_only {
-        let msg = match mode_str {
+        let msg = crate::i18n::text(match mode_str {
             "conversation_only" => "Reverted conversation",
             "files_only" => "Reverted file changes",
             _ => "Reverted conversation and file changes",
-        };
+        });
         if app.screen_mode.is_minimal() {
             // Minimal has no toast surface and can't erase committed lines, so the confirmation stays in scrollback there.
             agent
                 .scrollback
-                .push_block(RenderBlock::system(msg.to_string()));
+                .push_block(RenderBlock::system(msg.clone().into_owned()));
         } else {
-            agent.show_toast(msg);
+            agent.show_toast(msg.as_ref());
         }
     }
 
@@ -696,7 +696,7 @@ pub(super) fn handle_rewind_points_loaded(
         if let Some(stashed) = stashed {
             agent.prompt.restore(stashed);
         }
-        app.show_toast("No undoable prompts");
+        app.show_toast(crate::i18n::text("No undoable prompts").as_ref());
         return vec![];
     }
 

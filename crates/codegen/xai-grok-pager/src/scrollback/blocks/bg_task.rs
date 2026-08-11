@@ -9,6 +9,7 @@ use std::time::Duration;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span, Text};
 
+use crate::i18n::{format as tr_format, text};
 use crate::render::color::blend_color;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{AccentStyle, BlockContext, BlockOutput, DisplayMode};
@@ -148,14 +149,17 @@ impl BlockContent for BgTaskBlock {
         };
         let line = match &self.kind {
             BgTaskKind::Started => Line::from(vec![
-                Span::styled("Task ", bold),
-                Span::styled("started: ", muted),
+                Span::styled(text("Task").into_owned() + " ", bold),
+                Span::styled(text("started: ").into_owned(), muted),
                 Span::styled(display, muted),
             ]),
             BgTaskKind::Completed { elapsed } => Line::from(vec![
-                Span::styled("Task ", bold),
+                Span::styled(text("Task").into_owned() + " ", bold),
                 Span::styled(
-                    format!("completed in {}: ", format_duration(*elapsed)),
+                    tr_format(
+                        "completed in {elapsed}: ",
+                        &[("elapsed", format_duration(*elapsed))],
+                    ),
                     muted,
                 ),
                 Span::styled(display, muted),
@@ -169,19 +173,34 @@ impl BlockContent for BgTaskBlock {
                 let is_killed = signal
                     .as_deref()
                     .is_some_and(|s| matches!(s, "killed" | "SIGTERM" | "SIGKILL" | "oom"));
-                let verb = if is_killed { "killed" } else { "failed" };
+                let verb = if is_killed {
+                    text("killed")
+                } else {
+                    text("failed")
+                };
                 let detail = if is_killed {
                     String::new()
                 } else {
                     match (exit_code, signal) {
                         (_, Some(sig)) => format!(" ({})", sig),
-                        (Some(code), None) => format!(" (exit {})", code),
+                        (Some(code), None) => {
+                            tr_format(" (exit {code})", &[("code", code.to_string())])
+                        }
                         (None, None) => String::new(),
                     }
                 };
                 Line::from(vec![
-                    Span::styled("Task ", bold),
-                    Span::styled(format!("{verb} in {}: ", format_duration(*elapsed)), muted),
+                    Span::styled(text("Task").into_owned() + " ", bold),
+                    Span::styled(
+                        tr_format(
+                            "{verb} in {elapsed}: ",
+                            &[
+                                ("verb", verb.into_owned()),
+                                ("elapsed", format_duration(*elapsed)),
+                            ],
+                        ),
+                        muted,
+                    ),
                     Span::styled(format!("{}{}", display, detail), muted),
                 ])
             }

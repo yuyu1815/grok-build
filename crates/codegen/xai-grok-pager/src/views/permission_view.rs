@@ -1526,7 +1526,7 @@ fn truncation_indicator_line(theme: &Theme) -> Line<'static> {
             "Ctrl-F",
             Style::default().fg(theme.accent_user).bg(theme.bg_light),
         ),
-        Span::styled(" to expand", style),
+        Span::styled(crate::i18n::text(" to expand"), style),
     ])
 }
 

@@ -187,7 +187,7 @@ pub(super) fn open_credit_limit_upsell(
             unified_billing,
         });
         agent.scrollback.push_block(RenderBlock::credit_limit_card(
-            heading,
+            crate::i18n::text(heading).into_owned(),
             card_action,
             UPSELL_URL_PAYG,
         ));
@@ -212,17 +212,17 @@ pub(super) fn open_credit_limit_upsell(
     }
 
     let question = Question {
-        question: heading.into(),
+        question: crate::i18n::text(heading).into_owned(),
         options: vec![
             QuestionOption {
-                label: "Upgrade tier".into(),
-                description: upgrade_tier_desc.into(),
+                label: crate::i18n::text("Upgrade tier").into_owned(),
+                description: crate::i18n::text(upgrade_tier_desc).into_owned(),
                 preview: None,
                 id: Some(UPSELL_URL_UPGRADE.into()),
             },
             QuestionOption {
-                label: secondary_label.into(),
-                description: secondary_desc.into(),
+                label: crate::i18n::text(secondary_label).into_owned(),
+                description: crate::i18n::text(secondary_desc).into_owned(),
                 preview: None,
                 id: Some(UPSELL_URL_PAYG.into()),
             },
@@ -321,14 +321,16 @@ fn open_supergrok_upsell(
 
     let options = vec![
         QuestionOption {
-            label: "Upgrade to SuperGrok".into(),
-            description: "For everyday coding and productivity tasks".into(),
+            label: crate::i18n::text("Upgrade to SuperGrok").into_owned(),
+            description: crate::i18n::text("For everyday coding and productivity tasks")
+                .into_owned(),
             preview: None,
             id: Some(UPSELL_URL_UPGRADE.into()),
         },
         QuestionOption {
-            label: "Upgrade to SuperGrok Heavy".into(),
-            description: "Get the most out of Grok Build. Highest usage limits.".into(),
+            label: crate::i18n::text("Upgrade to SuperGrok Heavy").into_owned(),
+            description: crate::i18n::text("Get the most out of Grok Build. Highest usage limits.")
+                .into_owned(),
             preview: None,
             // No Heavy-specific URL exists; the /supergrok page lists
             // both plans, so both upgrade options land there.
@@ -336,7 +338,7 @@ fn open_supergrok_upsell(
         },
     ];
     let question = Question {
-        question: heading.into(),
+        question: crate::i18n::text(heading).into_owned(),
         options,
         multi_select: Some(false),
         id: None,
@@ -408,7 +410,7 @@ pub(super) fn handle_billing_fetched(
                 Some(bal) => {
                     crate::views::credit_bar::format_usage_summary(bal, summary_topup.as_ref())
                 }
-                None => "No billing data available.".to_string(),
+                None => crate::i18n::text("No billing data available.").into_owned(),
             };
             agent.scrollback.push_block(RenderBlock::System(
                 crate::scrollback::blocks::SystemMessageBlock::new(msg),
@@ -533,10 +535,16 @@ pub(super) fn handle_credit_limit_recheck_complete(
 
     if tier_changed && !user_moved_on {
         if let Some(prompt) = agent.credit_limit_stashed_prompt.take() {
-            let tier_name = app.subscription_tier.as_deref().unwrap_or("a higher tier");
-            agent.scrollback.push_block(RenderBlock::system(format!(
-                "Subscription upgraded to {tier_name}. Retrying\u{2026}"
-            )));
+            let tier_name = app
+                .subscription_tier
+                .clone()
+                .unwrap_or_else(|| crate::i18n::text("a higher tier").into_owned());
+            agent
+                .scrollback
+                .push_block(RenderBlock::system(crate::i18n::format(
+                    "Subscription upgraded to {tier_name}. Retrying\u{2026}",
+                    &[("tier_name", tier_name)],
+                )));
             agent.session.enqueue_in_flight_prompt_front(prompt);
         }
     } else if !user_moved_on {

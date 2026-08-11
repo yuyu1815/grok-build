@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use super::{DbStats, GcReport, RebuildReport};
+use crate::i18n::{format as tr_format, text};
 use xai_fast_worktree::WorktreeRecord;
 use xai_grok_shell::session::worktree::META_KEY_LABEL;
 
@@ -16,7 +17,7 @@ fn extract_label(rec: &WorktreeRecord) -> &str {
 
 pub fn print_table(records: &[WorktreeRecord]) {
     if records.is_empty() {
-        println!("No worktrees found.");
+        println!("{}", text("No worktrees found."));
         return;
     }
 
@@ -43,7 +44,8 @@ pub fn print_table(records: &[WorktreeRecord]) {
     println!("{header}");
     for rec in records {
         let age = format_age(rec.created_at);
-        let branch = rec.git_ref.as_deref().unwrap_or("(detached)");
+        let detached = text("(detached)");
+        let branch = rec.git_ref.as_deref().unwrap_or(detached.as_ref());
         let label = extract_label(rec);
         let path = abbreviate_home(&rec.path);
         let row = format!(
@@ -68,7 +70,16 @@ pub fn print_table(records: &[WorktreeRecord]) {
                 m
             });
     let breakdown: Vec<String> = by_kind.iter().map(|(k, v)| format!("{v} {k}")).collect();
-    println!("  {} worktrees ({})", total, breakdown.join(", "));
+    println!(
+        "{}",
+        tr_format(
+            "  {count} worktrees ({breakdown})",
+            &[
+                ("count", total.to_string()),
+                ("breakdown", breakdown.join(", "))
+            ],
+        )
+    );
 }
 
 pub fn print_json(records: &[WorktreeRecord]) {
@@ -77,13 +88,46 @@ pub fn print_json(records: &[WorktreeRecord]) {
 }
 
 pub fn print_show(rec: &WorktreeRecord) {
-    println!("  Path:           {}", rec.path.display());
-    println!("  ID:             {}", rec.id);
-    println!("  Type:           {}", rec.kind.as_str());
-    println!("  Source Repo:    {}", rec.source_repo.display());
-    println!("  Creation Mode:  {}", rec.creation_mode);
+    println!(
+        "{}",
+        tr_format(
+            "  Path:           {path}",
+            &[("path", rec.path.display().to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format("  ID:             {id}", &[("id", rec.id.clone())])
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Type:           {type}",
+            &[("type", rec.kind.as_str().to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Source Repo:    {repo}",
+            &[("repo", rec.source_repo.display().to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Creation Mode:  {mode}",
+            &[("mode", rec.creation_mode.clone())]
+        )
+    );
     if let Some(ref git_ref) = rec.git_ref {
-        println!("  Git Ref:        {git_ref}");
+        println!(
+            "{}",
+            tr_format(
+                "  Git Ref:        {git_ref}",
+                &[("git_ref", git_ref.clone())]
+            )
+        );
     }
     if let Some(ref commit) = rec.head_commit {
         let short = if commit.len() > 12 {
@@ -91,55 +135,154 @@ pub fn print_show(rec: &WorktreeRecord) {
         } else {
             commit
         };
-        println!("  HEAD:           {short}");
+        println!(
+            "{}",
+            tr_format("  HEAD:           {head}", &[("head", short.to_string())])
+        );
     }
-    println!("  Created:        {}", format_timestamp(rec.created_at));
+    println!(
+        "{}",
+        tr_format(
+            "  Created:        {timestamp}",
+            &[("timestamp", format_timestamp(rec.created_at))]
+        )
+    );
     if let Some(ts) = rec.last_accessed_at {
-        println!("  Last Accessed:  {}", format_timestamp(ts));
+        println!(
+            "{}",
+            tr_format(
+                "  Last Accessed:  {timestamp}",
+                &[("timestamp", format_timestamp(ts))]
+            )
+        );
     }
     if let Some(ref sid) = rec.session_id {
-        println!("  Session ID:     {sid}");
+        println!(
+            "{}",
+            tr_format("  Session ID:     {id}", &[("id", sid.clone())])
+        );
     }
     if let Some(pid) = rec.creator_pid {
-        println!("  Creator PID:    {pid}");
+        println!(
+            "{}",
+            tr_format("  Creator PID:    {pid}", &[("pid", pid.to_string())])
+        );
     }
-    println!("  Status:         {}", rec.status.as_str());
+    println!(
+        "{}",
+        tr_format(
+            "  Status:         {status}",
+            &[("status", rec.status.as_str().to_string())]
+        )
+    );
     let label = extract_label(rec);
     if !label.is_empty() {
-        println!("  Label:          {label}");
+        println!(
+            "{}",
+            tr_format("  Label:          {label}", &[("label", label.to_string())])
+        );
     }
 
     if rec.path.exists()
         && let Ok(size) = dir_size(&rec.path)
     {
-        println!("  Disk Usage:     {}", format_bytes(size));
+        println!(
+            "{}",
+            tr_format("  Disk Usage:     {size}", &[("size", format_bytes(size))])
+        );
     }
 }
 
 pub fn print_stats(stats: &DbStats) {
-    println!("Worktree DB Statistics");
-    println!("======================");
-    println!("  Total records:  {}", stats.total_records);
-    println!("  Alive:          {}", stats.alive_count);
-    println!("  Dead:           {}", stats.dead_count);
-    println!("  DB size:        {}", format_bytes(stats.db_file_bytes));
+    println!("{}", text("Worktree DB Statistics"));
+    println!("{}", text("======================"));
+    println!(
+        "{}",
+        tr_format(
+            "  Total records:  {count}",
+            &[("count", stats.total_records.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Alive:          {count}",
+            &[("count", stats.alive_count.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Dead:           {count}",
+            &[("count", stats.dead_count.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  DB size:        {size}",
+            &[("size", format_bytes(stats.db_file_bytes))]
+        )
+    );
 }
 
 pub fn print_gc(report: &GcReport) {
-    println!("GC report:");
-    println!("  Dead records removed:    {}", report.dead_removed);
-    println!("  Expired worktrees removed: {}", report.expired_removed);
-    println!("  Skipped (alive process): {}", report.skipped_alive);
+    println!("{}", text("GC report:"));
+    println!(
+        "{}",
+        tr_format(
+            "  Dead records removed:    {count}",
+            &[("count", report.dead_removed.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Expired worktrees removed: {count}",
+            &[("count", report.expired_removed.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Skipped (alive process): {count}",
+            &[("count", report.skipped_alive.to_string())]
+        )
+    );
     if report.remove_failed > 0 {
-        println!("  Removal failures:        {}", report.remove_failed);
+        println!(
+            "{}",
+            tr_format(
+                "  Removal failures:        {count}",
+                &[("count", report.remove_failed.to_string())]
+            )
+        );
     }
 }
 
 pub fn print_rebuild(report: &RebuildReport) {
-    println!("Rebuild report:");
-    println!("  Discovered:      {}", report.discovered);
-    println!("  Registered:      {}", report.registered);
-    println!("  Already tracked: {}", report.already_tracked);
+    println!("{}", text("Rebuild report:"));
+    println!(
+        "{}",
+        tr_format(
+            "  Discovered:      {count}",
+            &[("count", report.discovered.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Registered:      {count}",
+            &[("count", report.registered.to_string())]
+        )
+    );
+    println!(
+        "{}",
+        tr_format(
+            "  Already tracked: {count}",
+            &[("count", report.already_tracked.to_string())]
+        )
+    );
 }
 
 fn format_age(created_at: i64) -> String {
@@ -149,13 +292,13 @@ fn format_age(created_at: i64) -> String {
         .as_secs() as i64;
     let delta = now.saturating_sub(created_at);
     if delta < 60 {
-        format!("{delta}s ago")
+        tr_format("{count}s ago", &[("count", delta.to_string())])
     } else if delta < 3600 {
-        format!("{}m ago", delta / 60)
+        tr_format("{count}m ago", &[("count", (delta / 60).to_string())])
     } else if delta < 86400 {
-        format!("{}h ago", delta / 3600)
+        tr_format("{count}h ago", &[("count", (delta / 3600).to_string())])
     } else {
-        format!("{}d ago", delta / 86400)
+        tr_format("{count}d ago", &[("count", (delta / 86400).to_string())])
     }
 }
 

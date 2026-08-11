@@ -186,14 +186,23 @@ impl ThinkingBlock {
         let detail_style = theme.muted();
 
         if ctx.is_running {
-            Line::from(Span::styled("Thinking…", label_style))
+            Line::from(Span::styled(
+                crate::i18n::text("Thinking…").into_owned(),
+                label_style,
+            ))
         } else if let Some(time_str) = self.format_time() {
             Line::from(vec![
-                Span::styled("Thought", label_style),
-                Span::styled(format!(" for {time_str}"), detail_style),
+                Span::styled(crate::i18n::text("Thought").into_owned(), label_style),
+                Span::styled(
+                    crate::i18n::format(" for {elapsed}", &[("elapsed", time_str)]),
+                    detail_style,
+                ),
             ])
         } else {
-            Line::from(Span::styled("Thought", label_style))
+            Line::from(Span::styled(
+                crate::i18n::text("Thought").into_owned(),
+                label_style,
+            ))
         }
     }
 

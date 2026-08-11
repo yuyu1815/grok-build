@@ -74,13 +74,23 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
         Ok(abs) if abs.is_file() => abs,
         Ok(abs) => {
             eprintln!(
-                "error: --agent-profile path is not a file: {}",
-                abs.display()
+                "{}",
+                xai_grok_pager::tr!(
+                    "error: --agent-profile path is not a file: {path}",
+                    path = abs.display()
+                )
             );
             std::process::exit(1);
         }
         Err(e) => {
-            eprintln!("error: --agent-profile path '{}': {}", path.display(), e);
+            eprintln!(
+                "{}",
+                xai_grok_pager::tr!(
+                    "error: --agent-profile path '{path}': {error}",
+                    path = path.display(),
+                    error = e
+                )
+            );
             std::process::exit(1);
         }
     }
@@ -88,10 +98,19 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Print startup information for the serve command.
 fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    eprintln!(
+        "{}",
+        xai_grok_pager::tr!("   Grok agent server starting...")
+    );
     eprintln!();
-    eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
-    eprintln!("   Secret:   {}", secret);
+    eprintln!(
+        "{}",
+        xai_grok_pager::i18n::format(
+            "   Address:  {address}",
+            &[("address", bind_addr.to_string())],
+        )
+    );
+    eprintln!("{}", xai_grok_pager::tr!("   Secret:   {secret}", secret));
     eprintln!();
     eprintln!(
         "   WebSocket URL: ws://{}/ws?server-key={}",
@@ -152,10 +171,18 @@ fn init_tracing_simple(app_entrypoint: &'static str) {
 async fn run_setup_command(json: bool) {
     use xai_grok_shell::managed_config::{self, SetupOutcome};
     if !managed_config::has_principal() {
-        eprintln!("No deployment key or team sign-in found.");
+        eprintln!(
+            "{}",
+            xai_grok_pager::tr!("No deployment key or team sign-in found.")
+        );
         eprintln!();
-        eprintln!("To install managed configuration, sign in with a team using `grok login`,");
-        eprintln!("or set a deployment key:");
+        eprintln!(
+            "{}",
+            xai_grok_pager::tr!(
+                "To install managed configuration, sign in with a team using `grok login`,"
+            )
+        );
+        eprintln!("{}", xai_grok_pager::tr!("or set a deployment key:"));
         eprintln!();
         if cfg!(unix) {
             eprintln!("  export GROK_DEPLOYMENT_KEY=<your-key>");
@@ -164,13 +191,19 @@ async fn run_setup_command(json: bool) {
         }
         eprintln!("  grok setup");
         eprintln!();
-        eprintln!("Or add the key to ~/.grok/config.toml:");
+        eprintln!(
+            "{}",
+            xai_grok_pager::tr!("Or add the key to ~/.grok/config.toml:")
+        );
         eprintln!();
         eprintln!("  [endpoints]");
         eprintln!("  deployment_key = \"<your-key>\"");
         eprintln!();
         eprintln!(
-            "If you don't have a deployment key, contact your organization's Grok administrator."
+            "{}",
+            xai_grok_pager::tr!(
+                "If you don't have a deployment key, contact your organization's Grok administrator."
+            )
         );
         std::process::exit(1);
     }
@@ -182,26 +215,43 @@ async fn run_setup_command(json: bool) {
                 println!("{out}");
                 if !report.configured {
                     eprintln!(
-                        "Your team doesn't have a managed configuration yet. A team admin can set one up at console.x.ai."
+                        "{}",
+                        xai_grok_pager::tr!(
+                            "Your team doesn't have a managed configuration yet. A team admin can set one up at console.x.ai."
+                        )
                     );
                 }
             }
             Err(e) => {
-                eprintln!("Couldn't fetch managed configuration. {e}");
+                eprintln!(
+                    "{}",
+                    xai_grok_pager::i18n::format(
+                        "Couldn't fetch managed configuration. {error}",
+                        &[("error", e.to_string())],
+                    )
+                );
                 std::process::exit(1);
             }
         }
         return;
     }
     match managed_config::run_setup().await {
-        SetupOutcome::Installed => eprintln!("Applied managed configuration."),
+        SetupOutcome::Installed => {
+            eprintln!("{}", xai_grok_pager::tr!("Applied managed configuration."))
+        }
         SetupOutcome::NothingConfigured => {
             eprintln!(
                 "Your team doesn't have a managed configuration yet. A team admin can set one up at console.x.ai."
             );
         }
         SetupOutcome::Failed(e) => {
-            eprintln!("Couldn't apply managed configuration. {e}");
+            eprintln!(
+                "{}",
+                xai_grok_pager::i18n::format(
+                    "Couldn't apply managed configuration. {error}",
+                    &[("error", e.to_string())],
+                )
+            );
             std::process::exit(1);
         }
     }
@@ -469,24 +519,49 @@ fn render_workspace_payload(payload: &ControlPayload, json: bool) {
         return;
     }
     if state == "none" {
-        println!("Workspace exposure: not running (leader PID {pid})");
+        println!(
+            "{}",
+            xai_grok_pager::tr!("Workspace exposure: not running (leader PID {pid})", pid)
+        );
         return;
     }
-    println!("Workspace exposure: {state}");
+    println!(
+        "{}",
+        xai_grok_pager::tr!("Workspace exposure: {state}", state)
+    );
     if let Some(url) = hub_url {
         println!("  hub:      {url}");
     }
     if let Some(dir) = cwd {
         println!("  cwd:      {dir}");
     }
-    println!("  uptime:   {}s", uptime_ms / 1000);
-    println!("  active:   {active_tool_calls} tool call(s)");
+    println!(
+        "{}",
+        xai_grok_pager::i18n::format(
+            "  uptime:   {seconds}s",
+            &[("seconds", (uptime_ms / 1000).to_string())],
+        )
+    );
+    println!(
+        "{}",
+        xai_grok_pager::tr!(
+            "  active:   {count} tool call(s)",
+            count = active_tool_calls
+        )
+    );
     let session_list = if sessions.is_empty() {
         "-".to_string()
     } else {
         sessions.join(", ")
     };
-    println!("  sessions: {} ({session_list})", sessions.len());
+    println!(
+        "{}",
+        xai_grok_pager::tr!(
+            "  sessions: {count} ({sessions})",
+            count = sessions.len(),
+            sessions = session_list
+        )
+    );
     println!("  leader:   PID {pid}");
 }
 /// How to rebuild one session's `session/load` after a leader reconnect.
@@ -1486,6 +1561,8 @@ fn main() {
         release: env!("VERSION_WITH_COMMIT"),
         disabled: xai_grok_shell::agent::config::is_error_reporting_disabled_sync(),
     });
+    let initial_ui = xai_grok_pager::app::load_initial_ui_config();
+    xai_grok_pager::i18n::init(initial_ui.language.as_deref());
     xai_grok_pager::docs::extract_user_guide_docs(&xai_grok_shell::util::grok_home::grok_home());
     xai_crash_handler::install_terminal_restore_only();
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
@@ -1872,9 +1949,15 @@ async fn async_main() -> Result<()> {
         Ok(true) => {
             let adopted = bg_update_wait.lock().await.take();
             if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `grok` to start.");
+                eprintln!(
+                    "{}",
+                    xai_grok_pager::tr!("Update installed. Run `grok` to start.")
+                );
             } else {
-                eprintln!("Update did not complete. Run `grok update` to retry.");
+                eprintln!(
+                    "{}",
+                    xai_grok_pager::tr!("Update did not complete. Run `grok update` to retry.")
+                );
             }
             Ok(())
         }
@@ -1909,7 +1992,10 @@ async fn finish_update_on_exit(
     };
     match adopted {
         Some(handle) => {
-            eprintln!("Waiting for the update download to finish...");
+            eprintln!(
+                "{}",
+                xai_grok_pager::tr!("Waiting for the update download to finish...")
+            );
             match handle.await {
                 Ok(Ok(status)) if status.success() => true,
                 Ok(Ok(status)) => {
@@ -2086,7 +2172,14 @@ async fn signal_leaders_to_relaunch(installed_version: &str) {
                 to_version,
                 ..
             })) => {
-                eprintln!("  ↻ Relaunching shared session (leader {from_version} → {to_version})…");
+                eprintln!(
+                    "{}",
+                    xai_grok_pager::tr!(
+                        "  ↻ Relaunching shared session (leader {from_version} → {to_version})…",
+                        from_version,
+                        to_version
+                    )
+                );
             }
             Ok(Ok(xai_grok_shell::leader::ControlPayload::RelaunchDeclined { reason })) => {
                 tracing::debug!(% reason, "Leader declined relaunch");

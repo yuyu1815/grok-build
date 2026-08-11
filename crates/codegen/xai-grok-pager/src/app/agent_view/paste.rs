@@ -82,7 +82,10 @@ impl AgentView {
             return false;
         }
         crate::prompt_images::cleanup_temp_file(pasted);
-        self.show_toast("Images can't be attached when editing a shared queued prompt");
+        self.show_toast(
+            crate::i18n::text("Images can't be attached when editing a shared queued prompt")
+                .as_ref(),
+        );
         true
     }
     /// Enqueue attachment probing off-thread so paste-then-send remains ordered.
@@ -188,7 +191,7 @@ impl AgentView {
                 }
             }
             ProbedAttachment::PersistFailed(_) => {
-                self.show_toast("Couldn't save pasted image");
+                self.show_toast(crate::i18n::text("Couldn't save pasted image").as_ref());
                 ClipboardPasteCompletion::Failed(ClipboardPasteFailure::AlreadyReported)
             }
             ProbedAttachment::NoRaster => ClipboardPasteCompletion::FullMiss,
@@ -421,7 +424,7 @@ impl AgentView {
         ) && let Err(e) = crate::prompt_images::persist_to_session(&mut pasted, &images_dir)
         {
             tracing::warn!("failed to persist pasted image: {e}");
-            self.show_toast("Couldn't save pasted image");
+            self.show_toast(crate::i18n::text("Couldn't save pasted image").as_ref());
             return false;
         }
         if let Err(msg) = self.prompt.insert_image(pasted) {

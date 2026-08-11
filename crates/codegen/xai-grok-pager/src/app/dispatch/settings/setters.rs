@@ -5,6 +5,16 @@ use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
 use agent_client_protocol as acp;
 
+fn tr_value_toast(label: &str, value: impl ToString) -> String {
+    crate::i18n::format(
+        "✓ {label}: {value}",
+        &[
+            ("label", crate::i18n::text(label).into_owned()),
+            ("value", value.to_string()),
+        ],
+    )
+}
+
 /// Set multiline input mode — swap Enter and Shift+Enter behavior.
 ///
 /// PAGER-OWNED: ephemeral, no `Effect::PersistSetting`. On the agent
@@ -80,7 +90,7 @@ pub(in crate::app::dispatch) fn set_render_mermaid(
         value = kind.as_canonical(),
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Mermaid: {}", kind.as_canonical()));
+    app.show_toast(&tr_value_toast("Mermaid", kind.as_canonical()));
     vec![Effect::PersistSetting {
         key: "render_mermaid",
         value: crate::settings::SettingValue::Enum(kind.as_canonical()),
@@ -145,7 +155,7 @@ pub(in crate::app::dispatch) fn set_voice_capture_mode(
     set_voice_capture_mode_inner(app, canonical);
     refresh_open_settings_modals(app);
     tracing::info!(target: "settings", key = "voice_capture_mode", value = canonical, "setting changed");
-    app.show_toast(&format!("\u{2713} Voice capture: {canonical}"));
+    app.show_toast(&tr_value_toast("Voice capture", canonical));
     vec![Effect::PersistSetting {
         key: "voice_capture_mode",
         value: crate::settings::SettingValue::Enum(canonical),
@@ -204,10 +214,13 @@ pub(in crate::app::dispatch) fn set_voice_stt_language(
         "setting changed"
     );
     let toast = if canonical == xai_grok_voice::STT_LANGUAGE_AUTO {
-        format!("\u{2713} Voice language: System ({effective})")
+        crate::i18n::format(
+            "✓ Voice language: System ({effective})",
+            &[("effective", effective.to_string())],
+        )
     } else {
         let name = xai_grok_voice::stt_language_by_code(canonical).map_or(canonical, |l| l.name);
-        format!("\u{2713} Voice language: {name}")
+        crate::i18n::format("✓ Voice language: {name}", &[("name", name.to_string())])
     };
     app.show_toast(&toast);
     vec![Effect::PersistSetting {
@@ -521,7 +534,7 @@ pub(in crate::app::dispatch) fn set_keep_text_selection(
         value = kind.as_canonical(),
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Text selection: {}", kind.as_canonical()));
+    app.show_toast(&tr_value_toast("Text selection", kind.as_canonical()));
     vec![Effect::PersistSetting {
         key: "keep_text_selection",
         value: crate::settings::SettingValue::Enum(kind.as_canonical()),
@@ -557,7 +570,7 @@ pub(in crate::app::dispatch) fn set_scroll_speed(app: &mut AppView, raw: i64) ->
         value = clamped,
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Scroll speed: {clamped}"));
+    app.show_toast(&tr_value_toast("Scroll speed", clamped));
     vec![Effect::PersistSetting {
         key: "scroll_speed",
         value: crate::settings::SettingValue::Int(clamped as i64),
@@ -591,7 +604,7 @@ pub(in crate::app::dispatch) fn set_scroll_mode(
         value = mode.as_canonical(),
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Scroll input: {}", mode.as_canonical()));
+    app.show_toast(&tr_value_toast("Scroll input", mode.as_canonical()));
     vec![Effect::PersistSetting {
         key: "scroll_mode",
         value: crate::settings::SettingValue::Enum(mode.as_canonical()),
@@ -658,7 +671,7 @@ pub(in crate::app::dispatch) fn set_scroll_lines(app: &mut AppView, raw: i64) ->
         value = clamped,
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Scroll lines: {clamped}"));
+    app.show_toast(&tr_value_toast("Scroll lines", clamped));
     vec![Effect::PersistSetting {
         key: "scroll_lines",
         value: crate::settings::SettingValue::Int(clamped as i64),
@@ -806,7 +819,10 @@ pub(in crate::app::dispatch) fn set_compact_mode(app: &mut AppView, new: bool) -
     // Turning the setting off while the short-terminal derivation holds keeps
     // the UI compact; say so instead of implying the layout will loosen.
     if !new && crate::views::agent::effective_compact(false, app.last_known_terminal_rows) {
-        app.show_toast("\u{2713} Compact mode: off (auto-compact active on small terminal)");
+        app.show_toast(
+            crate::i18n::text("✓ Compact mode: off (auto-compact active on small terminal)")
+                .as_ref(),
+        );
     } else {
         app.show_toast(&save_success_toast("Compact mode", new));
     }
@@ -1048,7 +1064,13 @@ pub(in crate::app::dispatch) fn set_contextual_hint_word_select(
 /// Format a "✓ <Label>: <value>" toast for theme-family settings.
 /// `value` is the user-friendly display name, not the canonical.
 fn save_theme_toast(label: &str, value: &str) -> String {
-    format!("\u{2713} {label}: {value}")
+    crate::i18n::format(
+        "✓ {label}: {value}",
+        &[
+            ("label", crate::i18n::text(label).into_owned()),
+            ("value", value.to_string()),
+        ],
+    )
 }
 
 /// Apply a (non-auto) theme to the live display.
@@ -1463,7 +1485,7 @@ pub(in crate::app::dispatch) fn set_default_model_inner(
 /// renders the user-friendly model name (NOT the internal id) so the
 /// toast text matches what the user typed.
 fn save_default_model_toast(value: &str) -> String {
-    format!("\u{2713} Default model: {value}")
+    tr_value_toast("Default model", value)
 }
 
 /// Outer dispatcher for `Action::SetDefaultModel`. Switches and persists
@@ -1607,7 +1629,7 @@ pub(in crate::app::dispatch) fn clear_default_model(app: &mut AppView) -> Vec<Ef
             "setting changed (startup-window clear — pager mirror was already None; \
              persist proceeds to ensure disk state matches user intent)",
         );
-        app.show_toast("\u{2713} Default model: cleared");
+        app.show_toast(crate::i18n::text("✓ Default model: cleared").as_ref());
         return vec![Effect::PersistSetting {
             key: "default_model",
             value: crate::settings::SettingValue::String(String::new()),
@@ -1623,7 +1645,7 @@ pub(in crate::app::dispatch) fn clear_default_model(app: &mut AppView) -> Vec<Ef
         "setting changed",
     );
     refresh_open_settings_modals(app);
-    app.show_toast("\u{2713} Default model: cleared");
+    app.show_toast(crate::i18n::text("✓ Default model: cleared").as_ref());
     vec![Effect::PersistSetting {
         key: "default_model",
         value: crate::settings::SettingValue::String(String::new()),
@@ -1652,7 +1674,7 @@ pub(super) fn set_fork_secondary_model_inner(app: &mut AppView, value: String) {
 /// `save_default_model_toast` — renders the user-friendly model
 /// name (NOT the internal id).
 fn save_fork_secondary_model_toast(value: &str) -> String {
-    format!("\u{2713} Fork secondary model: {value}")
+    tr_value_toast("Fork secondary model", value)
 }
 
 /// Outer dispatcher for `Action::SetForkSecondaryModel`.
@@ -1729,7 +1751,7 @@ pub(in crate::app::dispatch) fn clear_fork_secondary_model(app: &mut AppView) ->
     let prev_id_str = app.current_ui.fork_secondary_model.clone();
     if prev_id_str == baseline {
         // Idempotent: already at baseline.
-        app.show_toast("\u{2713} Fork secondary model: already at default");
+        app.show_toast(crate::i18n::text("✓ Fork secondary model: already at default").as_ref());
         return vec![];
     }
     tracing::info!(
@@ -1741,7 +1763,7 @@ pub(in crate::app::dispatch) fn clear_fork_secondary_model(app: &mut AppView) ->
     );
     set_fork_secondary_model_inner(app, baseline);
     refresh_open_settings_modals(app);
-    app.show_toast("\u{2713} Fork secondary model: cleared");
+    app.show_toast(crate::i18n::text("✓ Fork secondary model: cleared").as_ref());
     vec![Effect::PersistSetting {
         key: "fork_secondary_model",
         // Persist payload is the empty-sentinel — the shell helper
@@ -1796,7 +1818,7 @@ pub(in crate::app::dispatch) fn set_max_thoughts_width(app: &mut AppView, new: i
         value = clamped,
         "setting changed",
     );
-    app.show_toast(&format!("\u{2713} Max thoughts width: {clamped}"));
+    app.show_toast(&tr_value_toast("Max thoughts width", clamped));
     vec![Effect::PersistSetting {
         key: "max_thoughts_width",
         value: crate::settings::SettingValue::Int(clamped),

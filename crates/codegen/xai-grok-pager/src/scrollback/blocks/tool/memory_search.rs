@@ -4,6 +4,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use super::TOOL_HEADER_RANGE;
+use crate::i18n::{format as tr_format, text};
 use crate::render::line_utils::truncate_str;
 use crate::scrollback::block::BlockContent;
 use crate::scrollback::types::{
@@ -85,11 +86,15 @@ impl MemorySearchToolCallBlock {
             theme.fg(theme.command)
         };
 
-        let prefix = "Memory Search ";
+        let prefix = text("Memory Search").into_owned() + " ";
         let count = self.results.len();
         let suffix = if count > 0 {
-            let s = if count == 1 { "" } else { "s" };
-            format!(" ({count} result{s})")
+            let template = if count == 1 {
+                " ({count} result)"
+            } else {
+                " ({count} results)"
+            };
+            tr_format(template, &[("count", count.to_string())])
         } else {
             String::new()
         };
@@ -184,7 +189,7 @@ impl BlockContent for MemorySearchToolCallBlock {
                 if self.results.is_empty() && self.error.is_none() {
                     lines.push(BlockLine::separator(Line::from("")));
                     lines.push(BlockLine::separator(Line::from(Span::styled(
-                        "  (no results)",
+                        format!("  {}", text("(no results)")),
                         theme.muted(),
                     ))));
                 }
@@ -200,7 +205,13 @@ impl BlockContent for MemorySearchToolCallBlock {
                         theme.primary().add_modifier(Modifier::BOLD),
                     );
                     let meta_span = Span::styled(
-                        format!("  (score: {:.2}, {})", r.score, r.source),
+                        tr_format(
+                            "  (score: {score}, {source})",
+                            &[
+                                ("score", format!("{:.2}", r.score)),
+                                ("source", r.source.clone()),
+                            ],
+                        ),
                         theme.dim(),
                     );
                     lines.push(BlockLine::styled(Line::from(vec![

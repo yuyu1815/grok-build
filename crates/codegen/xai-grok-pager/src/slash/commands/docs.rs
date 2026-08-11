@@ -5,7 +5,8 @@
 //! `/docs <title>` opens a single guide by title (case-insensitive).
 
 use crate::app::actions::Action;
-use crate::docs::{all_titles, find_doc};
+use crate::docs::{all_docs, find_doc};
+use crate::i18n::{localized_doc_description, localized_doc_title};
 use crate::slash::command::{AppCtx, ArgItem, CommandExecCtx, CommandResult, SlashCommand};
 
 /// Online Build docs landing page (hardcoded like other TUI deep-links; docs.x.ai can redirect if the path moves).
@@ -46,23 +47,35 @@ impl SlashCommand for DocsCommand {
     fn suggest_args(&self, _ctx: &AppCtx, _args_query: &str) -> Option<Vec<ArgItem>> {
         let mut items = vec![
             ArgItem {
-                display: "how-to".into(),
+                display: match crate::i18n::locale() {
+                    crate::i18n::Locale::EnUs => "how-to".into(),
+                    crate::i18n::Locale::JaJp => "操作ガイド".into(),
+                },
                 match_text: "how-to".into(),
                 insert_text: "how-to".into(),
-                description: "Browse in-TUI How-to Guides".into(),
+                description: match crate::i18n::locale() {
+                    crate::i18n::Locale::EnUs => "Browse in-TUI How-to Guides".into(),
+                    crate::i18n::Locale::JaJp => "TUI内の操作ガイドを表示".into(),
+                },
             },
             ArgItem {
-                display: "web".into(),
+                display: match crate::i18n::locale() {
+                    crate::i18n::Locale::EnUs => "web".into(),
+                    crate::i18n::Locale::JaJp => "ウェブ".into(),
+                },
                 match_text: "web".into(),
                 insert_text: "web".into(),
-                description: "Open docs.x.ai/build in the browser".into(),
+                description: match crate::i18n::locale() {
+                    crate::i18n::Locale::EnUs => "Open docs.x.ai/build in the browser".into(),
+                    crate::i18n::Locale::JaJp => "docs.x.ai/buildをブラウザで開く".into(),
+                },
             },
         ];
-        items.extend(all_titles().map(|title| ArgItem {
-            display: title.into(),
-            match_text: title.into(),
-            insert_text: title.into(),
-            description: format!("Open \"{title}\""),
+        items.extend(all_docs().map(|doc| ArgItem {
+            display: localized_doc_title(doc.title).into_owned(),
+            match_text: doc.title.into(),
+            insert_text: doc.title.into(),
+            description: localized_doc_description(doc.description).into_owned(),
         }));
         Some(items)
     }

@@ -920,10 +920,14 @@ pub fn build_hints(
         }
         ActivePane::Queue => {
             let mut hints = vec![
-                HintItem::new(crate::key!('x'), "delete row"),
-                HintItem::new(crate::key!('e'), "edit"),
-                HintItem::paired(crate::key!('J'), crate::key!('K'), "reorder"),
-                HintItem::new(crate::key!('y'), "copy"),
+                HintItem::new(crate::key!('x'), crate::i18n::static_text("delete row")),
+                HintItem::new(crate::key!('e'), crate::i18n::static_text("edit")),
+                HintItem::paired(
+                    crate::key!('J'),
+                    crate::key!('K'),
+                    crate::i18n::static_text("reorder"),
+                ),
+                HintItem::new(crate::key!('y'), crate::i18n::static_text("copy")),
             ];
             if is_turn_running && let Some(def) = registry.find(ActionId::InterjectPrompt) {
                 hints.push(def.hint());
@@ -933,9 +937,15 @@ pub fn build_hints(
         ActivePane::Prompt if is_editing_queued => {
             let mut hints = Vec::new();
             if prompt.can_send() {
-                hints.push(HintItem::new(crate::key!(Enter), "save"));
+                hints.push(HintItem::new(
+                    crate::key!(Enter),
+                    crate::i18n::static_text("save"),
+                ));
             }
-            hints.push(HintItem::new(crate::key!(Esc), "cancel"));
+            hints.push(HintItem::new(
+                crate::key!(Esc),
+                crate::i18n::static_text("cancel"),
+            ));
             hints
         }
         ActivePane::Prompt if prompt.history_search.is_active() => {
@@ -952,8 +962,14 @@ pub fn build_hints(
                     KeyShortcut::key(KeyCode::PageDown),
                     "page",
                 ),
-                HintItem::new(KeyShortcut::key(KeyCode::Enter), "select"),
-                HintItem::new(KeyShortcut::key(KeyCode::Esc), "cancel"),
+                HintItem::new(
+                    KeyShortcut::key(KeyCode::Enter),
+                    crate::i18n::static_text("select"),
+                ),
+                HintItem::new(
+                    KeyShortcut::key(KeyCode::Esc),
+                    crate::i18n::static_text("cancel"),
+                ),
             ]
         }
         ActivePane::Prompt => {
@@ -966,7 +982,7 @@ pub fn build_hints(
             let submit_label = if is_turn_running { "queue" } else { "send" };
             if let Some(key) = registry.key_for(ActionId::SendPrompt) {
                 if prompt.paste_element_at_cursor().is_some() {
-                    hints.push(HintItem::new(key, "expand"));
+                    hints.push(HintItem::new(key, crate::i18n::static_text("expand")));
                 } else if multiline_mode && prompt.can_send() {
                     hints.push(HintItem::new(newline_key, submit_label));
                 } else if prompt.can_send() {
@@ -976,18 +992,31 @@ pub fn build_hints(
                 }
             }
             if shift_enter_unavailable && !multiline_mode && prompt.can_send() {
-                hints.push(HintItem::new(crate::key!(Enter, ALT), "newline"));
+                hints.push(HintItem::new(
+                    crate::key!(Enter, ALT),
+                    crate::i18n::static_text("newline"),
+                ));
             }
             if prompt.file_ref_near_cursor() {
-                hints.push(HintItem::new(crate::key!(':'), "lines"));
+                hints.push(HintItem::new(
+                    crate::key!(':'),
+                    crate::i18n::static_text("lines"),
+                ));
             }
             if prompt.prompt_suggestion_visible() {
                 hints.push(
-                    HintItem::paired(crate::key!(Tab), crate::key!(Right), "accept suggestion")
-                        .pinned(),
+                    HintItem::paired(
+                        crate::key!(Tab),
+                        crate::key!(Right),
+                        crate::i18n::static_text("accept suggestion"),
+                    )
+                    .pinned(),
                 );
             }
-            hints.push(HintItem::new(crate::key!(BackTab), "mode"));
+            hints.push(HintItem::new(
+                crate::key!(BackTab),
+                crate::i18n::static_text("mode"),
+            ));
             for def in registry.hints(&[When::PromptFocused, When::AgentScreen, When::Always]) {
                 if def.id == ActionId::SendPrompt
                     || def.id == ActionId::CommandPalette
@@ -1005,13 +1034,22 @@ pub fn build_hints(
         ActivePane::Tasks => {
             let mut hints = Vec::new();
             if selected_supports_fullscreen {
-                hints.push(HintItem::new(crate::key!(Enter), "view"));
+                hints.push(HintItem::new(
+                    crate::key!(Enter),
+                    crate::i18n::static_text("view"),
+                ));
             }
             if selected_supports_copy {
-                hints.push(HintItem::new(crate::key!('y'), "copy output"));
+                hints.push(HintItem::new(
+                    crate::key!('y'),
+                    crate::i18n::static_text("copy output"),
+                ));
             }
             if selected_can_kill {
-                hints.push(HintItem::new(crate::key!('x'), "kill"));
+                hints.push(HintItem::new(
+                    crate::key!('x'),
+                    crate::i18n::static_text("kill"),
+                ));
             }
             hints.push(HintItem::new(
                 crate::key!('h'),
@@ -1024,7 +1062,10 @@ pub fn build_hints(
             let mut hints = Vec::new();
             if vim_mode {
                 if scrollback_search.is_some_and(|s| s.is_composing()) {
-                    hints.push(HintItem::new(crate::key!(Enter), "go"));
+                    hints.push(HintItem::new(
+                        crate::key!(Enter),
+                        crate::i18n::static_text("go"),
+                    ));
                 } else {
                     hints.push(HintItem::paired(
                         crate::key!('n'),
@@ -1041,7 +1082,10 @@ pub fn build_hints(
                     "next/prev",
                 ));
             }
-            hints.push(HintItem::new(crate::key!(Esc), "cancel"));
+            hints.push(HintItem::new(
+                crate::key!(Esc),
+                crate::i18n::static_text("cancel"),
+            ));
             hints
         }
         ActivePane::Scrollback => {
@@ -1057,7 +1101,7 @@ pub fn build_hints(
             }
             if selected_is_credit_limit {
                 if let Some(key) = registry.key_for(ActionId::OpenBlockViewer) {
-                    hints.push(HintItem::new(key, "open"));
+                    hints.push(HintItem::new(key, crate::i18n::static_text("open")));
                 }
                 hints.push(space_prompt_hint());
             }
@@ -1066,7 +1110,7 @@ pub fn build_hints(
                     && selected_supports_copy
                     && let Some(key) = registry.key_for(ActionId::CopyBlockContent)
                 {
-                    hints.push(HintItem::new(key, "copy"));
+                    hints.push(HintItem::new(key, crate::i18n::static_text("copy")));
                 }
                 hints.push(space_prompt_hint());
             }
@@ -1077,7 +1121,7 @@ pub fn build_hints(
                         .key_for_mode(ActionId::ToggleFold, vim_mode)
                         .or_else(|| registry.key_for_mode(ActionId::Expand, vim_mode));
                     if let Some(key) = key {
-                        hints.push(HintItem::new(key, "expand"));
+                        hints.push(HintItem::new(key, crate::i18n::static_text("expand")));
                     }
                 }
                 if let Some(key) = registry.key_for(ActionId::ExpandAllThinking) {
@@ -1110,7 +1154,7 @@ pub fn build_hints(
                 && selected_supports_fullscreen
                 && let Some(key) = registry.key_for(ActionId::OpenBlockViewer)
             {
-                hints.push(HintItem::new(key, "open"));
+                hints.push(HintItem::new(key, crate::i18n::static_text("open")));
             }
             if vim_mode
                 && let (Some(j), Some(k)) = (
@@ -1118,7 +1162,7 @@ pub fn build_hints(
                     registry.key_for(ActionId::SelectPrev),
                 )
             {
-                hints.push(HintItem::paired(j, k, "nav").pinned());
+                hints.push(HintItem::paired(j, k, crate::i18n::static_text("nav")).pinned());
             }
             if vim_mode
                 && let (Some(h), Some(l)) = (
@@ -1126,7 +1170,7 @@ pub fn build_hints(
                     registry.key_for(ActionId::NextTurn),
                 )
             {
-                let mut hint = HintItem::paired(l, h, "turn").pinned();
+                let mut hint = HintItem::paired(l, h, crate::i18n::static_text("turn")).pinned();
                 hint.custom_display = Some("Shift+l/h");
                 hints.push(hint);
             }
@@ -1141,14 +1185,14 @@ pub fn build_hints(
                     registry.key_for(ActionId::GotoBottom),
                 )
             {
-                hints.push(HintItem::paired(g, bg, "top/btm"));
+                hints.push(HintItem::paired(g, bg, crate::i18n::static_text("top/btm")));
             }
             if vim_mode
                 && !selected_is_agent_message
                 && selected_supports_copy
                 && let Some(key) = registry.key_for(ActionId::CopyBlockContent)
             {
-                hints.push(HintItem::new(key, "copy"));
+                hints.push(HintItem::new(key, crate::i18n::static_text("copy")));
             }
             if vim_mode
                 && let Some(label) = selected_meta_label
@@ -1157,7 +1201,10 @@ pub fn build_hints(
                 hints.push(HintItem::new(key, label));
             }
             if selected_can_kill {
-                hints.push(HintItem::new(crate::key!('x'), "kill"));
+                hints.push(HintItem::new(
+                    crate::key!('x'),
+                    crate::i18n::static_text("kill"),
+                ));
             }
             if is_subagent_view {
                 hints.push(HintItem::paired(crate::key!('q'), crate::key!(Esc), "back"));
@@ -1176,7 +1223,10 @@ pub fn build_hints(
         hints.push(def.hint());
     }
     if can_demote {
-        hints.push(HintItem::new(crate::key!('g', CONTROL), "send to bg"));
+        hints.push(HintItem::new(
+            crate::key!('g', CONTROL),
+            crate::i18n::static_text("send to bg"),
+        ));
     }
     hints
 }

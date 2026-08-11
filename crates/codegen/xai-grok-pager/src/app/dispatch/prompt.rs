@@ -311,7 +311,7 @@ pub(super) fn dispatch_send_prompt_inner(
     voice_stop_on_submit(app);
 
     if app.reconnect_pending {
-        app.show_toast("Reconnecting, please wait...");
+        app.show_toast(crate::i18n::text("Reconnecting, please wait...").as_ref());
         return vec![];
     }
 
@@ -800,7 +800,7 @@ pub(super) fn dispatch_send_prompt_inner(
 /// the execute block from the shell IS the visual entry.
 pub(super) fn dispatch_send_bash_command(app: &mut AppView, command: String) -> Vec<Effect> {
     if app.reconnect_pending {
-        app.show_toast("Reconnecting, please wait...");
+        app.show_toast(crate::i18n::text("Reconnecting, please wait...").as_ref());
         return vec![];
     }
 

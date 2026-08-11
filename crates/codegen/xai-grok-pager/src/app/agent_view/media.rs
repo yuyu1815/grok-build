@@ -389,10 +389,10 @@ impl AgentView {
     /// inline-image click target, and the Enter-key handler.
     pub(crate) fn open_media_natively(&mut self, path: &std::path::Path) -> bool {
         if crate::app::link_opener::open_path(path) {
-            self.show_toast("Opening in default app\u{2026}");
+            self.show_toast(crate::i18n::text("Opening in default app\u{2026}").as_ref());
             true
         } else {
-            self.show_toast("Could not open file");
+            self.show_toast(crate::i18n::text("Could not open file").as_ref());
             false
         }
     }
@@ -414,7 +414,7 @@ impl AgentView {
         let path_owned = path.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         self.video_load_rx = Some(rx);
-        self.show_toast("Loading video\u{2026}");
+        self.show_toast(crate::i18n::text("Loading video\u{2026}").as_ref());
         std::thread::spawn(move || {
             let result =
                 crate::prompt_images::VideoViewerState::open_from_path(&path_owned).map(|viewer| {
@@ -482,7 +482,7 @@ impl AgentView {
                     tracing::debug!("copy image failed: {e}");
                 }
             });
-            self.show_toast("Copied image");
+            self.show_toast(crate::i18n::text("Copied image").as_ref());
             return Some(InputOutcome::Changed);
         }
 
