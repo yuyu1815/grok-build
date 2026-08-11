@@ -904,6 +904,20 @@ pub struct ReasoningEffortOption {
     pub default: bool,
 }
 
+impl ReasoningEffortOption {
+    /// Build an option that uses the canonical effort token as its id and label.
+    pub fn canonical(value: ReasoningEffort, default: bool) -> Self {
+        let id = value.as_str().to_owned();
+        Self {
+            label: humanize_effort_id(&id),
+            id,
+            value,
+            description: None,
+            default,
+        }
+    }
+}
+
 /// Deserialization shape accepting either a bare canonical value string
 /// (`"xhigh"`) or a table with `value` required and everything else optional.
 #[derive(serde::Deserialize)]
@@ -940,15 +954,7 @@ impl<'de> serde::Deserialize<'de> for ReasoningEffortOption {
                 let value = s
                     .parse::<ReasoningEffort>()
                     .map_err(serde::de::Error::custom)?;
-                let id = value.as_str().to_string();
-                let label = humanize_effort_id(&id);
-                ReasoningEffortOption {
-                    id,
-                    value,
-                    label,
-                    description: None,
-                    default: false,
-                }
+                ReasoningEffortOption::canonical(value, false)
             }
             RawReasoningEffortOption::Full {
                 value,
