@@ -4,7 +4,6 @@ pub mod agent;
 pub mod chat_models_client;
 pub mod client;
 pub mod conversations_client;
-pub(crate) mod openai_reasoning_effort;
 pub mod pull;
 #[cfg(test)]
 mod pull_smoke_test;

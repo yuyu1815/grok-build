@@ -3598,12 +3598,13 @@ impl ConfigModelOverride {
         if let Some(ref v) = self.model {
             entry.info.model = v.clone();
         }
+        let has_reasoning_config = self.reasoning_effort.is_some()
+            || self.supports_reasoning_effort.is_some()
+            || !self.reasoning_efforts.is_empty();
         if is_config_only
-            && self.reasoning_effort.is_none()
-            && self.supports_reasoning_effort.is_none()
-            && self.reasoning_efforts.is_empty()
+            && !has_reasoning_config
             && let Some(policy) =
-                crate::remote::openai_reasoning_effort::policy_for_model(&entry.info.model)
+                xai_grok_models::reasoning_effort_policy_for_model(&entry.info.model)
         {
             entry.info.reasoning_effort = Some(policy.default);
             entry.info.supports_reasoning_effort = true;

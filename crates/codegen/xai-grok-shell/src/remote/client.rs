@@ -849,16 +849,18 @@ pub fn parse_remote_model_value(
         .and_then(|v| v.as_array())
         .map(|arr| xai_grok_sampling_types::parse_reasoning_effort_options(arr));
 
-    let openai_policy = (reasoning_effort_value.is_none()
-        && supports_reasoning_effort_value.is_none()
-        && reasoning_efforts_value.is_none())
-    .then(|| super::openai_reasoning_effort::policy_for_model(&model))
-    .flatten();
+    let has_reasoning_metadata = reasoning_effort_value.is_some()
+        || supports_reasoning_effort_value.is_some()
+        || reasoning_efforts_value.is_some();
+    let openai_policy = if has_reasoning_metadata {
+        None
+    } else {
+        xai_grok_models::reasoning_effort_policy_for_model(&model)
+    };
     let (reasoning_effort, supports_reasoning_effort, reasoning_efforts) =
         if server_supports_reasoning_effort == Some(false) {
             // An explicit server false is authoritative over any accompanying
-            // scalar or menu. Clear both so the final catalog derive pass cannot
-            // re-enable support from a contradictory payload.
+            // scalar or menu, so keep the resolved metadata disabled.
             (None, false, Vec::new())
         } else {
             (
