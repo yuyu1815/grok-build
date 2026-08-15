@@ -16,7 +16,7 @@ use super::command::SlashCommand;
 /// Source of a command in the registry. Used for precedence and replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandSource {
-    /// Pager-local builtin (e.g., /exit, /model).
+    /// Pager-local builtin (e.g., /exit, /models).
     Builtin,
     /// Advertised by the shell/agent via ACP AvailableCommandsUpdate.
     Acp,
@@ -477,6 +477,9 @@ impl CommandRegistry {
         // even if the shell advertises them.
         const BLOCKED_NAMES: &[&str] = &[
             "help",
+            // The removed pager command stays unavailable as a top-level
+            // completion even if the shell advertises the same name.
+            "model",
             // Block individual hook/plugin shell commands — the pager's
             // /hooks and /plugins builtins provide a unified modal instead.
             "hooks-list",
@@ -499,7 +502,20 @@ impl CommandRegistry {
             {
                 continue;
             }
-            self.commands.push(Arc::new(AcpSlashCommand::from(acp_cmd)));
+
+            let command = AcpSlashCommand::from(acp_cmd);
+            // Skills can be advertised under scope/plugin-qualified names such
+            // as `local:model`. Reserve those qualified variants too, while
+            // leaving arbitrary qualified non-skill ACP commands untouched.
+            if command.is_skill()
+                && name_lower
+                    .rsplit(':')
+                    .next()
+                    .is_some_and(|name| name == "model")
+            {
+                continue;
+            }
+            self.commands.push(Arc::new(command));
             self.sources.push(CommandSource::Acp);
         }
     }
@@ -925,6 +941,69 @@ mod tests {
         // Hiding again removes it.
         registry.set_dashboard_visible(false);
         assert!(registry.get("dashboard").is_none());
+    }
+
+    #[test]
+    fn removed_model_name_is_blocked_from_acp() {
+        let mut registry = CommandRegistry::new(vec![]);
+        registry.set_acp_commands(&[agent_client_protocol::AvailableCommand::new(
+            "model".to_string(),
+            "Removed model command".to_string(),
+        )]);
+        assert!(registry.get("model").is_none());
+        assert!(registry.get_for_dispatch("model").is_none());
+        assert!(registry.triggers().is_empty());
+    }
+
+    fn skill_command(name: &str, scope: &str) -> agent_client_protocol::AvailableCommand {
+        agent_client_protocol::AvailableCommand::new(name.to_string(), format!("{name} skill"))
+            .meta(
+                serde_json::json!({
+                    "scope": scope,
+                    "path": format!("/skills/{name}/SKILL.md"),
+                })
+                .as_object()
+                .cloned(),
+            )
+    }
+
+    #[test]
+    fn qualified_retired_skill_names_are_blocked_from_acp() {
+        let mut registry = CommandRegistry::new(vec![]);
+        registry.set_acp_commands(&[
+            skill_command("local:model", "local"),
+            skill_command("user:model", "user"),
+            skill_command("plugin-name:model", "plugin"),
+        ]);
+
+        for name in ["local:model", "user:model", "plugin-name:model"] {
+            assert!(registry.get(name).is_none(), "{name} must stay retired");
+            assert!(
+                registry.get_for_dispatch(name).is_none(),
+                "{name} must not dispatch"
+            );
+        }
+        assert!(registry.triggers().is_empty());
+    }
+
+    #[test]
+    fn qualified_non_skill_retired_suffix_is_not_blocked() {
+        let mut registry = CommandRegistry::new(vec![]);
+        registry.set_acp_commands(&[
+            agent_client_protocol::AvailableCommand::new(
+                "something:model".to_string(),
+                "Qualified shell command".to_string(),
+            ),
+            agent_client_protocol::AvailableCommand::new(
+                "something:m".to_string(),
+                "Qualified shell alias".to_string(),
+            ),
+        ]);
+
+        assert!(registry.get("something:model").is_some());
+        assert!(registry.get_for_dispatch("something:model").is_some());
+        assert!(registry.get("something:m").is_some());
+        assert!(registry.get_for_dispatch("something:m").is_some());
     }
 
     #[test]

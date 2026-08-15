@@ -1604,51 +1604,12 @@ fn dashboard_roster_switches_on_leader_mode() {
     assert_eq!(app.dashboard_roster()[0].session_id, "local-sess");
 }
 
-/// Seed a model into the app catalog for `/model` tests.
+/// Seed a model into the app catalog for dashboard model-state tests.
 fn seed_model(app: &mut AppView, id: &str, name: &str) {
     let model_id = acp::ModelId::new(std::sync::Arc::from(id));
     app.models.available.insert(
         model_id.clone(),
         acp::ModelInfo::new(model_id, name.to_string()),
-    );
-}
-
-/// `/model <name>` on the dashboard stages the model for the next
-/// spawned agent instead of dispatching a (session-scoped) switch.
-#[serial_test::serial(GROK_AGENT_DASHBOARD)]
-#[test]
-fn dashboard_slash_model_stages_pending_model() {
-    let mut app = test_app();
-    seed_model(&mut app, "grok-4.5", "Grok 4.5");
-    open_dashboard(&mut app);
-    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/model grok-4.5".into());
-    assert!(
-        effects.is_empty(),
-        "staging a model must not spawn a session"
-    );
-    assert!(app.agents.is_empty(), "no session should be created");
-    let pending = app
-        .dashboard
-        .as_ref()
-        .unwrap()
-        .pending_model
-        .as_ref()
-        .expect("pending_model must be set");
-    assert_eq!(pending.id.0.as_ref(), "grok-4.5");
-    assert_eq!(pending.display, "Grok 4.5");
-    assert!(pending.effort.is_none());
-    // The catalog snapshot's `current` tracks the staged model so the
-    // next `/model` dropdown marks it `(current)` (not the seeded default).
-    assert_eq!(
-        app.dashboard
-            .as_ref()
-            .unwrap()
-            .models
-            .current
-            .as_ref()
-            .map(|id| id.0.as_ref()),
-        Some("grok-4.5"),
-        "staging must update the snapshot's current selection",
     );
 }
 
@@ -1694,7 +1655,7 @@ fn dashboard_slash_command_error_gets_error_glyph_prefix() {
     let mut app = test_app();
     seed_model(&mut app, "grok-4.5", "Grok 4.5");
     open_dashboard(&mut app);
-    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/model nonexistent".into());
+    let effects = dispatch_dashboard_dispatch_slash(&mut app, "/models nonexistent".into());
     assert!(effects.is_empty(), "a failed command must not dispatch");
     assert!(app.agents.is_empty(), "no session should be created");
     let toast = app

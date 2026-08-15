@@ -10,6 +10,10 @@ impl SlashCommand for ModelsCommand {
         "models"
     }
 
+    fn aliases(&self) -> &[&str] {
+        &["m"]
+    }
+
     fn description(&self) -> &str {
         "Select model and reasoning effort"
     }
@@ -38,19 +42,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_args_open_picker() {
+    fn run_opens_picker_without_args_and_rejects_legacy_args() {
         let models = ModelState::default();
         let mut ctx = make_ctx(&models);
-        assert!(matches!(
-            ModelsCommand.run(&mut ctx, ""),
-            CommandResult::Action(Action::OpenModelsPicker)
-        ));
-    }
-
-    #[test]
-    fn non_empty_args_report_usage() {
-        let models = ModelState::default();
-        let mut ctx = make_ctx(&models);
+        for args in ["", "   "] {
+            assert!(matches!(
+                ModelsCommand.run(&mut ctx, args),
+                CommandResult::Action(Action::OpenModelsPicker)
+            ));
+        }
         assert!(matches!(
             ModelsCommand.run(&mut ctx, "grok"),
             CommandResult::Error(ref message) if message == "Usage: /models"

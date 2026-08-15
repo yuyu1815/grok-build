@@ -866,23 +866,35 @@ fn slash_new_uses_active_agent_cwd() {
     assert!(!app.agents[&new_id].session.is_worktree);
 }
 #[test]
-fn slash_model_invalid_arg_produces_scrollback_error() {
+fn removed_model_name_is_an_unknown_command() {
     let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    let initial_scrollback = app.agents[&id].scrollback.len();
     let effects = dispatch(Action::SendPrompt("/model nonexistent".into()), &mut app);
-    assert!(effects.is_empty(), "error should not produce effects");
-    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
-    assert!(app.agents[&id].prompt.text().is_empty());
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::SendPrompt { text, .. }] if text == "/model nonexistent"
+    ));
 }
+
 #[test]
-fn slash_model_no_args_produces_scrollback_error() {
-    let mut app = test_app_with_agent();
-    let id = AgentId(0);
-    let initial_scrollback = app.agents[&id].scrollback.len();
-    let effects = dispatch(Action::SendPrompt("/model".into()), &mut app);
-    assert!(effects.is_empty());
-    assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
+fn models_slash_names_open_the_picker() {
+    for command in ["/models", "/m"] {
+        let mut app = test_app_with_agent();
+        let id = AgentId(0);
+        let model_id = acp::ModelId::new(std::sync::Arc::from("model-a"));
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.session.models.available.insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "Model A".to_string()),
+        );
+        agent.session.models.current = Some(model_id);
+
+        let effects = dispatch(Action::SendPrompt(command.into()), &mut app);
+        assert!(effects.is_empty());
+        assert!(matches!(
+            app.agents[&id].active_modal,
+            Some(crate::views::modal::ActiveModal::ModelsPicker { .. })
+        ));
+    }
 }
 #[test]
 fn slash_hooks_opens_modal() {

@@ -592,20 +592,17 @@ pub struct DashboardState {
     /// `Some(_)` must also clear this flag — see
     /// [`Self::focus_row`] / [`Self::focus_new_agent_button`].
     pub new_agent_button_focused: bool,
-    /// Model chosen for the *next* agent spawned from the dispatch input,
-    /// set by `/model <name> [effort]` (intercepted in
-    /// `dispatch_dashboard_dispatch_slash`). `None` → spawn on the default
-    /// model. Sticky across dispatches; reset to `None` on every
+    /// Model chosen for the *next* agent spawned from the dashboard.
+    /// `None` → spawn on the default model. Retained for non-slash creation
+    /// paths; sticky across dispatches and reset to `None` on every
     /// dashboard-open (alongside `pending_mode`).
     pub pending_model: Option<PendingDispatchModel>,
     /// Mode the next spawned agent starts in. Cycled with Shift+Tab and set
     /// by `/plan`. Sticky across dispatches; re-seeded from
     /// `app.default_yolo` on every dashboard-open (alongside `pending_model`).
     pub pending_mode: DashboardDispatchMode,
-    /// Snapshot of the app-wide model catalog, seeded at dashboard-open so
-    /// the session-less slash dropdown can suggest real model names for
-    /// `/model`. Without this the dropdown would fall back to an empty
-    /// `ModelState` and offer no completions.
+    /// Snapshot of the app-wide model catalog, retained for dashboard spawn
+    /// defaults and other non-slash model-selection paths.
     pub models: crate::acp::model_state::ModelState,
     /// Location picker modal — `Some` while open. Lets the user change the
     /// working directory new dashboard sessions spawn in. Opened via the
@@ -3044,9 +3041,7 @@ impl DashboardState {
         // Slash-completion dropdown intercept — Up/Down/Ctrl+P/N/Tab/
         // Enter/Esc steer the `/command` dropdown when it's open. Never
         // in search mode (there the buffer is a filter query, not a
-        // command). Mirrors `agent_view::handle_prompt_key`. The model
-        // catalog snapshot seeded at dashboard-open backs the `/model`
-        // arg suggestions.
+        // command). Mirrors `agent_view::handle_prompt_key`.
         //
         // `slash_accepted_send`: Enter accepted a terminal (no-arg) row and
         // must fall through to dispatch — bypasses multiline Enter→newline.
@@ -3081,8 +3076,8 @@ impl DashboardState {
                 KeyCode::Enter if key.modifiers.is_empty() => {
                     // Accept the selected completion; if its insert text
                     // ends with a space the row "chains" (more input
-                    // expected, e.g. `/model `), otherwise close the
-                    // dropdown and fall through to the Enter handler which
+                    // expected), otherwise close the dropdown and fall through
+                    // to the Enter handler which
                     // dispatches the slash command.
                     let snap = self.dispatch.slash_snapshot();
                     let chains = snap
@@ -8667,148 +8662,6 @@ mod tests {
         assert!(
             matches!(outcome, InputOutcome::Unchanged),
             "click on empty area must be a no-op, got {outcome:?}",
-        );
-    }
-
-    /// Clicking a model in the dashboard `/model` slash dropdown must
-    /// accept the completion and must NOT attach the session row that
-    /// sits under the same screen coordinates (click-through bug).
-    #[test]
-    fn slash_model_dropdown_click_selects_model_not_session_row() {
-        use agent_client_protocol as acp;
-        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        use indexmap::IndexMap;
-        use ratatui::layout::Rect;
-
-        let mut state = make_state_with_selection();
-        let row_id = state
-            .selected
-            .as_ref()
-            .cloned()
-            .expect("seed state has a selection");
-
-        // Session row occupies the same Y as the model dropdown item.
-        state.row_rects = vec![(
-            row_id.clone(),
-            Rect {
-                x: 0,
-                y: 5,
-                width: 80,
-                height: 1,
-            },
-        )];
-        // Slash dropdown overlays that row (as `render_slash_dropdown` does).
-        state.slash_dropdown_items_area = Some(Rect {
-            x: 2,
-            y: 5,
-            width: 40,
-            height: 4,
-        });
-        state.slash_dropdown_hit = crate::views::slash_dropdown::RenderedDropdown {
-            row_items: vec![0, 1, 2, 3],
-            has_scrollbar: false,
-        };
-
-        // Seed a model catalog and open `/model ` so arg suggestions exist.
-        let model_id = acp::ModelId::new("beta-model");
-        let mut available = IndexMap::new();
-        available.insert(
-            model_id.clone(),
-            acp::ModelInfo::new(model_id.clone(), "Beta Model"),
-        );
-        available.insert(
-            acp::ModelId::new("alpha-model"),
-            acp::ModelInfo::new(acp::ModelId::new("alpha-model"), "Alpha Model"),
-        );
-        state.models.update_catalog(available, Some(model_id));
-        // Mirror how the real dashboard types into the dispatch box:
-        // caret at end so `/model ` is in the args phase.
-        state.dispatch.set_text("/model ");
-        let end = state.dispatch.text().len();
-        state.dispatch.textarea.set_cursor(end);
-        state.dispatch.refresh_slash(&state.models);
-        let snap = state.dispatch.slash_snapshot();
-        assert!(
-            !snap.matches.is_empty(),
-            "expected model arg suggestions for /model "
-        );
-
-        let click = MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: 10,
-            row: 5, // inside BOTH dropdown and row_rects
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        };
-        let outcome = state.handle_mouse(&click);
-        assert!(
-            !matches!(outcome, InputOutcome::Action(Action::DashboardAttach(_))),
-            "model-list click must not attach session, got {outcome:?}"
-        );
-        assert!(
-            matches!(outcome, InputOutcome::Changed),
-            "dropdown click should be consumed as Changed, got {outcome:?}"
-        );
-        let text = state.dispatch.text();
-        assert!(
-            text.contains("alpha-model")
-                || text.contains("beta-model")
-                || text.contains("Alpha")
-                || text.contains("Beta"),
-            "dispatch should contain accepted model completion, got {text:?}"
-        );
-        assert!(
-            !state.list_focused,
-            "clicking the dropdown focuses the input"
-        );
-    }
-
-    /// Hover over the open slash dropdown updates `slash_hovered` so the
-    /// list tracks the pointer (agent-view parity).
-    #[test]
-    fn slash_dropdown_mouse_move_sets_hover() {
-        use agent_client_protocol as acp;
-        use crossterm::event::{MouseEvent, MouseEventKind};
-        use indexmap::IndexMap;
-        use ratatui::layout::Rect;
-
-        let mut state = DashboardState::new();
-        state.slash_dropdown_items_area = Some(Rect {
-            x: 2,
-            y: 5,
-            width: 40,
-            height: 4,
-        });
-        state.slash_dropdown_hit = crate::views::slash_dropdown::RenderedDropdown {
-            row_items: vec![0, 1, 2, 3],
-            has_scrollbar: false,
-        };
-        let model_id = acp::ModelId::new("hover-model");
-        let mut available = IndexMap::new();
-        available.insert(
-            model_id.clone(),
-            acp::ModelInfo::new(model_id.clone(), "Hover Model"),
-        );
-        state.models.update_catalog(available, Some(model_id));
-        state.dispatch.set_text("/model ");
-        let end = state.dispatch.text().len();
-        state.dispatch.textarea.set_cursor(end);
-        state.dispatch.refresh_slash(&state.models);
-        assert!(
-            !state.dispatch.slash_snapshot().matches.is_empty(),
-            "expected model suggestions so hover can land on a row"
-        );
-
-        let move_ev = MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: 10,
-            row: 5,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        };
-        let _ = state.handle_mouse(&move_ev);
-        assert_eq!(
-            state.dispatch.slash_hovered(),
-            Some(0),
-            "pointer over first dropdown row should set hover index 0"
         );
     }
 
