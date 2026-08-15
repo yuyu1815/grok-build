@@ -796,6 +796,27 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             }]
         }
         Action::NextModel => vec![],
+        Action::OpenModelsPicker => {
+            let ActiveView::Agent(id) = app.active_view else {
+                return vec![];
+            };
+            let Some(agent) = app.agents.get_mut(&id) else {
+                return vec![];
+            };
+            if agent.session.models.is_empty() {
+                agent.scrollback.push_system(crate::scrollback::blocks::system::SystemBlock::new(
+                    "No available models",
+                ));
+                return vec![];
+            }
+            agent.active_modal = Some(crate::views::modal::ActiveModal::ModelsPicker {
+                picker: crate::views::model_picker::ModelPicker::new(
+                    &agent.session.models,
+                    agent.vim_mode,
+                ),
+            });
+            vec![]
+        }
         Action::SwitchModel { model_id, effort } => {
             let ActiveView::Agent(id) = app.active_view else {
                 return vec![];
