@@ -33,7 +33,8 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, read_auth_json, read_auth_json_or_empty_recovering_corrupt, write_auth_json,
+    AuthFileLock, read_auth_json, read_auth_json_or_empty_recovering_corrupt, selected_auth_path,
+    write_auth_json,
 };
 
 #[cfg(test)]
@@ -56,7 +57,7 @@ pub(crate) enum RefreshReason {
     ServerRejected,
 }
 
-/// Timeout for acquiring the advisory `auth.json.lock` file lock.
+/// Timeout for acquiring the advisory credential file lock.
 /// Used by advisory (non-critical) lock sites: `flow.rs`, `enrichment.rs`,
 /// `recovery.rs`.
 pub(crate) const AUTH_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(10);
@@ -284,7 +285,7 @@ impl AuthManager {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    grok_home.join("auth.json"),
+                    selected_auth_path(grok_home),
                     scope,
                     grok_com_config,
                     proxy_base_url,
@@ -294,10 +295,8 @@ impl AuthManager {
             tracing::warn!("GROK_AUTH set but failed to parse as JSON, falling back to file");
         }
 
-        // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth.json).
-        let path = std::env::var("GROK_AUTH_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| grok_home.join("auth.json"));
+        // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth/grok.json).
+        let path = selected_auth_path(grok_home);
 
         let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {
@@ -1647,7 +1646,7 @@ impl AuthManager {
             }
             tracing::warn!("auth: returning transient to avoid RT reuse");
             return Err(AuthError::transient(
-                "could not acquire auth.json.lock within timeout; \
+                "could not acquire credential lock within timeout; \
                  sibling may be mid-refresh",
             ));
         };
