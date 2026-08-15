@@ -1300,7 +1300,8 @@ mod auth_refresh_tests {
         let mut store = std::collections::BTreeMap::new();
         store.insert(scope, disk_auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(dir.path().join("auth.json"), json).unwrap();
+        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
+        std::fs::write(dir.path().join("auth").join("grok.json"), json).unwrap();
 
         let calls = Arc::new(AtomicU32::new(0));
         let refresher = Arc::new(CountingRefresher {

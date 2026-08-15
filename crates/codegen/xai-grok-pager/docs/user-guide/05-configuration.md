@@ -815,7 +815,7 @@ Key environment variables. See the README for the complete list.
 |------|-------------|
 | `~/.grok/config.toml` | Main configuration file |
 | `~/.grok/pager.toml` | TUI appearance configuration |
-| `~/.grok/auth.json` | Authentication credentials (auto-managed) |
+| `~/.grok/auth/grok.json` | Authentication credentials (auto-managed) |
 | `~/.grok/sessions/` | Persisted sessions (organized by working directory) |
 | `~/.grok/memory/` | Cross-session memory files and index |
 | `~/.grok/skills/` | User-scoped skill definitions |

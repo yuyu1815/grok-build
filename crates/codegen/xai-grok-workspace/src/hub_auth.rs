@@ -1,4 +1,4 @@
-//! Hub [`AuthProvider`] from `~/.grok/auth.json` for the standalone
+//! Hub [`AuthProvider`] from `~/.grok/auth/grok.json` for the standalone
 //! `workspace_server` binary: loopback `ws://` uses a plain bearer, otherwise
 //! an auto-refreshing OIDC provider that persists rotated tokens to disk.
 //!
@@ -72,10 +72,27 @@ struct AuthEntry {
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-fn default_auth_path() -> anyhow::Result<PathBuf> {
+fn selected_auth_path() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("GROK_AUTH_PATH") {
+        return Ok(PathBuf::from(path));
+    }
     let grok = xai_grok_config::user_grok_home()
         .ok_or_else(|| anyhow::anyhow!("no user grok home (set $GROK_HOME or $HOME)"))?;
-    Ok(grok.join("auth.json"))
+    Ok(xai_grok_config::default_auth_path(&grok))
+}
+
+fn resolve_auth_path(auth_config: Option<&Path>) -> anyhow::Result<PathBuf> {
+    resolve_auth_path_from(auth_config, selected_auth_path)
+}
+
+fn resolve_auth_path_from(
+    auth_config: Option<&Path>,
+    selected: impl FnOnce() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<PathBuf> {
+    match auth_config {
+        Some(path) => Ok(path.to_path_buf()),
+        None => selected(),
+    }
 }
 
 /// Read the active OIDC entry and its scope key. The key is threaded to the
@@ -206,16 +223,13 @@ fn write_json_atomic(path: &Path, value: &serde_json::Value) -> anyhow::Result<(
     Ok(())
 }
 
-/// Build a hub auth provider for `hub_url`. `auth_config` overrides
-/// the default credential path (`~/.grok/auth.json`).
+/// Build a hub auth provider for `hub_url`. `auth_config` has highest priority,
+/// followed by `GROK_AUTH_PATH`, then `~/.grok/auth/grok.json`.
 pub fn provider(
     hub_url: &Url,
     auth_config: Option<&Path>,
 ) -> anyhow::Result<Arc<dyn AuthProvider>> {
-    let auth_path = match auth_config {
-        Some(p) => p.to_path_buf(),
-        None => default_auth_path()?,
-    };
+    let auth_path = resolve_auth_path(auth_config)?;
     let (scope_key, entry) = read_auth_entry(&auth_path)?;
 
     let is_loopback = hub_url.scheme() == "ws"
@@ -238,10 +252,28 @@ mod tests {
     use std::io::Write;
 
     fn write_auth_json(dir: &std::path::Path, json: &str) -> PathBuf {
-        let path = dir.join("auth.json");
+        let path = dir.join("auth").join("grok.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(json.as_bytes()).unwrap();
         path
+    }
+
+    #[test]
+    fn explicit_auth_config_has_priority_over_selected_path() {
+        let explicit = PathBuf::from("cli/credentials.json");
+        let path = resolve_auth_path_from(Some(&explicit), || {
+            anyhow::bail!("selected path should not be evaluated")
+        })
+        .unwrap();
+        assert_eq!(path, explicit);
+    }
+
+    #[test]
+    fn missing_auth_config_uses_selected_path() {
+        let selected = PathBuf::from("env/credentials.json");
+        let path = resolve_auth_path_from(None, || Ok(selected.clone())).unwrap();
+        assert_eq!(path, selected);
     }
 
     #[test]
