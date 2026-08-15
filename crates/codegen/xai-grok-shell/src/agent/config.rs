@@ -3616,9 +3616,22 @@ impl ConfigModelOverride {
         base: Option<ModelEntry>,
         endpoints: &EndpointsConfig,
     ) -> ModelEntry {
+        let is_config_only = base.is_none();
         let mut entry = base.unwrap_or_else(|| ModelEntry::fallback(key, endpoints));
         if let Some(ref v) = self.model {
             entry.info.model = v.clone();
+        }
+        let has_reasoning_config = self.reasoning_effort.is_some()
+            || self.supports_reasoning_effort.is_some()
+            || !self.reasoning_efforts.is_empty();
+        if is_config_only
+            && !has_reasoning_config
+            && let Some(policy) =
+                xai_grok_models::reasoning_effort_policy_for_model(&entry.info.model)
+        {
+            entry.info.reasoning_effort = Some(policy.default);
+            entry.info.supports_reasoning_effort = true;
+            entry.info.reasoning_efforts = policy.options();
         }
         if let Some(ref v) = self.base_url {
             entry.info.base_url = v.clone();
@@ -3668,18 +3681,30 @@ impl ConfigModelOverride {
         if let Some(v) = self.supported_in_api {
             entry.info.supported_in_api = v;
         }
+        let replaces_reasoning_efforts = !self.reasoning_efforts.is_empty();
         if self.reasoning_effort.is_some() {
             entry.info.reasoning_effort = self.reasoning_effort;
+        } else if replaces_reasoning_efforts {
+            // A config menu is authoritative over the remote/catalog menu and
+            // its scalar default. Let the final derive pass select this menu's
+            // marked default, falling back to its first option.
+            entry.info.reasoning_effort = None;
+        }
+        if replaces_reasoning_efforts {
+            entry.info.reasoning_efforts = self.reasoning_efforts.clone();
         }
         if let Some(v) = self.supports_reasoning_effort {
             entry.info.supports_reasoning_effort = v;
+            if !v {
+                // Explicit false is an authoritative kill switch. Do not let a
+                // remote/catalog fallback menu re-enable support during derive.
+                entry.info.reasoning_effort = None;
+                entry.info.reasoning_efforts.clear();
+            }
         } else if !entry.info.supports_reasoning_effort
             && matches!(entry.info.api_backend, ApiBackend::Messages)
         {
             entry.info.supports_reasoning_effort = true;
-        }
-        if !self.reasoning_efforts.is_empty() {
-            entry.info.reasoning_efforts = self.reasoning_efforts.clone();
         }
         if let Some(v) = self.supports_backend_search {
             entry.info.supports_backend_search = v;
@@ -10848,6 +10873,8 @@ default = "grok-4.5"
         .unwrap();
         let cfg = Config::new_from_toml_cfg(&raw_config).expect("config should parse");
         let mut entry = prefetch_model_entry("grok-x", 200_000, ApiBackend::default());
+        entry.info.supports_reasoning_effort = true;
+        entry.info.reasoning_effort = Some(ReasoningEffort::High);
         entry.info.reasoning_efforts = vec![ReasoningEffortOption {
             id: "high".to_string(),
             value: ReasoningEffort::High,
@@ -10867,6 +10894,15 @@ default = "grok-4.5"
         assert_eq!(
             efforts[0].id, "low",
             "config.toml list must override remote"
+        );
+        assert_eq!(
+            resolved
+                .get("grok-x")
+                .expect("grok-x")
+                .info
+                .reasoning_effort,
+            Some(ReasoningEffort::Low),
+            "remote scalar must be discarded and re-derived from the replacement menu"
         );
     }
     #[test]

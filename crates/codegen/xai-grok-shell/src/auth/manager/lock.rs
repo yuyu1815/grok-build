@@ -1,4 +1,4 @@
-//! Advisory `auth.json.lock` helpers (free functions, no `AuthManager`
+//! Advisory credential-lock helpers (free functions, no `AuthManager`
 //! dependency).
 //!
 //! Uses flock + PID-in-file + unlink-to-break for robust stale-lock
@@ -17,7 +17,7 @@ use std::time::Duration as StdDuration;
 
 use fs2::FileExt;
 
-use crate::auth::storage::AuthFileLock;
+use crate::auth::storage::{AuthFileLock, ensure_auth_parent, lock_path_for_auth};
 use crate::unified_log;
 
 /// Maximum age (seconds) of a lock holder before it is considered stuck.
@@ -202,10 +202,10 @@ enum LockAttempt {
 
 /// Execute one iteration of the acquire loop.
 ///
-/// `lock_path` is the resolved path to `auth.json.lock` — computed once
+/// `lock_path` is the resolved path to the credential lock — computed once
 /// by the caller to avoid re-deriving it on every poll iteration.
 fn try_acquire_once(lock_path: &Path) -> LockAttempt {
-    // Step 1: open (create if missing) auth.json.lock
+    // Step 1: open (create if missing) credential lock
     let mut file = match OpenOptions::new()
         .read(true)
         .write(true)
@@ -366,9 +366,20 @@ fn blocking_acquire(lock_path: &Path) -> io::Result<File> {
 /// Crucially it records `PID:TS` holder info after locking, so a waiter
 /// that observes the flock can identify the holder (and break it once
 /// stale). Taking the flock *without* writing holder info is what used to
-/// leave an empty `auth.json.lock` that defeated stale-lock recovery.
+/// leave an empty credential lock that defeated stale-lock recovery.
 pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<AuthFileLock> {
-    let lock_path = auth_json_path.with_file_name("auth.json.lock");
+    if let Err(e) = ensure_auth_parent(auth_json_path) {
+        unified_log::warn(
+            &format!(
+                "auth lock: failed to create parent for {}: {e}",
+                auth_json_path.display()
+            ),
+            None,
+            None,
+        );
+        return None;
+    }
+    let lock_path = lock_path_for_auth(auth_json_path);
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -391,7 +402,7 @@ pub(crate) fn try_lock_auth_file_nonblocking(auth_json_path: &Path) -> Option<Au
     Some(AuthFileLock { _file: file })
 }
 
-/// Acquire the `auth.json.lock` file lock with three phases:
+/// Acquire the credential file lock with three phases:
 ///
 /// 1. **Instant try** — non-blocking `flock(LOCK_NB)`.  Succeeds
 ///    immediately if the lock is free.
@@ -406,7 +417,18 @@ pub(crate) async fn try_lock_auth_file_async(
     auth_json_path: &Path,
     timeout: StdDuration,
 ) -> Option<AuthFileLock> {
-    let lock_path = auth_json_path.with_file_name("auth.json.lock");
+    if let Err(e) = ensure_auth_parent(auth_json_path) {
+        unified_log::warn(
+            &format!(
+                "auth lock: failed to create parent for {}: {e}",
+                auth_json_path.display()
+            ),
+            None,
+            None,
+        );
+        return None;
+    }
+    let lock_path = lock_path_for_auth(auth_json_path);
 
     unified_log::debug(
         &format!(
@@ -495,7 +517,9 @@ mod tests {
     use tempfile::TempDir;
 
     fn auth_json_path(dir: &TempDir) -> std::path::PathBuf {
-        dir.path().join("auth.json")
+        let path = crate::auth::default_auth_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        path
     }
 
     // ── Pure-function unit tests (no runtime needed) ─────────────────
@@ -548,7 +572,7 @@ mod tests {
         // An empty / unparseable lock file is broken based on mtime: fresh
         // means a holder may be mid-write (assume alive), old means it was
         // abandoned (break it). Regression for the production wedge where
-        // an empty `auth.json.lock` was treated as alive forever.
+        // an empty credential lock was treated as alive forever.
         let dir = TempDir::new().unwrap();
         let lock_path = dir.path().join("test.lock");
         std::fs::write(&lock_path, b"").unwrap(); // empty → unparseable
@@ -581,12 +605,34 @@ mod tests {
     }
 
     #[test]
+    fn nonblocking_acquire_creates_custom_parent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("credentials.json");
+
+        let lock = try_lock_auth_file_nonblocking(&path);
+
+        assert!(lock.is_some());
+        assert!(lock_path_for_auth(&path).exists());
+    }
+
+    #[tokio::test]
+    async fn async_acquire_creates_custom_parent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("credentials.json");
+
+        let lock = try_lock_auth_file_async(&path, StdDuration::from_secs(1)).await;
+
+        assert!(lock.is_some());
+        assert!(lock_path_for_auth(&path).exists());
+    }
+
+    #[test]
     fn test_nonblocking_acquire_writes_holder_info() {
         // fix: advisory cleanup sites must record `PID:TS`, never hold the
         // flock over an empty lock file.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let lock = try_lock_auth_file_nonblocking(&path).expect("uncontended non-blocking acquire");
 
@@ -742,7 +788,7 @@ mod tests {
         assert!(lock.still_live(&path), "freshly acquired lock must be live");
 
         // Simulate the stale-recovery break performed by another process.
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
         std::fs::remove_file(&lock_path).unwrap();
         OpenOptions::new()
             .read(true)
@@ -769,7 +815,7 @@ mod tests {
         assert!(lock.is_some(), "should acquire lock");
 
         // Verify lock file has holder info.
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
         let content = std::fs::read_to_string(&lock_path).unwrap();
         let (pid, _ts) = parse_holder_info(&content).unwrap();
         assert_eq!(pid, std::process::id());
@@ -803,7 +849,7 @@ mod tests {
     async fn test_async_acquire_after_leftover_dead_pid_file() {
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let dead_pid: u32 = i32::MAX as u32;
         std::fs::write(&lock_path, format!("{dead_pid}:9999999999")).unwrap();
@@ -950,7 +996,7 @@ mod tests {
         // detects stale via timestamp, unlinks, acquires on fresh inode.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 120);
         let child_pid = child.id();
@@ -988,7 +1034,7 @@ mod tests {
         // the holder process is still running.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child =
             spawn_lock_holder_subprocess(&lock_path, "empty", STALE_LOCK_TIMEOUT_SECS + 30);
@@ -1020,7 +1066,7 @@ mod tests {
         // in the sub-ms set_len(0)->write window) must NOT be broken.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "empty", 0); // fresh mtime
 
@@ -1041,7 +1087,7 @@ mod tests {
         // process death. Parent acquires immediately.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
         let child_pid = child.id();
@@ -1084,7 +1130,7 @@ mod tests {
         // (Phase 2) wakes immediately on release — no poll lag.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
 
@@ -1137,7 +1183,7 @@ mod tests {
     #[test]
     fn test_blocking_acquire_uncontended() {
         let dir = TempDir::new().unwrap();
-        let lock_path = dir.path().join("auth.json.lock");
+        let lock_path = dir.path().join("test.lock");
 
         let file =
             blocking_acquire(&lock_path).expect("uncontended blocking acquire should succeed");
@@ -1155,7 +1201,7 @@ mod tests {
         // than a 200ms poll loop would guarantee.
         let dir = TempDir::new().unwrap();
         let path = auth_json_path(&dir);
-        let lock_path = path.with_file_name("auth.json.lock");
+        let lock_path = lock_path_for_auth(&path);
 
         let mut child = spawn_lock_holder_subprocess(&lock_path, "pid", 0);
 
