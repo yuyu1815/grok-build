@@ -184,15 +184,15 @@ class IsolatedEnv:
         self.grok_home = os.path.join(self.fake_home, ".grok")
         self.memory_dir = os.path.join(self.grok_home, "memory")
         self.logs_dir = os.path.join(self.grok_home, "logs")
-        self.auth_dir = os.path.join(self.grok_home, "auth")
         os.makedirs(self.memory_dir)
         os.makedirs(self.logs_dir)
-        os.makedirs(self.auth_dir)
 
         # Copy auth from real home
         real_auth = os.path.expanduser("~/.grok/auth/grok.json")
         if os.path.isfile(real_auth):
-            shutil.copy2(real_auth, os.path.join(self.auth_dir, "grok.json"))
+            auth_dir = os.path.join(self.grok_home, "auth")
+            os.makedirs(auth_dir)
+            shutil.copy2(real_auth, os.path.join(auth_dir, "grok.json"))
 
     def write_config(self, toml_str):
         """Write global ~/.grok/config.toml (where the agent reads config)."""

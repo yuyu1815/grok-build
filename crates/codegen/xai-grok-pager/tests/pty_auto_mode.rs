@@ -35,7 +35,7 @@ fn auth_json_source() -> Option<PathBuf> {
         }
     }
     dirs_next_home()
-        .map(|h| h.join(".grok/auth").join("grok.json"))
+        .map(|h| h.join(".grok/auth/grok.json"))
         .filter(|p| p.is_file())
 }
 

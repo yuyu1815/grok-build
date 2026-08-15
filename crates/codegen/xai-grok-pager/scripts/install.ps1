@@ -91,7 +91,7 @@ function Download-File([string]$Url, [string]$OutFile) {
 }
 
 function Read-GrokToken([string]$Scope) {
-    $authFile = Join-Path (Join-Path $GrokDir 'auth') 'grok.json'
+    $authFile = Join-Path $GrokDir 'auth/grok.json'
     if (-not (Test-Path $authFile)) { return $null }
     try {
         $auth = Get-Content -Raw $authFile | ConvertFrom-Json
@@ -121,10 +121,10 @@ if ($env:GROK_DEPLOYMENT_KEY) {
     $oidcToken = Read-GrokToken $OidcScope
     $legacyToken = Read-GrokToken $LegacyScope
     if ($oidcToken) {
-        $AuthSource = 'auth.json (oidc)'
+        $AuthSource = 'grok.json (oidc)'
         Write-Host 'Auth: using OIDC token from ~/.grok/auth/grok.json.' -ForegroundColor DarkGray
     } elseif ($legacyToken) {
-        $AuthSource = 'auth.json (legacy)'
+        $AuthSource = 'grok.json (legacy)'
         Write-Host 'Auth: using legacy token from ~/.grok/auth/grok.json.' -ForegroundColor DarkGray
     }
 }

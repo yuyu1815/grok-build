@@ -55,12 +55,11 @@ fn test_home() -> &'static PathBuf {
 }
 
 fn reset(home: &std::path::Path) {
-    let auth_dir = home.join("auth");
-    let _ = std::fs::remove_dir_all(&auth_dir);
-    std::fs::create_dir_all(&auth_dir).unwrap();
+    let auth_path = xai_grok_shell::auth::selected_auth_path(home);
+    let _ = std::fs::remove_file(&auth_path);
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     for f in [
         "config.toml",
-        "auth.json",
         "managed_config.toml",
         "requirements.toml",
         "managed_config_cache.json",
@@ -242,6 +241,12 @@ fn write_config(home: &std::path::Path, managed_config_url: &str) {
     .unwrap();
 }
 
+fn write_auth_fixture(home: &std::path::Path, contents: impl AsRef<[u8]>) {
+    let auth_path = xai_grok_shell::auth::selected_auth_path(home);
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+    std::fs::write(auth_path, contents).unwrap();
+}
+
 /// Write an `auth.json` with a team OAuth principal under the active scope.
 fn write_team_auth(home: &std::path::Path, team_id: &str) {
     write_team_auth_expiry(home, team_id, "2099-01-01T00:00:00Z");
@@ -262,7 +267,7 @@ fn write_team_auth_expiry(home: &std::path::Path, team_id: &str, expires_at: &st
             "team_id": team_id,
         }
     });
-    std::fs::write(home.join("auth").join("grok.json"), auth.to_string()).unwrap();
+    write_auth_fixture(home, auth.to_string());
 }
 
 /// Write an `auth.json` with an EXPIRED `external`-mode team principal, so a configured refresher
@@ -281,7 +286,7 @@ fn write_expired_external_team_auth(home: &std::path::Path, team_id: &str) {
             "refresh_token": "rt-team",
         }
     });
-    std::fs::write(home.join("auth").join("grok.json"), auth.to_string()).unwrap();
+    write_auth_fixture(home, auth.to_string());
 }
 
 const FAR_FUTURE: &str = "2099-01-01T00:00:00Z";
@@ -881,7 +886,7 @@ fn unreadable_auth_without_marker_is_not_refused() {
     reset(&home);
 
     std::fs::write(home.join("config.toml"), "[endpoints]\n").unwrap();
-    std::fs::write(home.join("auth").join("grok.json"), "{corrupt json").unwrap();
+    write_auth_fixture(&home, "{corrupt json");
     // No managed_config_cache.json marker at all.
 
     assert!(
@@ -1165,7 +1170,7 @@ async fn logout_clears_team_config() {
     );
 
     // `AuthManager::clear` deletes auth.json when the last scope is removed.
-    std::fs::remove_file(home.join("auth").join("grok.json")).unwrap();
+    std::fs::remove_file(xai_grok_shell::auth::selected_auth_path(&home)).unwrap();
     xai_grok_shell::managed_config::clear_orphan();
 
     assert!(
@@ -1214,7 +1219,7 @@ fn unreadable_auth_keeps_config() {
     reset(&home);
 
     std::fs::write(home.join("requirements.toml"), TEAM_REQUIREMENTS).unwrap();
-    std::fs::write(home.join("auth").join("grok.json"), "{corrupt json").unwrap();
+    write_auth_fixture(&home, "{corrupt json");
     xai_grok_shell::managed_config::clear_orphan();
 
     assert!(
@@ -1312,7 +1317,7 @@ fn deployment_key_config_survives_clear() {
         "[cli]\ninstaller = \"internal\"\n",
     )
     .unwrap();
-    let _ = std::fs::remove_file(home.join("auth").join("grok.json"));
+    let _ = std::fs::remove_file(xai_grok_shell::auth::selected_auth_path(&home));
 
     xai_grok_shell::managed_config::clear_orphan();
 
@@ -1343,7 +1348,7 @@ async fn personal_login_is_noop() {
             "user_id": "user-1",
         }
     });
-    std::fs::write(home.join("auth").join("grok.json"), auth.to_string()).unwrap();
+    write_auth_fixture(&home, auth.to_string());
 
     let wrote = xai_grok_shell::managed_config::sync()
         .await

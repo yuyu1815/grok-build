@@ -89,6 +89,7 @@ pub struct ConfigReloader {
     /// mtime-only touches (see `hash_project_mcp_config`).
     last_project_mcp_hashes: HashMap<PathBuf, u64>,
     grok_home: PathBuf,
+    auth_path: PathBuf,
     auth_scope: String,
     remote_settings: Option<crate::util::config::RemoteSettings>,
     config_update_tx: mpsc::UnboundedSender<ConfigUpdate>,
@@ -101,6 +102,7 @@ pub struct ConfigReloader {
 impl ConfigReloader {
     pub fn new(
         grok_home: PathBuf,
+        auth_path: PathBuf,
         initial_auth_key_hash: u64,
         initial_config: toml::Value,
         auth_scope: String,
@@ -114,6 +116,7 @@ impl ConfigReloader {
             last_global_config: initial_config,
             last_project_mcp_hashes: HashMap::new(),
             grok_home,
+            auth_path,
             auth_scope,
             remote_settings,
             config_update_tx,
@@ -182,7 +185,7 @@ impl ConfigReloader {
                         // Whole-file deletion (NotFound) and corrupt JSON
                         // land here. The resulting memory/disk divergence
                         // must be visible in unified.jsonl.
-                        let path = self.grok_home.join("auth").join("grok.json");
+                        let path = &self.auth_path;
                         xai_grok_telemetry::unified_log::error(
                             "auth reload: auth.json unreadable, keeping previous credentials",
                             None,
@@ -274,8 +277,7 @@ impl ConfigReloader {
     }
 
     fn reload_auth(&mut self) -> anyhow::Result<()> {
-        let auth_path = self.grok_home.join("auth").join("grok.json");
-        let store = read_auth_json(&auth_path)?;
+        let store = read_auth_json(&self.auth_path)?;
 
         match crate::auth::lookup_auth(&store, &self.auth_scope) {
             Some(auth) => {
@@ -538,12 +540,6 @@ mod tests {
     use crate::auth::GrokAuth;
     use std::collections::BTreeMap;
 
-    fn auth_path(home: &Path) -> PathBuf {
-        let path = home.join("auth").join("grok.json");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        path
-    }
-
     fn make_auth(key: &str) -> GrokAuth {
         GrokAuth {
             key: key.to_string(),
@@ -560,13 +556,16 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        let auth_path = crate::auth::default_auth_path(tmp.path());
+        std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        std::fs::write(&auth_path, &json).unwrap();
 
         let initial_hash = hash_auth_key("same-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             initial_hash,
             empty_config,
             scope,
@@ -591,13 +590,16 @@ mod tests {
         let scope = "https://test.example.com".to_string();
         store.insert(scope.clone(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        let auth_path = crate::auth::default_auth_path(tmp.path());
+        std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        std::fs::write(&auth_path, &json).unwrap();
 
         let old_hash = hash_auth_key("old-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             old_hash,
             empty_config,
             scope,
@@ -623,13 +625,16 @@ mod tests {
         let mut store = BTreeMap::new();
         store.insert("https://other.example.com".to_string(), auth);
         let json = serde_json::to_string_pretty(&store).unwrap();
-        std::fs::write(auth_path(tmp.path()), &json).unwrap();
+        let auth_path = crate::auth::default_auth_path(tmp.path());
+        std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        std::fs::write(&auth_path, &json).unwrap();
 
         let old_hash = hash_auth_key("had-a-key");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             old_hash,
             empty_config,
             "https://test.example.com".to_string(),
@@ -647,12 +652,15 @@ mod tests {
     #[tokio::test]
     async fn reloader_handles_malformed_auth_json() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(auth_path(tmp.path()), "not valid json{{{").unwrap();
+        let auth_path = crate::auth::default_auth_path(tmp.path());
+        std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+        std::fs::write(&auth_path, "not valid json{{{").unwrap();
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             0,
             empty_config,
             "https://test.example.com".to_string(),
@@ -679,6 +687,7 @@ mod tests {
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let mut reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             0,
             empty_config,
             "https://test.example.com".to_string(),
@@ -707,6 +716,7 @@ mod tests {
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             0,
             empty_config,
             "https://test.example.com".to_string(),
@@ -748,6 +758,7 @@ mod tests {
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let reloader = ConfigReloader::new(
             tmp.path().to_path_buf(),
+            crate::auth::default_auth_path(tmp.path()),
             0,
             empty_config,
             "https://test.example.com".to_string(),

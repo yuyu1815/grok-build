@@ -57,6 +57,25 @@ pub fn user_grok_home() -> Option<PathBuf> {
     resolvable.then(grok_home)
 }
 
+/// Canonical credential path under a Grok home.
+pub fn default_auth_path(grok_home: &std::path::Path) -> PathBuf {
+    grok_home.join("auth").join("grok.json")
+}
+
+/// Selected credential path: `GROK_AUTH_PATH`, otherwise the canonical default.
+pub fn selected_auth_path(grok_home: &std::path::Path) -> PathBuf {
+    selected_auth_path_from(grok_home, std::env::var_os("GROK_AUTH_PATH"))
+}
+
+fn selected_auth_path_from(
+    grok_home: &std::path::Path,
+    override_path: Option<std::ffi::OsString>,
+) -> PathBuf {
+    override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_auth_path(grok_home))
+}
+
 /// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
 pub fn grok_application() -> PathBuf {
     let name = if cfg!(windows) { "grok.exe" } else { "grok" };
@@ -205,6 +224,27 @@ fn slugify(input: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn selected_auth_path_defaults_to_auth_grok_json() {
+        let home = std::path::Path::new("grok-home");
+        assert_eq!(
+            selected_auth_path_from(home, None),
+            home.join("auth").join("grok.json")
+        );
+    }
+
+    #[test]
+    fn selected_auth_path_uses_override_verbatim() {
+        let override_path = PathBuf::from("custom/credentials.json");
+        assert_eq!(
+            selected_auth_path_from(
+                std::path::Path::new("grok-home"),
+                Some(override_path.clone().into_os_string())
+            ),
+            override_path
+        );
+    }
 
     /// Realistic CWDs that trigger the bug (URL-encoded > 255 bytes).
     const LONG_CWDS: &[&str] = &[

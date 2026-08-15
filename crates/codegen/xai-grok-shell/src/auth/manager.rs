@@ -33,8 +33,8 @@ use super::model::{
 };
 use super::refresh::{RefreshOutcome, TokenRefresher, resolve_refresh_credential};
 use super::storage::{
-    AuthFileLock, AuthFilePaths, default_auth_path, ensure_auth_parent, read_auth_json,
-    read_auth_json_or_empty_recovering_corrupt, write_auth_json,
+    AuthFileLock, read_auth_json, read_auth_json_or_empty_recovering_corrupt, selected_auth_path,
+    write_auth_json,
 };
 
 #[cfg(test)]
@@ -57,7 +57,7 @@ pub(crate) enum RefreshReason {
     ServerRejected,
 }
 
-/// Timeout for acquiring the advisory `auth.json.lock` file lock.
+/// Timeout for acquiring the advisory credential file lock.
 /// Used by advisory (non-critical) lock sites: `flow.rs`, `enrichment.rs`,
 /// `recovery.rs`.
 pub(crate) const AUTH_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(10);
@@ -132,7 +132,7 @@ pub struct AuthManager {
     /// enforces "no `.await` while holding the lock". `Arc`
     /// so the spawned `/user` enrichment task can write back.
     inner: Arc<RwLock<Option<GrokAuth>>>,
-    paths: AuthFilePaths,
+    path: PathBuf,
     scope: String,
     grok_com_config: GrokComConfig,
     proxy_base_url: String,
@@ -265,11 +265,6 @@ impl AuthManager {
         let proxy_base_url =
             crate::agent::config::EndpointsConfig::from_effective_config().proxy_url();
 
-        // Snapshot auth-related environment once so telemetry and path selection
-        // describe the same construction-time inputs.
-        let inline_auth = std::env::var("GROK_AUTH").ok();
-        let auth_path_override = std::env::var("GROK_AUTH_PATH").ok().map(PathBuf::from);
-
         xai_grok_telemetry::unified_log::info(
             "AuthManager::new",
             None,
@@ -278,20 +273,17 @@ impl AuthManager {
                 "grok_home": grok_home.display().to_string(),
                 "HOME": std::env::var("HOME").unwrap_or_else(|_| "(unset)".into()),
                 "GROK_HOME": std::env::var("GROK_HOME").unwrap_or_else(|_| "(unset)".into()),
-                "GROK_AUTH_PATH": auth_path_override
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "(unset)".into()),
-                "GROK_AUTH": if inline_auth.is_some() { "(set)" } else { "(unset)" },
+                "GROK_AUTH_PATH": std::env::var("GROK_AUTH_PATH").unwrap_or_else(|_| "(unset)".into()),
+                "GROK_AUTH": std::env::var("GROK_AUTH").map(|_| "(set)".to_string()).unwrap_or_else(|_| "(unset)".into()),
             })),
         );
 
         // GROK_AUTH: inline JSON credentials (highest priority, read-only).
-        if let Some(inline_json) = inline_auth {
+        if let Ok(inline_json) = std::env::var("GROK_AUTH") {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    AuthFilePaths::new(default_auth_path(grok_home)),
+                    selected_auth_path(grok_home),
                     scope,
                     grok_com_config,
                     proxy_base_url,
@@ -302,18 +294,9 @@ impl AuthManager {
         }
 
         // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth/grok.json).
-        let auth_path = auth_path_override.unwrap_or_else(|| default_auth_path(grok_home));
-        let paths = AuthFilePaths::new(auth_path);
-        let auth_path = paths.auth_path();
-        if let Err(e) = ensure_auth_parent(auth_path) {
-            tracing::warn!(
-                path = %auth_path.display(),
-                error = %e,
-                "auth: failed to initialize auth storage parent"
-            );
-        }
+        let path = selected_auth_path(grok_home);
 
-        let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(auth_path) {
+        let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {
                 let found = lookup_auth(&map, &scope);
                 // If lookup_auth skipped a legacy WebLogin token, remove the
@@ -327,10 +310,10 @@ impl AuthManager {
                     // Best-effort cleanup under advisory lock (consistent with
                     // other auth.json writers). Non-blocking: if the lock is
                     // held by a concurrent process, skip — retried next launch.
-                    if let Some(_lock) = lock::try_lock_auth_file_nonblocking(paths.lock_path()) {
+                    if let Some(_lock) = lock::try_lock_auth_file_nonblocking(&path) {
                         let mut cleaned = map.clone();
                         cleaned.remove(LEGACY_SCOPE);
-                        let _ = write_auth_json(auth_path, &cleaned);
+                        let _ = write_auth_json(&path, &cleaned);
                         tracing::debug!("auth: removed stale WebLogin scope from auth.json");
                         // lock released on drop
                     } else {
@@ -339,7 +322,7 @@ impl AuthManager {
                 }
                 let detail = serde_json::json!({
                     "read": "ok",
-                    "resolved_path": auth_path.display().to_string(),
+                    "resolved_path": path.display().to_string(),
                     "scopes_on_disk": map.keys().collect::<Vec<_>>(),
                     "target_scope": &scope,
                     "found": found.is_some(),
@@ -358,8 +341,8 @@ impl AuthManager {
                 let detail = serde_json::json!({
                     "read": "error",
                     "error": e.to_string(),
-                    "path": auth_path.display().to_string(),
-                    "path_exists": auth_path.exists(),
+                    "path": path.display().to_string(),
+                    "path_exists": path.exists(),
                 });
                 let state = if e.kind() == std::io::ErrorKind::NotFound {
                     DiskAuthState::FileMissing
@@ -377,7 +360,7 @@ impl AuthManager {
 
         let manager = Self::assemble(
             auth,
-            paths,
+            path,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -395,7 +378,7 @@ impl AuthManager {
     /// dropped from one branch.
     fn assemble(
         inner: Option<GrokAuth>,
-        paths: AuthFilePaths,
+        path: PathBuf,
         scope: String,
         grok_com_config: GrokComConfig,
         proxy_base_url: String,
@@ -403,7 +386,7 @@ impl AuthManager {
     ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(inner)),
-            paths,
+            path,
             scope,
             grok_com_config,
             proxy_base_url,
@@ -468,12 +451,11 @@ impl AuthManager {
     }
 
     fn remove_scope_impl(&self, scope: &str) -> std::io::Result<()> {
-        let disk_mutation =
-            if let Some(_lock) = lock::try_lock_auth_file_nonblocking(self.paths.lock_path()) {
-                self.write_scope_removal(scope)? // lock released on drop
-            } else {
-                ScopeRemoval::SkippedLockUnavailable
-            };
+        let disk_mutation = if let Some(_lock) = lock::try_lock_auth_file_nonblocking(&self.path) {
+            self.write_scope_removal(scope)? // lock released on drop
+        } else {
+            ScopeRemoval::SkippedLockUnavailable
+        };
         // Intentional removal must be attributable from unified.jsonl:
         // downstream, a deliberately deleted auth.json is indistinguishable
         // from accidental loss (corruption, external deletion).
@@ -484,7 +466,7 @@ impl AuthManager {
                 "scope": scope,
                 "is_current_scope": scope == self.scope,
                 "disk_mutation": disk_mutation.label(),
-                "path": self.paths.auth_path().display().to_string(),
+                "path": self.path.display().to_string(),
             })),
         );
         if scope == self.scope {
@@ -497,15 +479,15 @@ impl AuthManager {
     /// scope is gone. Caller holds the `auth.json` lock (taken by
     /// [`Self::remove_scope_impl`]).
     fn write_scope_removal(&self, scope: &str) -> std::io::Result<ScopeRemoval> {
-        let Ok(mut auth_store) = read_auth_json(self.paths.auth_path()) else {
+        let Ok(mut auth_store) = read_auth_json(&self.path) else {
             return Ok(ScopeRemoval::SkippedUnreadable);
         };
         auth_store.remove(scope);
         if auth_store.is_empty() {
-            let _ = std::fs::remove_file(self.paths.auth_path());
+            let _ = std::fs::remove_file(&self.path);
             Ok(ScopeRemoval::FileDeleted)
         } else {
-            write_auth_json(self.paths.auth_path(), &auth_store)?;
+            write_auth_json(&self.path, &auth_store)?;
             Ok(ScopeRemoval::EntryRemoved)
         }
     }
@@ -805,7 +787,7 @@ impl AuthManager {
     /// needing the post-enrichment view re-read `current()`.
     pub(crate) async fn update(self: &Arc<Self>, auth: GrokAuth) -> std::io::Result<GrokAuth> {
         let update_started = std::time::Instant::now();
-        let map = match read_auth_json_or_empty_recovering_corrupt(self.paths.auth_path()) {
+        let map = match read_auth_json_or_empty_recovering_corrupt(&self.path) {
             Ok(map) => map,
             Err(e) => {
                 // Non-recoverable error (PermissionDenied, etc.) — keep conservative.
@@ -824,7 +806,7 @@ impl AuthManager {
         // One entry per scope (personal and team share the scope key).
         tracing::debug!(scope = %self.scope, "auth: storing token");
         map.insert(self.scope.clone(), auth.clone());
-        let write_result = write_auth_json(self.paths.auth_path(), &map);
+        let write_result = write_auth_json(&self.path, &map);
         let elapsed_ms = update_started.elapsed().as_millis() as u64;
         match &write_result {
             Ok(()) => xai_grok_telemetry::unified_log::info(
@@ -867,7 +849,7 @@ impl AuthManager {
         auth: GrokAuth,
     ) -> std::io::Result<GrokAuth> {
         let started = std::time::Instant::now();
-        let map = match read_auth_json_or_empty_recovering_corrupt(self.paths.auth_path()) {
+        let map = match read_auth_json_or_empty_recovering_corrupt(&self.path) {
             Ok(map) => map,
             Err(e) => {
                 // Non-recoverable error — keep conservative.
@@ -884,7 +866,7 @@ impl AuthManager {
         let mut map = map;
         tracing::debug!(scope = %self.scope, "auth: storing token (no enrichment)");
         map.insert(self.scope.clone(), auth.clone());
-        let write_result = write_auth_json(self.paths.auth_path(), &map);
+        let write_result = write_auth_json(&self.path, &map);
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match &write_result {
             Ok(()) => xai_grok_telemetry::unified_log::info(
@@ -1033,7 +1015,7 @@ impl AuthManager {
     #[cfg(test)]
     fn persist_and_swap(&self, auth: GrokAuth) -> Option<GrokAuth> {
         self.hot_swap(auth.clone());
-        let mut map = match read_auth_json_or_empty(self.paths.auth_path()) {
+        let mut map = match read_auth_json_or_empty(&self.path) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(error = %e, "auth: read failed in persist_and_swap, skipping disk write");
@@ -1041,7 +1023,7 @@ impl AuthManager {
             }
         };
         map.insert(self.scope.clone(), auth.clone());
-        if let Err(e) = write_auth_json(self.paths.auth_path(), &map) {
+        if let Err(e) = write_auth_json(&self.path, &map) {
             tracing::warn!(error = %e, "auth: failed to persist refreshed token to disk");
         }
         Some(auth)
@@ -1080,7 +1062,7 @@ impl AuthManager {
     /// getters like [`Self::attempted_verdict_key`]; prefer [`Self::read_disk_auth`]
     /// when the read should drive transition logging.
     fn read_disk_auth_silent(&self) -> Option<GrokAuth> {
-        read_auth_json(self.paths.auth_path())
+        read_auth_json(&self.path)
             .ok()
             .and_then(|map| lookup_auth(&map, &self.scope))
     }
@@ -1108,7 +1090,7 @@ impl AuthManager {
     /// a genuine logout (`EntryMissing`). Observes the state for transition
     /// logging, exactly like `read_disk_auth`.
     pub(crate) fn read_disk_auth_with_state(&self) -> (Option<GrokAuth>, DiskAuthState) {
-        let (auth, state, err_detail) = match read_auth_json(self.paths.auth_path()) {
+        let (auth, state, err_detail) = match read_auth_json(&self.path) {
             Ok(map) => {
                 let found = lookup_auth(&map, &self.scope);
                 let state = if found.is_some() {
@@ -1123,7 +1105,7 @@ impl AuthManager {
             }
             Err(e) => {
                 tracing::warn!(
-                    path = %self.paths.auth_path().display(),
+                    path = %self.path.display(),
                     error = %e,
                     "auth: failed to read auth.json"
                 );
@@ -1156,7 +1138,7 @@ impl AuthManager {
         let ctx = serde_json::json!({
             "from": prev.map(|s| format!("{s:?}")),
             "to": format!("{new_state:?}"),
-            "path": self.paths.auth_path().display().to_string(),
+            "path": self.path.display().to_string(),
             "scope": &self.scope,
             "error": err_detail,
             "key_prefix": auth.map(|a| token_suffix(&a.key).to_owned()),
@@ -1190,7 +1172,7 @@ impl AuthManager {
         &self,
         timeout: StdDuration,
     ) -> Option<AuthFileLock> {
-        try_lock_auth_file_async(self.paths.lock_path(), timeout).await
+        try_lock_auth_file_async(&self.path, timeout).await
     }
 
     // ── Refresher setup ─────────────────────────────────────────────
@@ -1439,7 +1421,7 @@ impl AuthManager {
 
         // Purge auth.json so we start clean — removes any corrupted,
         // revoked, or legacy entries that caused the failure.
-        let _ = tokio::fs::remove_file(self.paths.auth_path()).await;
+        let _ = tokio::fs::remove_file(&self.path).await;
         self.clear_inner();
 
         let auth = self.save_without_enrichment(new_auth).await.map_err(|e| {
@@ -1648,7 +1630,7 @@ impl AuthManager {
             }
             tracing::warn!("auth: returning transient to avoid RT reuse");
             return Err(AuthError::transient(
-                "could not acquire auth.json.lock within timeout; \
+                "could not acquire credential lock within timeout; \
                  sibling may be mid-refresh",
             ));
         };
@@ -1719,7 +1701,7 @@ impl AuthManager {
         file_lock: AuthFileLock,
         reason: RefreshReason,
     ) -> Result<LockOutcome, AuthError> {
-        if file_lock.still_live() {
+        if file_lock.still_live(&self.path) {
             return Ok(LockOutcome::Held(file_lock));
         }
         xai_grok_telemetry::unified_log::warn(
@@ -1832,7 +1814,7 @@ impl AuthManager {
     /// refresh chains). Non-destructive: only updates in-memory if disk has a
     /// different valid token (a sibling process wrote a fresher one).
     pub(crate) fn pick_up_sibling_token(&self) {
-        let auth = match read_auth_json(self.paths.auth_path()) {
+        let auth = match read_auth_json(&self.path) {
             Ok(map) => lookup_auth(&map, &self.scope),
             _ => None,
         };

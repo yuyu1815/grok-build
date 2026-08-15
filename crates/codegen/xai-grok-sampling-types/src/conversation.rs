@@ -2071,13 +2071,6 @@ impl From<ConversationRequest> for ChatCompletionRequest {
                 },
             });
 
-        let reasoning_effort = req.reasoning_effort.map(|effort| match effort {
-            // Keep Max distinct in configuration and UI, but temporarily use
-            // xhigh on OpenAI-compatible wire paths until async-openai adds Max.
-            crate::ReasoningEffort::Max => crate::ReasoningEffort::Xhigh,
-            other => other,
-        });
-
         ChatCompletionRequest {
             model: req.model,
             messages,
@@ -2091,7 +2084,7 @@ impl From<ConversationRequest> for ChatCompletionRequest {
             tool_choice,
             search_parameters: None,
             response_format,
-            reasoning_effort,
+            reasoning_effort: req.reasoning_effort,
             x_grok_conv_id: req.x_grok_conv_id,
             x_grok_req_id: req.x_grok_req_id,
             x_grok_session_id: req.x_grok_session_id,
@@ -5085,7 +5078,6 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "max"),
-            (crate::ReasoningEffort::Max, "max"),
         ] {
             let req = messages_test_request(Some(variant));
             let msgs = build_messages_request(&req);
@@ -5134,8 +5126,6 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "xhigh"),
-            // Keep Max selectable in the UI while temporarily sending xhigh.
-            (crate::ReasoningEffort::Max, "xhigh"),
         ] {
             let req = ConversationRequest::from_items(vec![ConversationItem::user("hi")])
                 .with_model("test");
@@ -5175,9 +5165,6 @@ mod tests {
             (crate::ReasoningEffort::Medium, "medium"),
             (crate::ReasoningEffort::High, "high"),
             (crate::ReasoningEffort::Xhigh, "xhigh"),
-            // async-openai does not yet expose a distinct Max variant, so the
-            // typed Responses API path temporarily falls back to xhigh.
-            (crate::ReasoningEffort::Max, "xhigh"),
         ] {
             let req = ConversationRequest {
                 reasoning_effort: Some(variant),

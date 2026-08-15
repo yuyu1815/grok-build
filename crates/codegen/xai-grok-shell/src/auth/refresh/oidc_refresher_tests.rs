@@ -67,6 +67,7 @@ async fn start_mock_oidc_and_proxy() -> (String, tokio::task::JoinHandle<()>) {
 
 fn write_auth_to_disk(dir: &std::path::Path, scope: &str, auth: &GrokAuth) {
     let path = dir.join("auth").join("grok.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut map = crate::auth::read_auth_json(&path).unwrap_or_default();
     map.insert(scope.to_owned(), auth.clone());
     let json = serde_json::to_string_pretty(&map).unwrap();
@@ -681,7 +682,9 @@ async fn lock_timeout_falls_through_to_refresh() {
     mgr.hot_swap(expired);
 
     // Hold the lock file externally so the refresher times out.
-    let lock_path = dir.path().join("auth").join("grok.json.lock");
+    let lock_path = crate::auth::storage::lock_path_for_auth(
+        &dir.path().join("auth").join("grok.json"),
+    );
     std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
     let lock_file = std::fs::OpenOptions::new()
         .read(true)

@@ -129,10 +129,10 @@ else
     OIDC_TOKEN=$(read_grok_token "$OIDC_SCOPE" 2>/dev/null) || true
     LEGACY_TOKEN=$(read_grok_token "$LEGACY_SCOPE" 2>/dev/null) || true
     if [ -n "$OIDC_TOKEN" ]; then
-        AUTH_SOURCE="auth.json (oidc)"
+        AUTH_SOURCE="grok.json (oidc)"
         echo "Auth: using OIDC token from ~/.grok/auth/grok.json." >&2
     elif [ -n "$LEGACY_TOKEN" ]; then
-        AUTH_SOURCE="auth.json (legacy)"
+        AUTH_SOURCE="grok.json (legacy)"
         echo "Auth: using legacy token from ~/.grok/auth/grok.json." >&2
     fi
 fi

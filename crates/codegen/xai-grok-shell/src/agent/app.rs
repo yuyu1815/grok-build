@@ -1399,9 +1399,9 @@ pub async fn run_leader(
                 watch_paths.push(home.join(".claude.json"));
             }
             let auth_scope = agent_config.grok_com_config.auth_scope();
-            let initial_auth_key_hash = xai_grok_config::user_grok_home()
-                .map(|g| crate::auth::default_auth_path(&g))
-                .and_then(|auth_path| crate::auth::read_auth_json(&auth_path).ok())
+            let auth_path = xai_grok_config::selected_auth_path(&grok_home::grok_home());
+            let initial_auth_key_hash = crate::auth::read_auth_json(&auth_path)
+                .ok()
                 .and_then(|store| {
                     crate::auth::lookup_auth(&store, &auth_scope)
                         .map(|a| crate::config::reloader::hash_auth_key(&a.key))
@@ -1422,6 +1422,7 @@ pub async fn run_leader(
             let _config_watcher = if let Some((watcher, events_rx)) =
                 crate::config::watcher::ConfigFileWatcher::start(
                     &grok_home::grok_home(),
+                    &auth_path,
                     &watch_paths,
                     watcher_cwd,
                     None,
@@ -1459,6 +1460,7 @@ pub async fn run_leader(
                     .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()));
                 let reloader = crate::config::reloader::ConfigReloader::new(
                     grok_home::grok_home(),
+                    auth_path.clone(),
                     initial_auth_key_hash,
                     initial_config,
                     auth_scope,
