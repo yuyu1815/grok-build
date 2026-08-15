@@ -101,7 +101,7 @@ fn auth_scope_uses_oauth2_when_present() {
 #[test]
 fn legacy_scope_fallback_reads_old_auth_json() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
 
     // Write auth.json with the legacy scope key (as `x setup` copies from
     // a machine that was authenticated with an older grok version).
@@ -122,7 +122,7 @@ fn legacy_scope_fallback_reads_old_auth_json() {
 #[test]
 fn new_scope_takes_precedence_over_legacy() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
 
     let legacy_auth = GrokAuth {
         key: "legacy-key".into(),
@@ -211,7 +211,7 @@ async fn update_preserves_other_scope_entries() {
     {
         let mut map = AuthStore::new();
         map.insert("other-scope".into(), external);
-        write_auth_json(&dir.path().join("auth.json"), &map).unwrap();
+        write_auth_json(&dir.path().join("auth").join("grok.json"), &map).unwrap();
     }
 
     // Now update via auth_manager
@@ -223,7 +223,7 @@ async fn update_preserves_other_scope_entries() {
     mgr.update(new_auth).await.unwrap();
 
     // Both entries should exist
-    let store = read_auth_json(&dir.path().join("auth.json")).unwrap();
+    let store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap();
     assert!(store.contains_key("other-scope"));
     assert!(store.contains_key(&cfg.auth_scope()));
 }
@@ -234,7 +234,8 @@ async fn update_preserves_other_scope_entries() {
 #[tokio::test]
 async fn update_recovers_from_corrupt_auth_json_by_backing_up_old_file() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     let cfg = GrokComConfig::default();
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg.clone()));
 
@@ -327,7 +328,7 @@ async fn update_preserves_team_fields_when_proxy_omits_them() {
     );
 
     // Verify on-disk too
-    let store = read_auth_json(&dir.path().join("auth.json")).unwrap();
+    let store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap();
     let on_disk = store.values().next().unwrap();
     assert_eq!(on_disk.principal_type.as_deref(), Some("Team"));
     assert_eq!(on_disk.team_id.as_deref(), Some("team-xyz"));
@@ -353,7 +354,7 @@ async fn update_stores_team_token_under_base_scope() {
 
     mgr.update(team_auth).await.unwrap();
 
-    let store = read_auth_json(&dir.path().join("auth.json")).unwrap();
+    let store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap();
     assert!(
         store.contains_key(&base_scope),
         "team token must be stored under base scope '{}', found keys: {:?}",
@@ -390,7 +391,7 @@ async fn team_login_then_personal_evicts_team_token() {
     };
     mgr.update(personal_auth).await.unwrap();
 
-    let store = read_auth_json(&dir.path().join("auth.json")).unwrap();
+    let store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap();
     assert_eq!(
         store.len(),
         1,
@@ -407,7 +408,7 @@ async fn team_login_then_personal_evicts_team_token() {
 #[test]
 fn clear_does_not_remove_legacy_scope() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
 
     let legacy_auth = GrokAuth {
         key: "legacy-key".into(),
@@ -662,7 +663,7 @@ async fn disk_refresh_wins_over_expired_in_memory() {
     };
     let mut store = AuthStore::new();
     store.insert(scope, fresh_disk);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     // Acquire lock + read disk (mirrors flow.rs logic)
     let _lock = mgr
@@ -768,9 +769,9 @@ async fn storm_cap_engages_with_empty_inner_and_dead_disk_refresh_token() {
         expires_at: Some(Utc::now() - Duration::hours(1)),
         ..GrokAuth::test_default()
     };
-    let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
+    let mut store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
     store.insert(scope, dead);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
     assert!(mgr.current_or_expired().is_none(), "inner must be empty");
 
     let calls = Arc::new(AtomicU32::new(0));
@@ -821,9 +822,9 @@ async fn verdict_not_keyed_on_in_mem_bearer() {
         expires_at: Some(Utc::now() - Duration::hours(1)),
         ..GrokAuth::test_default()
     };
-    let mut store = read_auth_json(&dir.path().join("auth.json")).unwrap_or_default();
+    let mut store = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap_or_default();
     store.insert(scope, disk);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     let calls = Arc::new(AtomicU32::new(0));
     mgr.set_refresher(Arc::new(TriedKeyFailRefresher {
@@ -1032,7 +1033,7 @@ async fn auth_legacy_session_picks_up_sibling_disk_token() {
     };
     let mut store = AuthStore::new();
     store.insert(scope, fresh);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     let auth = mgr.auth().await.expect("should pick up sibling token");
     assert_eq!(auth.key, "fresh-from-sibling");
@@ -1356,7 +1357,7 @@ async fn refresh_chain_records_permanent_failure_when_disk_rt_differs_but_at_exp
     };
     let mut store = AuthStore::new();
     store.insert(scope, sibling);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     struct FailingRefresher;
     #[async_trait::async_trait]
@@ -1428,7 +1429,7 @@ async fn refresh_chain_demotes_to_transient_when_disk_rt_differs_and_at_valid() 
     };
     let mut store = AuthStore::new();
     store.insert(scope, sibling);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     let calls = Arc::new(AtomicU32::new(0));
     struct CountingFailRefresher(Arc<AtomicU32>);
@@ -2124,7 +2125,7 @@ async fn update_writes_disk_before_user_enrichment() {
 
     // Disk must already reflect the rotated tokens, even though
     // /user has not responded yet.
-    let on_disk_before = read_auth_json(&dir.path().join("auth.json")).unwrap();
+    let on_disk_before = read_auth_json(&dir.path().join("auth").join("grok.json")).unwrap();
     let entry_before = on_disk_before.values().next().expect("entry written");
     assert_eq!(
         entry_before.key, "rotated-key",
@@ -2143,7 +2144,7 @@ async fn update_writes_disk_before_user_enrichment() {
     // Now release the /user handler and wait for the enrichment
     // task to merge into disk. Poll up to 5s.
     release.notify_one();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
     let mut enriched = None;
     for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -2226,7 +2227,7 @@ async fn enrichment_task_preserves_interleaved_token_rotation() {
 
     // Wait for both spawned tasks to land. Each: 50ms /user + lock
     // wait + write. We poll for the eventually-consistent state.
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
     let mut final_state = None;
     for _ in 0..30 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -2311,7 +2312,7 @@ async fn enrichment_aborts_when_disk_user_changes_mid_flight() {
     };
     let mut store = AuthStore::new();
     store.insert(scope.clone(), intruder);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     // The /user mock takes 300 ms; after that the spawned enrichment
     // either writes (overlay path -- the regression we're guarding
@@ -2319,7 +2320,7 @@ async fn enrichment_aborts_when_disk_user_changes_mid_flight() {
     // and fail fast at the first poll that shows an overlay -- a
     // wall-clock `sleep(800ms)` would mask both slow-CI flakes and
     // a real regression that just happens to land >800ms in.
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
     for _ in 0..30 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let store = read_auth_json(&auth_path).unwrap();
@@ -2413,7 +2414,7 @@ async fn enrichment_overlays_team_login_placeholder_user_id() {
     mgr.update(team_login).await.unwrap();
 
     // Wait for the spawned enrichment to land.
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
     let mut enriched = None;
     for _ in 0..50 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -2551,7 +2552,8 @@ async fn current_api_key_async_drives_refresh_chain() {
 #[tokio::test]
 async fn update_recovers_from_empty_auth_json() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     let cfg = GrokComConfig::default();
     std::fs::write(&auth_path, b"").unwrap();
     assert_eq!(std::fs::metadata(&auth_path).unwrap().len(), 0);
@@ -2600,7 +2602,8 @@ async fn update_recovers_from_empty_auth_json() {
 #[tokio::test]
 async fn update_recovers_from_whitespace_only_auth_json() {
     let dir = tempfile::tempdir().unwrap();
-    let auth_path = dir.path().join("auth.json");
+    let auth_path = dir.path().join("auth").join("grok.json");
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     let cfg = GrokComConfig::default();
     std::fs::write(&auth_path, b"  \n\t  ").unwrap();
 
@@ -2652,7 +2655,7 @@ async fn sibling_different_rt_with_expired_at_is_not_treated_as_live() {
     };
     let mut store = AuthStore::new();
     store.insert(cfg.auth_scope(), successor);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     assert!(
         !mgr.sibling_has_different_refresh_token(),
@@ -2686,7 +2689,7 @@ async fn sibling_different_rt_with_valid_at_is_treated_as_live() {
     };
     let mut store = AuthStore::new();
     store.insert(cfg.auth_scope(), sibling);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     assert!(
         mgr.sibling_has_different_refresh_token(),
@@ -3007,7 +3010,7 @@ fn new_clears_wrong_team_token_loaded_from_disk() {
 
     let mut store = AuthStore::new();
     store.insert(scope, oidc_session_for_team("team-wrong"));
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
     assert!(mgr.current().is_none(), "wrong-team token must be hidden");
@@ -3016,7 +3019,7 @@ fn new_clears_wrong_team_token_loaded_from_disk() {
         "wrong-team token must be cleared from memory, not just hidden"
     );
     assert!(
-        !dir.path().join("auth.json").exists(),
+        !dir.path().join("auth").join("grok.json").exists(),
         "wrong-team auth.json must be cleared so the next launch re-logs in"
     );
 }
@@ -3031,11 +3034,11 @@ fn new_keeps_matching_team_token_loaded_from_disk() {
 
     let mut store = AuthStore::new();
     store.insert(scope, tok.clone());
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     let mgr = Arc::new(AuthManager::new(dir.path(), cfg));
     assert_eq!(mgr.current().map(|a| a.key), Some(tok.key));
-    assert!(dir.path().join("auth.json").exists());
+    assert!(dir.path().join("auth").join("grok.json").exists());
 }
 
 /// `auth()` (the wire-bound chokepoint used by pager / MCP /
@@ -3135,7 +3138,7 @@ fn force_reload_clears_wrong_team_token() {
 
     let mut store = AuthStore::new();
     store.insert(scope, oidc_session_for_team("team-wrong"));
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     mgr.force_reload_from_disk();
     assert!(
@@ -3143,7 +3146,7 @@ fn force_reload_clears_wrong_team_token() {
         "reloaded wrong-team token must be cleared, not just hidden"
     );
     assert!(
-        !dir.path().join("auth.json").exists(),
+        !dir.path().join("auth").join("grok.json").exists(),
         "force_reload must clear auth.json on a pin violation"
     );
 }
@@ -3249,7 +3252,7 @@ fn force_reload_drops_creds_on_entry_missing() {
         "https://example.invalid::nobody".to_string(),
         make_auth(Some(Utc::now() + Duration::hours(1)), Utc::now()),
     );
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     mgr.force_reload_from_disk_with(RELOAD_RETRY_TRIES, StdDuration::ZERO);
 
@@ -3284,7 +3287,7 @@ fn force_reload_adopts_fresh_disk_token() {
     };
     let mut store = AuthStore::new();
     store.insert(scope, fresh);
-    write_auth_json(&dir.path().join("auth.json"), &store).unwrap();
+    write_auth_json(&dir.path().join("auth").join("grok.json"), &store).unwrap();
 
     mgr.force_reload_from_disk_with(RELOAD_RETRY_TRIES, StdDuration::ZERO);
 

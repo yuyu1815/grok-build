@@ -3792,7 +3792,7 @@
 - **Claude frontmatter parity** parses allowed-tools lists/strings, model, and effort in skill frontmatter.
 - **Auto-injected managed MCPs** from grok.com for WebLogin, deduped with config.toml opt-out.
 - **ACP worktree management** adds list/show/gc/db methods with filters and dry-run.
-- **ACP x.ai/auth/logout** removes scopes from ~/.grok/auth.json.
+- **ACP x.ai/auth/logout** removes scopes from ~/.grok/auth/grok.json.
 - **Custom npm registry** via config.toml or GROK_NPM_REGISTRY respects enterprise.npmrc.
 - **CLI worktree commands use ACP** with repo-wide session resolution for -w -r.
 - **Repo-wide worktree session resume** resolves locally across same-repo directories via ACP before remote fallback.
@@ -3930,7 +3930,7 @@
 - **Plugin install/uninstall commands** support git repos, tags, subdirs, local paths.
 - **Auto-injects managed MCPs** from grok.com into CLI/TUI for WebLogin users.
 - **ACP worktree management** adds list/show/gc/db methods with filters and dry-run.
-- **ACP logout method** removes scopes from ~/.grok/auth.json.
+- **ACP logout method** removes scopes from ~/.grok/auth/grok.json.
 - **Discovers skills from.claude/skills** alongside.grok/skills across local, repo, and user directories.
 - **Inline TUI scrollback annotations** for hooks with ✓ success indicator and hashline_* Claude aliases.
 - **New hook events** Stop/Notification/UserPromptSubmit/SubagentStart/Stop with Claude-compatible PreToolUse schema.

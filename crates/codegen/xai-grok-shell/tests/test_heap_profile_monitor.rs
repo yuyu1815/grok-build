@@ -115,6 +115,8 @@ fn resolve_from_settings(settings: &RemoteSettings) -> JemallocHeapProfileConfig
 }
 
 fn seed_auth_json(home: &Path, token: &str) {
+    let auth_path = xai_grok_shell::auth::default_auth_path(home);
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     let scope = GrokComConfig::default().auth_scope();
     let auth = GrokAuth {
         key: token.to_owned(),
@@ -126,7 +128,7 @@ fn seed_auth_json(home: &Path, token: &str) {
     };
     let store = serde_json::json!({ scope: auth });
     std::fs::write(
-        home.join("auth.json"),
+        auth_path,
         serde_json::to_vec(&store).expect("serialize auth.json"),
     )
     .expect("write auth.json");

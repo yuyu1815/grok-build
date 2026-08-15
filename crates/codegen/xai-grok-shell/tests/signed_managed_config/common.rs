@@ -53,9 +53,11 @@ pub fn test_home() -> &'static PathBuf {
 }
 
 pub fn reset(home: &std::path::Path) {
+    let auth_path = xai_grok_shell::auth::selected_auth_path(home);
+    let _ = std::fs::remove_file(&auth_path);
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
     for f in [
         "config.toml",
-        "auth.json",
         "managed_config.toml",
         "requirements.toml",
         "managed_config_cache.json",
@@ -127,7 +129,9 @@ pub fn write_team_auth(home: &std::path::Path, team_id: &str) {
             "team_id": team_id,
         }
     });
-    std::fs::write(home.join("auth.json"), auth.to_string()).unwrap();
+    let auth_path = xai_grok_shell::auth::selected_auth_path(home);
+    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+    std::fs::write(auth_path, auth.to_string()).unwrap();
 }
 
 /// A fresh Ed25519 keypair plus its raw public key, installed as the sole trusted
