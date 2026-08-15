@@ -13,7 +13,7 @@ use crate::app::dispatch::ctx::{
 };
 use crate::app::dispatch::modes::inherit_auto_mode;
 use crate::app::dispatch::prompt::{consume_chat_kind, dispatch_initial_prompt};
-use crate::app::dispatch::queue::{maybe_drain_queue, note_peek_page_flip_after_drain};
+use crate::app::dispatch::queue::{QueueDrain, maybe_drain_queue, note_peek_page_flip};
 use crate::app::dispatch::router::dispatch;
 use crate::app::dispatch::status::notify_session_ready;
 use crate::app::dispatch::task_result::unregister_session_effect;
@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(
@@ -832,11 +828,15 @@ pub(in crate::app::dispatch) fn handle_session_created(
         if deferred.is_some() {
             agent.session.model_switch_pending = true;
         }
-        let mut effects = if app.reconnect_pending {
-            vec![]
+        let mut drain = if app.reconnect_pending {
+            QueueDrain {
+                effects: vec![],
+                page_flip_entry: None,
+            }
         } else {
             maybe_drain_queue(agent)
         };
+        let mut effects = std::mem::take(&mut drain.effects);
         agent.session.prompt_history_loading = true;
         effects.push(Effect::FetchPromptHistory {
             agent_id,
@@ -888,7 +888,7 @@ pub(in crate::app::dispatch) fn handle_session_created(
             cwd: agent.session.cwd.display().to_string(),
         });
         notify_session_ready(&app.notification_service, agent);
-        note_peek_page_flip_after_drain(app, agent_id);
+        note_peek_page_flip(app, agent_id, drain.page_flip_entry);
         return effects;
     }
     vec![]
@@ -923,11 +923,15 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
         if deferred.is_some() {
             agent.session.model_switch_pending = true;
         }
-        let mut effects = if app.reconnect_pending {
-            vec![]
+        let mut drain = if app.reconnect_pending {
+            QueueDrain {
+                effects: vec![],
+                page_flip_entry: None,
+            }
         } else {
             maybe_drain_queue(agent)
         };
+        let mut effects = std::mem::take(&mut drain.effects);
         agent.session.prompt_history_loading = true;
         effects.push(Effect::FetchPromptHistory {
             agent_id,
@@ -979,7 +983,7 @@ pub(in crate::app::dispatch) fn handle_worktree_session_created(
             cwd: agent.session.cwd.display().to_string(),
         });
         notify_session_ready(&app.notification_service, agent);
-        note_peek_page_flip_after_drain(app, agent_id);
+        note_peek_page_flip(app, agent_id, drain.page_flip_entry);
         return effects;
     }
     vec![]
@@ -1069,14 +1073,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     };
                     agent.scrollback.push_block(RenderBlock::system(msg));
                 }
-                if unchanged {
-                    vec![]
-                } else {
-                    vec![Effect::PersistPreferredModel {
-                        model_id: model_id.clone(),
-                        reasoning_effort: resolved_effort,
-                    }]
-                }
+                vec![]
             }
             Err(SwitchModelError::IncompatibleAgent { .. }) => {
                 if let Some(ref prev) = prev_model_id {
@@ -1093,8 +1090,9 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                 vec![]
             }
         };
-        effects.extend(maybe_drain_queue(agent));
-        note_peek_page_flip_after_drain(app, agent_id);
+        let drain = maybe_drain_queue(agent);
+        effects.extend(drain.effects);
+        note_peek_page_flip(app, agent_id, drain.page_flip_entry);
         effects
     } else {
         vec![]

@@ -1909,7 +1909,12 @@ mod tests {
             crate::agent::config::resolve_model_list(&cfg, Some(openai_prefetched_entry()));
         let info = &resolved["gpt-5.5"].info;
         assert_eq!(info.reasoning_effort, Some(ReasoningEffort::Xhigh));
-        assert!(!info.offers_reasoning_effort(ReasoningEffort::Xhigh));
+        assert!(
+            !info
+                .reasoning_efforts
+                .iter()
+                .any(|option| option.value == ReasoningEffort::Xhigh)
+        );
     }
 
     #[test]

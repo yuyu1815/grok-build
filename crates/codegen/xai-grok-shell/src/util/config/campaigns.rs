@@ -279,6 +279,11 @@ struct CampaignField {
 /// Path of the `models.default` campaign field, shared by the registry row and
 /// its dismiss writer so the two can't drift.
 const MODELS_DEFAULT_PATH: PatchPath = &["models", "default"];
+const MODEL_EFFORT_REMOVAL: &[(&str, &str)] = &[("models", "default_reasoning_effort")];
+const MODEL_DEFAULT_AND_EFFORT_REMOVALS: &[(&str, &str)] = &[
+    ("models", "default"),
+    ("models", "default_reasoning_effort"),
+];
 
 const CAMPAIGN_FIELDS: &[CampaignField] = &[CampaignField {
     path: MODELS_DEFAULT_PATH,
@@ -364,11 +369,14 @@ pub async fn persist_user_choice(
     path: PatchPath,
     write: impl FnOnce(&mut super::mcp::Config),
 ) -> anyhow::Result<()> {
-    // Config-layer reads + the flock'd read-modify-write are blocking I/O;
-    // keep them off the async worker. Awaited before the config write so the
-    // dismiss-before-write ordering above holds. A panicked/cancelled dismiss
-    // task must NOT abort the user's write: bookkeeping failure is logged and
-    // the write proceeds (the campaign may re-nudge; the pick is never lost).
+    persist_user_choice_removing(path, write, &[]).await
+}
+
+async fn persist_user_choice_removing(
+    path: PatchPath,
+    write: impl FnOnce(&mut super::mcp::Config),
+    removals: &[(&str, &str)],
+) -> anyhow::Result<()> {
     let dismissed = tokio::task::spawn_blocking(move || {
         let ids = ids_touching_paths(&resolve_dismissable_campaigns(), &[path]);
         if !ids.is_empty() {
@@ -384,16 +392,13 @@ pub async fn persist_user_choice(
     if let Err(e) = dismissed {
         tracing::warn!(error = %e, "campaigns: dismiss bookkeeping task failed; persisting the choice anyway");
     }
-    super::persist::update_config(write).await
+    super::persist::update_config_removing(write, removals).await
 }
 
-/// Persist the default model (+ optional reasoning effort) through
-/// [`persist_user_choice`], so picking a model dismisses a campaign nudging
-/// `models.default`. `None` clears the field.
-pub async fn persist_models_default(
-    value: Option<String>,
-    reasoning_effort: Option<xai_grok_sampling_types::ReasoningEffort>,
-) -> anyhow::Result<()> {
+/// Persist the default model through [`persist_user_choice`], so picking a
+/// model dismisses a campaign nudging `models.default`. `None` clears the
+/// model override and its model-specific reasoning-effort override.
+pub async fn persist_models_default(value: Option<String>) -> anyhow::Result<()> {
     let s = value.unwrap_or_default();
     if s.len() > super::settings_writes::MAX_DEFAULT_MODEL_LEN {
         anyhow::bail!(
@@ -402,12 +407,23 @@ pub async fn persist_models_default(
             super::settings_writes::MAX_DEFAULT_MODEL_LEN
         );
     }
-    persist_user_choice(MODELS_DEFAULT_PATH, move |cfg| {
-        cfg.models.default = if s.is_empty() { None } else { Some(s) };
-        if let Some(effort) = reasoning_effort {
-            cfg.models.default_reasoning_effort = Some(effort);
-        }
-    })
+    let clear_default = s.is_empty();
+    persist_user_choice_removing(
+        MODELS_DEFAULT_PATH,
+        move |cfg| {
+            cfg.models.default = if clear_default || s.is_empty() {
+                None
+            } else {
+                Some(s)
+            };
+            cfg.models.default_reasoning_effort = None;
+        },
+        if clear_default {
+            MODEL_DEFAULT_AND_EFFORT_REMOVALS
+        } else {
+            MODEL_EFFORT_REMOVAL
+        },
+    )
     .await
 }
 
@@ -535,6 +551,54 @@ mod tests {
         assert!(
             active.is_empty(),
             "empty override replaces all sources, yielding no campaigns"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn default_model_write_removes_stale_model_specific_overrides_from_disk() {
+        let home = tempdir().unwrap();
+        let _home = EnvGuard::set("GROK_HOME", home.path());
+        let _campaign_override = EnvGuard::set("GROK_CAMPAIGNS_OVERRIDE", "[]");
+        let config_path = home.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[models]\ndefault = \"old-model\"\ndefault_reasoning_effort = \"high\"\nweb_search = \"search-model\"\n",
+        )
+        .unwrap();
+
+        persist_models_default(Some("new-model".to_owned()))
+            .await
+            .unwrap();
+
+        let saved: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let models = saved.get("models").and_then(toml::Value::as_table).unwrap();
+        assert_eq!(
+            models.get("default").and_then(toml::Value::as_str),
+            Some("new-model")
+        );
+        assert!(models.get("default_reasoning_effort").is_none());
+        assert_eq!(
+            models.get("web_search").and_then(toml::Value::as_str),
+            Some("search-model")
+        );
+
+        std::fs::write(
+            &config_path,
+            "[models]\ndefault = \"new-model\"\ndefault_reasoning_effort = \"max\"\nweb_search = \"search-model\"\n",
+        )
+        .unwrap();
+        persist_models_default(None).await.unwrap();
+
+        let saved: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        let models = saved.get("models").and_then(toml::Value::as_table).unwrap();
+        assert!(models.get("default").is_none());
+        assert!(models.get("default_reasoning_effort").is_none());
+        assert_eq!(
+            models.get("web_search").and_then(toml::Value::as_str),
+            Some("search-model")
         );
     }
 

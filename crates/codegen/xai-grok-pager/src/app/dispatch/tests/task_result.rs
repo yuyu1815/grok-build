@@ -5,6 +5,66 @@ use super::super::task_result::{
 };
 use super::*;
 
+#[test]
+fn stale_auth_copy_timeout_does_not_clear_newer_feedback() {
+    let mut app = test_app();
+    app.auth_state = AuthState::Authenticating {
+        request_seq: 1,
+        handle: None,
+        auth_url: Some("https://grok.com/auth".to_owned()),
+        mode: AuthMode::Command,
+    };
+
+    let first_effects = crate::app::dispatch::router::dispatch_copy_auth_url(&mut app, |_| {
+        crate::clipboard::ClipboardDelivery::Failed
+    });
+    let [
+        Effect::ScheduleClearAuthCopyFeedback {
+            generation: first_generation,
+        },
+    ] = first_effects.as_slice()
+    else {
+        panic!("first copy must schedule feedback clear");
+    };
+
+    let second_effects = crate::app::dispatch::router::dispatch_copy_auth_url(&mut app, |_| {
+        crate::clipboard::ClipboardDelivery::Confirmed
+    });
+    let [
+        Effect::ScheduleClearAuthCopyFeedback {
+            generation: second_generation,
+        },
+    ] = second_effects.as_slice()
+    else {
+        panic!("second copy must schedule feedback clear");
+    };
+    assert_ne!(first_generation, second_generation);
+    assert_eq!(
+        app.auth_clipboard_delivery,
+        Some(crate::clipboard::ClipboardDelivery::Confirmed)
+    );
+
+    dispatch_task_result(
+        TaskResult::AuthCopyFeedbackTimeout {
+            generation: *first_generation,
+        },
+        &mut app,
+    );
+    assert_eq!(
+        app.auth_clipboard_delivery,
+        Some(crate::clipboard::ClipboardDelivery::Confirmed),
+        "the first copy's stale timeout must preserve the second feedback"
+    );
+
+    dispatch_task_result(
+        TaskResult::AuthCopyFeedbackTimeout {
+            generation: *second_generation,
+        },
+        &mut app,
+    );
+    assert_eq!(app.auth_clipboard_delivery, None);
+}
+
 fn foreign_resume_hint(
     tool: xai_grok_workspace::foreign_sessions::ForeignSessionTool,
 ) -> xai_grok_workspace::foreign_sessions::RecentForeignSession {
@@ -597,12 +657,10 @@ fn switch_model_complete_success_updates_model_and_pushes_message() {
     );
     // Success message pushed to scrollback.
     assert_eq!(app.agents[&id].scrollback.len(), initial_scrollback + 1);
-    // PersistPreferredModel effect emitted.
-    assert_eq!(effects.len(), 1);
-    assert!(matches!(
-        &effects[0],
-        Effect::PersistPreferredModel { model_id: mid, .. } if *mid == model_id.clone()
-    ));
+    assert!(
+        effects.is_empty(),
+        "session-only switch completion must not persist the global default"
+    );
 }
 
 #[test]
@@ -634,16 +692,11 @@ fn switch_model_complete_skips_message_and_persist_when_unchanged() {
 
     assert!(!app.agents[&id].session.model_switch_pending);
     assert_eq!(app.agents[&id].scrollback.len(), before, "no message added");
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistPreferredModel { .. })),
-        "no persist effect for no-op switch"
-    );
+    assert!(effects.is_empty(), "no effects for no-op switch");
 }
 
 #[test]
-fn switch_model_complete_persists_resolved_effort_from_catalog_meta() {
+fn switch_model_complete_applies_catalog_effort_without_persisting_default() {
     use xai_grok_shell::sampling::types::ReasoningEffort;
     let mut app = test_app_with_agent();
     let id = AgentId(0);
@@ -691,26 +744,14 @@ fn switch_model_complete_persists_resolved_effort_from_catalog_meta() {
         Some(ReasoningEffort::Xhigh)
     );
 
-    assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistPreferredModel {
-            model_id: mid,
-            reasoning_effort,
-        } => {
-            assert_eq!(*mid, model_id);
-            assert_eq!(
-                *reasoning_effort,
-                Some(ReasoningEffort::Xhigh),
-                "persisted effort must mirror the live UI effort so a \
-                     fresh chat does not reset reasoning to a stale default",
-            );
-        }
-        other => panic!("expected PersistPreferredModel, got {other:?}"),
-    }
+    assert!(
+        effects.is_empty(),
+        "resolved session effort must not overwrite the global default"
+    );
 }
 
 #[test]
-fn switch_to_non_reasoning_model_clears_persisted_effort() {
+fn switch_to_non_reasoning_model_clears_session_effort_without_persisting() {
     use xai_grok_shell::sampling::types::ReasoningEffort;
     let mut app = test_app_with_agent();
     let id = AgentId(0);
@@ -757,18 +798,10 @@ fn switch_to_non_reasoning_model_clears_persisted_effort() {
         "reasoning_effort must be cleared when switching to a non-reasoning model",
     );
 
-    assert_eq!(effects.len(), 1);
-    match &effects[0] {
-        Effect::PersistPreferredModel {
-            reasoning_effort, ..
-        } => {
-            assert_eq!(
-                *reasoning_effort, None,
-                "persisted effort must be None so config.toml clears the stale value",
-            );
-        }
-        other => panic!("expected PersistPreferredModel, got {other:?}"),
-    }
+    assert!(
+        effects.is_empty(),
+        "session-only switch must leave the persisted default untouched"
+    );
 }
 
 #[test]
@@ -997,11 +1030,9 @@ fn same_agent_type_switch_no_modal() {
     // Model should be switched, no modal.
     assert_eq!(app.agents[&id].session.models.current, Some(model_b));
     assert!(app.agents[&id].question_view.is_none());
-    // Should emit PersistPreferredModel.
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::PersistPreferredModel { .. }))
+        effects.is_empty(),
+        "same-agent session switch must not persist the global default"
     );
 }
 
@@ -1335,11 +1366,11 @@ fn delete_both_session_clears_modal_and_welcome_content_hits() {
         .active_modal
         .as_mut()
     {
-        state.query = "shared".into();
+        state.set_query("shared");
         *content_results = Some(vec![hit.clone()]);
     }
     app.session_picker_entries = Some(vec![both, foreign]);
-    app.session_picker_state.query = "shared".into();
+    app.session_picker_state.set_query("shared");
     app.session_picker_content_results = Some(vec![hit]);
 
     let _ = dispatch_task_result(
@@ -1382,7 +1413,7 @@ fn delete_both_session_clears_modal_and_welcome_content_hits() {
             .iter()
             .any(|item| matches!(item, Some(PickerItem::Content { .. })))
     );
-    assert_eq!(modal_state.query.as_str(), "shared");
+    assert_eq!(modal_state.query(), "shared");
 
     let welcome_entries = app.session_picker_entries.as_deref().unwrap();
     let welcome_hits = app.session_picker_content_results.as_deref().unwrap();

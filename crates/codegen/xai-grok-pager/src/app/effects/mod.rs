@@ -66,11 +66,13 @@ pub(crate) fn execute(
                 tracing::warn!(error = % e, "project picker: failed to set_current_dir");
             }
         }
-        Effect::ScheduleClearAuthCopied => {
+        Effect::ScheduleClearAuthCopyFeedback { generation } => {
             tasks
-                .spawn(async {
+                .spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    TaskResult::AuthCopiedTimeout
+                    TaskResult::AuthCopyFeedbackTimeout {
+                        generation,
+                    }
                 });
         }
         Effect::Logout => {
@@ -1832,24 +1834,6 @@ pub(crate) fn execute(
             );
             persist_hint(tasks, config_key, mode.as_config_str(), "worktree mode");
         }
-        Effect::PersistPreferredModel { model_id, reasoning_effort } => {
-            let model_id_str = model_id.0.to_string();
-            tasks
-                .spawn(async move {
-                    let result = xai_grok_shell::util::config::persist_models_default(
-                            Some(model_id_str),
-                            reasoning_effort,
-                        )
-                        .await
-                        .map_err(|e| e.to_string());
-                    if let Err(ref e) = result {
-                        tracing::warn!("failed to save default model preference: {e}");
-                    }
-                    TaskResult::PreferredModelPersisted {
-                        result,
-                    }
-                });
-        }
         Effect::PersistPermissionMode { canonical, session_id, persist } => {
             let tx = acp_tx.clone();
             tasks
@@ -3302,7 +3286,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendBtw { agent_id, session_id, question } => {
+        Effect::SendBtw { agent_id, session_id, question, minimal_request_id } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
@@ -3332,6 +3316,7 @@ pub(crate) fn execute(
                             TaskResult::BtwResponse {
                                 agent_id,
                                 result: Ok(answer),
+                                minimal_request_id,
                             }
                         }
                         Err(e) => {
@@ -3340,6 +3325,7 @@ pub(crate) fn execute(
                                 result: Err(
                                     sanitize_user_error(&format!("side question failed: {e}")),
                                 ),
+                                minimal_request_id,
                             }
                         }
                     }

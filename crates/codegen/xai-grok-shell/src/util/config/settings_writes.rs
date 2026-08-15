@@ -23,6 +23,10 @@ pub async fn set_show_timeline(value: bool) -> Result<()> {
     update_config(|cfg| cfg.ui.show_timeline = Some(value)).await
 }
 
+pub async fn set_page_flip_on_send(value: bool) -> Result<()> {
+    update_config(|cfg| cfg.ui.page_flip_on_send = Some(value)).await
+}
+
 /// Persist `[ui].simple_mode` via `update_config`. Same `Option<bool>`
 /// shape as `show_timestamps`.
 pub async fn set_simple_mode(value: bool) -> Result<()> {
@@ -101,11 +105,8 @@ pub const MAX_DEFAULT_MODEL_LEN: usize = 256;
 /// Empty string clears the field (falls back to remote/built-in default).
 /// Length over [`MAX_DEFAULT_MODEL_LEN`] returns `Err`.
 pub async fn set_default_model(value: String) -> Result<()> {
-    super::campaigns::persist_models_default(
-        if value.is_empty() { None } else { Some(value) },
-        None,
-    )
-    .await
+    super::campaigns::persist_models_default(if value.is_empty() { None } else { Some(value) })
+        .await
 }
 
 /// Persist `[ui].fork_secondary_model` via `update_config`.
