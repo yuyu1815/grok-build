@@ -674,34 +674,11 @@
     }
 
     #[test]
-    fn apply_backslash_continuation_trailing() {
+    fn trailing_backslash_is_sent_literally() {
         let mut pw = PromptWidget::new();
         pw.textarea.insert_str("hello\\");
-        assert!(pw.apply_backslash_continuation());
-        assert_eq!(pw.textarea.text(), "hello\n");
-    }
-
-    #[test]
-    fn apply_backslash_continuation_no_backslash() {
-        let mut pw = PromptWidget::new();
-        pw.textarea.insert_str("hello");
-        assert!(!pw.apply_backslash_continuation());
-        assert_eq!(pw.textarea.text(), "hello");
-    }
-
-    #[test]
-    fn apply_backslash_continuation_empty() {
-        let mut pw = PromptWidget::new();
-        assert!(!pw.apply_backslash_continuation());
-    }
-
-    #[test]
-    fn backslash_continuation_via_try_send() {
-        let mut pw = PromptWidget::new();
-        pw.textarea.insert_str("hello\\");
-        // try_send with trailing \ → continuation (insert newline), returns None
-        assert_eq!(pw.try_send(), None);
-        assert_eq!(pw.textarea.text(), "hello\n");
+        assert_eq!(pw.try_send(), Some("hello\\".into()));
+        assert_eq!(pw.textarea.text(), "hello\\");
     }
 
     #[test]
@@ -715,10 +692,10 @@
     }
 
     #[test]
-    fn can_send_backslash() {
+    fn can_send_trailing_backslash() {
         let mut pw = PromptWidget::new();
         pw.textarea.insert_str("hello\\");
-        assert!(!pw.can_send()); // trailing backslash
+        assert!(pw.can_send());
     }
 
     // ── Paste element tests ──────────────────────────────────────────

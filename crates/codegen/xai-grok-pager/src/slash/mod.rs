@@ -994,8 +994,8 @@ impl SlashController {
 /// for them to operate on.
 ///
 /// Commands that opt in via [`SlashCommand::offered_when_session_less`]
-/// (`/model`, `/plan`, `/multiline`) are exempt from this suppression —
-/// they configure the next spawn or the dashboard input surface itself.
+/// (`/model`, `/plan`) are exempt from this suppression — they configure
+/// the next spawn.
 ///
 /// Conversely, [`SlashCommand::dashboard_only`] commands (`/cd`) are
 /// offered ONLY when `hide_session_scoped` is set (the dashboard surface)
@@ -1818,8 +1818,7 @@ mod tests {
             .collect();
 
         // Pager-global commands stay, plus session-scoped opt-ins
-        // (`offered_when_session_less`): `/model`/`/plan` stage the next
-        // spawn; `/multiline` toggles compose on the dashboard inputs.
+        // (`offered_when_session_less`): `/model`/`/plan` stage the next spawn.
         for keep in [
             "/quit",
             "/new",
@@ -1829,7 +1828,6 @@ mod tests {
             "/resume",
             "/model",
             "/plan",
-            "/multiline",
         ] {
             assert!(
                 names.contains(&keep),
@@ -1966,8 +1964,8 @@ mod tests {
         );
     }
 
-    /// `/model`, `/plan`, and `/multiline` opt in via `offered_when_session_less`,
-    /// so they stay recognized on the dashboard even though they're session-scoped.
+    /// `/model` and `/plan` opt in via `offered_when_session_less`, so they stay
+    /// recognized on the dashboard even though they're session-scoped.
     #[test]
     fn session_less_opt_in_commands_recognized_on_dashboard() {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
@@ -1985,12 +1983,6 @@ mod tests {
         assert!(
             state.snapshot().command_recognized,
             "/model must be recognized on the dashboard"
-        );
-
-        ctrl.refresh(&state, "/multiline", 10, &models);
-        assert!(
-            state.snapshot().command_recognized,
-            "/multiline must be recognized on the dashboard"
         );
     }
 

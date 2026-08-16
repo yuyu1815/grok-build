@@ -81,7 +81,7 @@ use super::settings::setters::{
     set_contextual_hint_undo, set_contextual_hint_word_select, set_default_model,
     set_default_selected_permission, set_display_refresh_auto_cadence, set_fork_secondary_model,
     set_group_tool_verbs, set_hunk_tracker_mode, set_invert_scroll, set_keep_text_selection,
-    set_max_thoughts_width, set_multiline_mode, set_page_flip_on_send, set_prompt_suggestions,
+    set_max_thoughts_width, set_page_flip_on_send, set_prompt_suggestions,
     set_remember_tool_approvals, set_render_mermaid, set_respect_manual_folds, set_screen_mode,
     set_scroll_lines, set_scroll_mode, set_scroll_speed, set_show_thinking_blocks, set_show_tips,
     set_simple_mode, set_theme, set_timeline, set_timestamps, set_vim_mode, set_voice_capture_mode,
@@ -90,8 +90,7 @@ use super::settings::setters::{
 use super::settings::ui::{
     dispatch_confirm_reset_setting, dispatch_open_command_palette, dispatch_open_howto_guides,
     dispatch_open_reset_confirm, dispatch_open_settings, dispatch_toggle_compact_mode,
-    dispatch_toggle_mouse_capture, dispatch_toggle_multiline, dispatch_toggle_timestamps,
-    dispatch_toggle_vim_mode,
+    dispatch_toggle_mouse_capture, dispatch_toggle_timestamps, dispatch_toggle_vim_mode,
 };
 use super::status::{
     dispatch_copy_session_id, dispatch_open_gboom, dispatch_share_session,
@@ -839,9 +838,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             };
             if agent.session.models.is_empty() {
-                agent.scrollback.push_system(crate::scrollback::blocks::system::SystemBlock::new(
-                    "No available models",
-                ));
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(
+                        "No available models",
+                    ));
                 return vec![];
             }
             agent.active_modal = Some(crate::views::modal::ActiveModal::ModelsPicker {
@@ -953,7 +954,6 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::ShowPrivacyInfo => dispatch_show_privacy_info(app),
         Action::SetCodingDataSharing { opted_in } => set_coding_data_sharing(app, opted_in),
         Action::ToggleYolo => dispatch_toggle_yolo(app),
-        Action::ToggleMultiline => dispatch_toggle_multiline(app),
         Action::ToggleCompactMode => dispatch_toggle_compact_mode(app),
         Action::ToggleVimMode => dispatch_toggle_vim_mode(app),
         Action::SetVimMode(v) => set_vim_mode(app, v),
@@ -979,7 +979,6 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::ToggleTimestamps => dispatch_toggle_timestamps(app),
         Action::SetYoloMode(v) => set_yolo_mode(app, v),
         Action::SetPermissionMode(kind) => set_permission_mode(app, kind),
-        Action::SetMultilineMode(v) => set_multiline_mode(app, v),
         Action::SetRenderMermaid(kind) => set_render_mermaid(app, kind),
         Action::SetCompactMode(v) => set_compact_mode(app, v),
         Action::SetTimestamps(v) => set_timestamps(app, v),

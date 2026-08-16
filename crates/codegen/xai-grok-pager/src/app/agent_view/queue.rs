@@ -1524,63 +1524,6 @@ mod queue_edit_routing_tests {
         );
     }
 
-    /// Multiline mode: empty bare Enter still send-nows (does not insert a
-    /// blank line). Enter-with-text remains newline-only in multiline.
-    #[test]
-    fn multiline_enter_empty_from_prompt_force_sends_top_queued() {
-        let mut agent = running_agent_local_only();
-        agent.multiline_mode = true;
-        agent.active_pane = AgentPane::Prompt;
-        agent.queue.overlay.focused = false;
-        agent.prompt.set_text("");
-
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let outcome = agent.handle_prompt_key_for_test(&enter);
-        match outcome {
-            InputOutcome::Action(Action::SendPromptNow { text, .. }) => {
-                assert_eq!(text, "local one");
-            }
-            other => panic!("multiline empty Enter must send-now top queued row, got {other:?}"),
-        }
-        assert!(
-            agent.session.pending_prompts.is_empty(),
-            "queued row must be consumed"
-        );
-        assert_eq!(
-            agent.prompt.text(),
-            "",
-            "send-now must not leave a blank line in the composer"
-        );
-    }
-
-    /// Multiline + non-empty composer: bare Enter still inserts a newline
-    /// (does not queue/send), even mid-turn with a queue present.
-    #[test]
-    fn multiline_enter_with_text_inserts_newline_not_send_now() {
-        let mut agent = running_agent_local_only();
-        agent.multiline_mode = true;
-        agent.active_pane = AgentPane::Prompt;
-        agent.queue.overlay.focused = false;
-        agent.prompt.set_text("draft line");
-
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        let outcome = agent.handle_prompt_key_for_test(&enter);
-        assert!(
-            matches!(outcome, InputOutcome::Changed),
-            "multiline Enter with text must insert newline, got {outcome:?}"
-        );
-        assert!(
-            agent.prompt.text().contains('\n'),
-            "expected newline insertion, got {:?}",
-            agent.prompt.text()
-        );
-        assert_eq!(
-            agent.session.pending_prompts.len(),
-            1,
-            "queued follow-up must remain (text Enter is not send-now)"
-        );
-    }
-
     /// When the composer has text, that wins over a queued follow-up.
     #[test]
     fn interject_key_composer_text_wins_over_queued_follow_up() {
@@ -1646,34 +1589,29 @@ mod queue_edit_routing_tests {
         }
     }
 
-    /// Backslash continuation mid-turn must only insert the newline — it must
-    /// NOT be mistaken for an empty composer and force-send a queued follow-up.
-    /// `try_send()` returns `None` in both the empty and continuation cases, so
-    /// the send-now path is guarded on an actually-empty composer.
+    /// A trailing backslash is ordinary prompt text: bare Enter sends it
+    /// literally instead of treating it as a newline continuation or as an
+    /// empty composer that force-sends a queued follow-up.
     #[test]
-    fn enter_backslash_continuation_does_not_force_send_queued() {
+    fn enter_trailing_backslash_sends_literal_prompt() {
         let mut agent = running_agent_local_only();
         agent.active_pane = AgentPane::Prompt;
         agent.queue.overlay.focused = false;
-        // Trailing backslash with the cursor at end (insert_str advances it).
-        agent.prompt.set_text("");
-        agent.prompt.textarea.insert_str("wip\\");
+        agent.prompt.set_text("wip\\");
 
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let outcome = agent.handle_prompt_key_for_test(&enter);
         assert!(
-            matches!(outcome, InputOutcome::Changed),
-            "backslash continuation must insert a newline, not fire send-now; got {outcome:?}"
-        );
-        assert_eq!(
-            agent.prompt.text(),
-            "wip\n",
-            "the backslash must be replaced with a newline (continuation applied)"
+            matches!(
+                outcome,
+                InputOutcome::Action(Action::SendPrompt(ref text)) if text == "wip\\"
+            ),
+            "trailing backslash must be sent literally; got {outcome:?}"
         );
         assert_eq!(
             agent.session.pending_prompts.len(),
             1,
-            "queued follow-up must remain (continuation is not send-now)"
+            "the existing queued follow-up must remain"
         );
     }
 

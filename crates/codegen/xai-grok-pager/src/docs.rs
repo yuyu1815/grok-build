@@ -319,6 +319,19 @@ mod tests {
     }
 
     #[test]
+    fn terminal_support_documents_windows_terminal_alt_enter_setup() {
+        let content = get_howto_doc("Terminal Support and Troubleshooting")
+            .expect("terminal support guide must be embedded");
+        assert!(content.contains("Stock Windows"));
+        assert!(content.contains("Terminal binds `Alt+Enter` to `Terminal.ToggleFullscreen`"));
+        assert!(content.contains(r#"{ "id": null, "keys": "alt+enter" }"#));
+        assert!(content.contains(r#""input": "\u001b\r""#));
+        assert!(content.contains("`F11` remains bound to `Terminal.ToggleFullscreen`"));
+        assert!(content.contains("it cannot inspect the Windows-side Terminal settings"));
+        assert!(content.contains("/docs Terminal Support and Troubleshooting"));
+    }
+
+    #[test]
     fn list_howto_titles_returns_all() {
         let titles = list_howto_titles();
         assert_eq!(titles.len(), USER_GUIDE.len() + REFERENCE_DOCS.len());

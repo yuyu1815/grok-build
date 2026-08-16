@@ -1371,14 +1371,12 @@ pub(super) fn dispatch_dashboard_dispatch_slash(app: &mut AppView, text: String)
                 .record_command_use(invocation.token, invocation.token);
         }
 
-        let dashboard_multiline = app.dashboard.as_ref().is_some_and(|d| d.multiline_mode);
         let mut ctx = CommandExecCtx {
             models: &app.models,
             session_id: None,
             bundle_state: &app.bundle_state,
             screen_mode: app.screen_mode,
             pager_state: crate::settings::PagerLocalSnapshot {
-                multiline_mode: dashboard_multiline,
                 yolo_mode: app.default_yolo,
                 auto_mode: app.current_ui.permission_mode.as_deref() == Some("auto")
                     && !app.default_yolo,

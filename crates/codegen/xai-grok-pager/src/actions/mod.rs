@@ -65,7 +65,6 @@ pub enum ActionId {
     NextModel,
     CancelTurn,
     ToggleYolo,
-    ToggleMultiline,
 
     // Focus
     FocusPrompt,
@@ -644,10 +643,7 @@ mod tests {
             registry.lookup(&ctrl_m, When::AgentScreen),
             Some(ActionId::OpenModelsPicker)
         );
-        assert_eq!(
-            registry.lookup(&ctrl_m, When::PromptFocused),
-            Some(ActionId::ToggleMultiline)
-        );
+        assert_eq!(registry.lookup(&ctrl_m, When::PromptFocused), None);
         // Former mouse-toggle dual bindings removed from scrollback.
         assert_eq!(registry.lookup(&f9, When::ScrollbackFocused), None);
         assert_eq!(registry.lookup(&f9, When::AgentScreen), None);
@@ -659,7 +655,7 @@ mod tests {
         assert_eq!(registry.lookup(&ctrl_shift_m, When::Always), None);
         // Voice capture is bound to BOTH Ctrl+Space and F8, and is global
         // (`When::Always`) so it resolves on the agent screen and the dashboard
-        // alike (distinct from Ctrl+M model picker / multiline). It is not
+        // alike (distinct from Ctrl+M model picker). It is not
         // agent-scoped, so an exact AgentScreen lookup misses.
         assert_eq!(
             registry.lookup(&ctrl_space, When::Always),

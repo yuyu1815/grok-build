@@ -1649,15 +1649,6 @@ fn pager_registry_default_matches_agent_view_new_initializer() {
             continue;
         }
         match (meta.key, &meta.kind) {
-            ("multiline_mode", SettingKind::Bool { default }) => {
-                assert_eq!(
-                    *default, agent.multiline_mode,
-                    "registry default for `multiline_mode` ({default}) drifts from \
-                         AgentView::new's initializer ({}). Update one to match the \
-                         other — the registry is the contract surface.",
-                    agent.multiline_mode,
-                );
-            }
             ("plan_mode", SettingKind::Enum { default, .. }) => {
                 let effective = agent.plan_mode_pending.unwrap_or(agent.plan_mode_active);
                 let expected = if effective { "on" } else { "off" };

@@ -265,8 +265,7 @@ fn slash_plan_with_args_already_in_plan_is_noop() {
 /// Multi-agent fan-out (sibling for `plan_mode`).
 /// `Action::SetPlanMode(On)` populates the active agent's
 /// `plan_mode_pending` and never touches other agents in the
-/// registry. The contract differs from `multiline_mode` in that
-/// `plan_mode_pending` is an `Option<bool>` (optimistic stash) —
+/// registry. `plan_mode_pending` is an `Option<bool>` (optimistic stash) —
 /// the non-active agent must stay `None`.
 #[test]
 fn set_plan_mode_mutates_only_active_agent_not_others() {
@@ -2240,7 +2239,7 @@ fn plan_mode_toast_format() {
     assert!(toast.contains("Plan mode"));
     assert!(
         toast.contains(": on"),
-        "ON toast must use lowercase 'on' (consistency with multiline/compact toasts): {toast}",
+        "ON toast must use lowercase 'on' (consistency with compact-mode toasts): {toast}",
     );
     assert!(
         !toast.contains(": On"),

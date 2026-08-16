@@ -45,8 +45,8 @@ src/
 | `Esc` | Turn running | No-op (does not cancel; use `Ctrl+C`) |
 | `Esc` `Esc` | Idle, non-empty prompt | Clear prompt (within 800ms; first press shows hint) |
 | `Esc` `Esc` | Idle, empty prompt + messages | Open rewind picker (silent first press) |
-| `Ctrl+M` | Prompt | Toggle multiline mode |
-| `Shift+Enter` | Prompt | Insert newline |
+| `Ctrl+M` | Unobstructed agent screen | Open the model picker |
+| `Shift+Enter` or `Alt+Enter` | Prompt | Insert newline |
 | `/` | Prompt | Start slash command |
 | `@` | Prompt | Start file search |
 | `!` | Prompt (empty) | Enter bash mode |

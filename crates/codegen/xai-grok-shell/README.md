@@ -422,7 +422,7 @@ grok --always-approve --prompt "Format all files"
 | ---------------------------- | ------------------------------- |
 | `Enter`                      | Send message                    |
 | `Shift+Enter` or `Alt+Enter` | Insert newline                  |
-| `Ctrl+M`                     | Toggle multiline input mode     |
+| `Ctrl+M`                     | Open model picker (Agent UI)     |
 | `Ctrl+C` or `Esc`            | Cancel current operation        |
 | `Ctrl+D` or `Ctrl+Q`         | Quit (with confirmation)        |
 | `Ctrl+O`                     | Toggle always-approve mode |
@@ -445,7 +445,6 @@ Type `/` in the input to access commands:
 | `/rewind <prompt>`                 |           | Rewind to a previous prompt (restores files)             |
 | `/compact [context]`               |           | Compact conversation history                             |
 | `/always-approve [on\|off]`        | `/yolo`   | Toggle auto-approve mode                                 |
-| `/multiline`                       | `/ml`     | Toggle multiline input mode                              |
 | `/memory [workspace\|global] <text>` |         | Append text to a memory file (requires `--experimental-memory`) |
 | `/flush`                           |           | Save current session knowledge to memory now             |
 | `/skills [name]`                   |           | List skills or inject a skill into context               |

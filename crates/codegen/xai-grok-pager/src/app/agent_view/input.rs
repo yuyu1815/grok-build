@@ -7,7 +7,7 @@ use super::paste::paste_key_tests;
 #[cfg(test)]
 use super::test_fixtures;
 use super::{
-    AgentPane, AgentView, CtaPhase, InputMode, MULTI_CLICK_TIMEOUT_MS, PromptInputMode,
+    AgentPane, AgentView, CtaPhase, InputMode, MULTI_CLICK_TIMEOUT_MS, PromptInputMode, PromptMode,
     active_contexts_for_pane, format_key_for_log, is_link_modifier_for_key,
     is_mouse_reporting_toggle_chord, resolve_action,
 };
@@ -219,6 +219,66 @@ impl AgentView {
         }
         false
     }
+    /// Whether Ctrl+M is currently shadowed by a modal, overlay, picker-like
+    /// pane state, or special foreground composer. Running turns and pending
+    /// model switches are deliberately absent: they do not obstruct opening
+    /// the models picker.
+    fn ctrl_m_obstructed(&self) -> bool {
+        let pane_input_active = match self.active_pane {
+            AgentPane::Todo => {
+                self.todo.list_state.input_mode().is_some()
+                    || self.todo.list_state.matcher().is_some()
+                    || self.todo.list_state.visual_mode
+            }
+            AgentPane::Tasks => {
+                self.tasks.list_state.input_mode().is_some()
+                    || self.tasks.list_state.matcher().is_some()
+                    || self.tasks.list_state.visual_mode
+            }
+            AgentPane::Queue => {
+                self.queue.list_state.input_mode().is_some()
+                    || self.queue.list_state.matcher().is_some()
+                    || self.queue.list_state.visual_mode
+            }
+            AgentPane::Catalog => {
+                self.catalog.list_state.input_mode().is_some()
+                    || self.catalog.list_state.matcher().is_some()
+                    || self.catalog.list_state.visual_mode
+            }
+            AgentPane::Prompt | AgentPane::Scrollback => false,
+        };
+
+        self.active_subagent.is_some()
+            || self.image_viewer.is_some()
+            || self.video_viewer.is_some()
+            || self.inline_video.is_some()
+            || self.gboom.is_some()
+            || self.show_goal_detail
+            || self.btw_state.is_some()
+            || self.line_viewer.is_some()
+            || self.extensions_modal.is_some()
+            || self.persona_detail.is_some()
+            || self.agents_modal.is_some()
+            || self.block_viewer.is_some()
+            || self.persistent_text_selection.is_some()
+            || self.highlighted_link_idx.is_some()
+            || self.timeline_hover_preview.is_some()
+            || self.active_modal.is_some()
+            || !self.permission_queue.is_empty()
+            || self.plan_approval_view.is_some()
+            || self.rewind_state.is_some()
+            || self.inline_edit.is_some()
+            || self.jump_state.is_some()
+            || self.cancel_turn_view.is_some()
+            || self.question_view.is_some()
+            || self.scrollback_search.is_some()
+            || self.prompt.any_dropdown_open()
+            || self.prompt_mode != PromptMode::Normal
+            || self.prompt_input_mode != PromptInputMode::Normal
+            || self.is_casual_commenting()
+            || pane_input_active
+    }
+
     /// Handle a terminal event when this agent view is active.
     ///
     /// Routes key events through three levels:
@@ -336,6 +396,24 @@ impl AgentView {
                 self.clear_stuck_scrollback_drag();
             }
         }
+
+        // Ctrl+M is agent-wide rather than prompt-local. Route the ordinary
+        // unobstructed case through Action dispatch, and consume it everywhere
+        // a foreground UI already owns input. ModelsPicker is the one modal
+        // that handles Ctrl+M itself so the same chord closes it.
+        if let Event::Key(key) = ev
+            && key.kind != KeyEventKind::Release
+            && key!('m', CONTROL).matches(key)
+        {
+            if matches!(self.active_modal, Some(ActiveModal::ModelsPicker { .. })) {
+                return self.handle_modal_key(key);
+            }
+            if self.ctrl_m_obstructed() {
+                return InputOutcome::Changed;
+            }
+            return InputOutcome::Action(Action::OpenModelsPicker);
+        }
+
         if let Some(ref child_sid) = self.active_subagent.clone() {
             if let Event::Key(key) = ev
                 && key.kind != KeyEventKind::Release
@@ -1279,11 +1357,14 @@ impl AgentView {
 }
 #[cfg(test)]
 mod command_palette_input_default_tests {
+    use super::AgentPane;
     use super::test_fixtures::make_agent;
     use crate::actions::{ActionId, ActionRegistry};
     use crate::app::actions::Action;
+    use crate::app::agent::AgentState;
     use crate::app::app_view::InputOutcome;
     use crate::views::modal::ActiveModal;
+    use crate::views::model_picker::ModelPicker;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     /// Type-to-find: the command palette opens directly in INPUT mode
     /// (`search_active = true`) so a letter filters immediately. Under vim, Esc
@@ -1301,21 +1382,98 @@ mod command_palette_input_default_tests {
         );
     }
 
-    #[test]
-    fn ctrl_m_routes_through_open_models_picker_action() {
-        let mut agent = make_agent();
-        let outcome = agent.handle_input(
+    fn ctrl_m(agent: &mut super::AgentView) -> InputOutcome {
+        agent.handle_input(
             &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)),
             &ActionRegistry::defaults(),
-        );
+        )
+    }
+
+    fn assert_opens_from_pane(pane: AgentPane) {
+        let mut agent = make_agent();
+        agent.set_active_pane(pane, true);
+        let outcome = ctrl_m(&mut agent);
         assert!(matches!(
             outcome,
             InputOutcome::Action(Action::OpenModelsPicker)
         ));
         assert!(
             agent.active_modal.is_none(),
-            "the keybinding handler must not open the legacy model ArgPicker directly"
+            "the keybinding handler must route through dispatch rather than construct a picker"
         );
+    }
+
+    #[test]
+    fn ctrl_m_routes_through_open_models_picker_action_from_all_normal_panes() {
+        for pane in [
+            AgentPane::Prompt,
+            AgentPane::Scrollback,
+            AgentPane::Todo,
+            AgentPane::Tasks,
+            AgentPane::Queue,
+            AgentPane::Catalog,
+        ] {
+            assert_opens_from_pane(pane);
+        }
+    }
+
+    #[test]
+    fn ctrl_m_open_is_not_guarded_by_running_or_model_switch_pending() {
+        let mut agent = make_agent();
+        agent.session.state = AgentState::TurnRunning;
+        assert!(matches!(
+            ctrl_m(&mut agent),
+            InputOutcome::Action(Action::OpenModelsPicker)
+        ));
+
+        let mut agent = make_agent();
+        agent.session.model_switch_pending = true;
+        assert!(matches!(
+            ctrl_m(&mut agent),
+            InputOutcome::Action(Action::OpenModelsPicker)
+        ));
+    }
+
+    #[test]
+    fn ctrl_m_closes_models_picker_without_mutating_prompt() {
+        let mut agent = make_agent();
+        agent.prompt.set_text("keep this draft");
+        agent.prompt.set_cursor(4);
+        let cursor = agent.prompt.cursor();
+        agent.active_modal = Some(ActiveModal::ModelsPicker {
+            picker: ModelPicker::new(&agent.session.models, false),
+        });
+
+        assert!(matches!(ctrl_m(&mut agent), InputOutcome::Changed));
+        assert!(agent.active_modal.is_none());
+        assert_eq!(agent.prompt.text(), "keep this draft");
+        assert_eq!(agent.prompt.cursor(), cursor);
+    }
+
+    #[test]
+    fn ctrl_m_is_consumed_by_other_modal_and_foreground_input() {
+        let mut modal_agent = make_agent();
+        let _ = modal_agent.handle_agent_action(ActionId::CommandPalette);
+        assert!(matches!(ctrl_m(&mut modal_agent), InputOutcome::Changed));
+        assert!(matches!(
+            modal_agent.active_modal,
+            Some(ActiveModal::CommandPalette { .. })
+        ));
+
+        let mut special_prompt = make_agent();
+        special_prompt.prompt_input_mode = super::PromptInputMode::Bash;
+        assert!(matches!(ctrl_m(&mut special_prompt), InputOutcome::Changed));
+        assert!(special_prompt.active_modal.is_none());
+
+        let mut dropdown_agent = make_agent();
+        dropdown_agent.set_active_pane(AgentPane::Prompt, true);
+        dropdown_agent.prompt.set_text("/");
+        dropdown_agent
+            .prompt
+            .refresh_slash(&dropdown_agent.session.models);
+        assert!(dropdown_agent.prompt.slash_open());
+        assert!(matches!(ctrl_m(&mut dropdown_agent), InputOutcome::Changed));
+        assert!(dropdown_agent.active_modal.is_none());
     }
 }
 #[cfg(test)]

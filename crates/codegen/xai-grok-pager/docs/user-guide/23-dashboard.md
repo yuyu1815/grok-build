@@ -87,7 +87,7 @@ the row list instead of being dispatched.
 | `Enter` (on a section title) | Toggle the section collapsed / expanded |
 | `Enter` (empty reply) | Open the selected agent's conversation full-screen (details view) |
 | `Ctrl+S` | Send the peek reply AND open the agent (or dispatch + attach a new session) |
-| `Shift+Enter` / `Alt+Enter` | Insert a newline in the reply / dispatch input (multiline compose) |
+| `Shift+Enter` / `Alt+Enter` | Insert a newline in the reply / dispatch input |
 | `1`–`9` | Answer a pending permission / ask question (when the peek shows options) |
 | `Enter` (typed reply) | Send / queue the reply to the selected agent |
 | `/` | Types a literal `/` into the prompt |
@@ -240,7 +240,7 @@ peek's reply **talks to the selected agent**:
   so it sends after the current turn finishes (the same queue/drain
   behaviour as the agent view's own prompt). `Ctrl+S` replies AND
   opens the agent's detail view; `Shift+Enter` / `Alt+Enter` insert a
-  newline (multiline compose) and the reply **grows in height** to fit
+  newline and the reply **grows in height** to fit
   the draft (up to a cap, then it scrolls).
 - With an **empty** reply, `Enter` opens the agent.
 - **`↑`/`↓` move the caret within the reply** once it has content (so you

@@ -71,13 +71,13 @@ pub enum PromptEvent {
 
 /// Result of routing an Enter-family key event through a submittable prompt.
 ///
-/// Used by [`PromptWidget::route_enter`] to centralize the three behaviors
-/// that every "bare Enter submits" context needs: Apple Terminal CoreGraphics
-/// modifier rescue, backslash continuation, and file-search guard.
+/// Used by [`PromptWidget::route_enter`] to centralize the behaviors that
+/// every "bare Enter submits" context needs: Apple Terminal CoreGraphics
+/// modifier rescue and the file-search guard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnterOutcome {
-    /// A newline was inserted (Apple Terminal modifier rescue or backslash
-    /// continuation). The caller should return `InputOutcome::Changed`.
+    /// A newline was inserted by Apple Terminal modifier rescue. The caller
+    /// should return `InputOutcome::Changed`.
     NewlineInserted,
     /// Bare Enter with no active dropdown — the caller should perform its
     /// submit/save/advance action.
@@ -284,8 +284,6 @@ pub struct PromptInfo<'a> {
     pub model_name: &'a str,
     /// Flags to display on the left side, joined by " · " (e.g., "plan", "always-approve").
     pub flags: &'a [PromptFlag<'a>],
-    /// Whether multiline mode is active (shown right-aligned).
-    pub multiline: bool,
     /// Optional usage warning displayed right-aligned (e.g. "5% usage left").
     pub usage_warning: Option<&'a str>,
     /// When true the warning uses the yellow warning color (<=5% left);
@@ -2044,26 +2042,12 @@ impl PromptWidget {
         });
     }
 
-    /// If the character immediately before the cursor is `\`, replace it
-    /// with a newline and return `true` (continuation applied).  Returns
-    /// `false` when no continuation is needed.
-    fn apply_backslash_continuation(&mut self) -> bool {
-        let cursor = self.textarea.cursor();
-        if cursor > 0 && self.textarea.text().as_bytes().get(cursor - 1) == Some(&b'\\') {
-            self.textarea.delete_backward(1);
-            self.textarea.insert_str("\n");
-            return true;
-        }
-        false
-    }
-
     /// Shared Enter-routing for any context where bare Enter submits.
     ///
-    /// Centralizes three behaviors that every submittable prompt needs:
+    /// Centralizes two behaviors that every submittable prompt needs:
     /// 1. File-search guard (Enter accepts dropdown selection, not submit)
     /// 2. Apple Terminal CoreGraphics modifier rescue (Shift+Enter arrives
     ///    as bare Enter on terminals without Kitty protocol)
-    /// 3. Backslash continuation (`\` + Enter → newline)
     ///
     /// Callers match on the result:
     /// - `NewlineInserted` → return `InputOutcome::Changed`
@@ -2085,15 +2069,6 @@ impl PromptWidget {
             return EnterOutcome::NewlineInserted;
         }
 
-        // Backslash continuation: if the character before the cursor is `\`,
-        // replace it with a newline.
-        if key.code == KeyCode::Enter
-            && key.modifiers.is_empty()
-            && self.apply_backslash_continuation()
-        {
-            return EnterOutcome::NewlineInserted;
-        }
-
         // Bare Enter → submit.
         if key.code == KeyCode::Enter && key.modifiers.is_empty() {
             return EnterOutcome::Submit;
@@ -2108,17 +2083,10 @@ impl PromptWidget {
     ///
     /// Called when the `SendPrompt` action is triggered (via action registry).
     /// Returns `Some(text)` if the prompt was submitted, `None` if rejected
-    /// (empty text, backslash continuation).
+    /// because it is empty or whitespace-only.
     ///
-    /// Handles:
-    /// - Empty/whitespace rejection → returns None
-    /// - Backslash continuation: trailing `\` before cursor → replaces with newline
-    /// - On success: returns the text and clears the widget
+    /// On success, returns the text for the caller to submit.
     pub fn try_send(&mut self) -> Option<String> {
-        if self.apply_backslash_continuation() {
-            return None;
-        }
-
         let text = self.textarea.text().to_string();
 
         // Reject empty/whitespace-only
@@ -2135,11 +2103,6 @@ impl PromptWidget {
     pub fn can_send(&self) -> bool {
         let text = self.textarea.text();
         if text.trim().is_empty() {
-            return false;
-        }
-        // Check backslash continuation — trailing `\` means send would do continuation, not send
-        let cursor = self.textarea.cursor();
-        if cursor > 0 && text.as_bytes().get(cursor - 1) == Some(&b'\\') {
             return false;
         }
         true
@@ -3297,7 +3260,7 @@ impl PromptWidget {
         Style::default().fg(fg).bg(bg)
     }
 
-    /// Render the info line: left-aligned `model_name · flag1 · flag2`, right-aligned `multiline`.
+    /// Render the info line: left-aligned `model_name · flag1 · flag2`.
     ///
     /// `pub(crate)` so the dashboard's dispatch box (which draws its own
     /// chrome) can paint an identical model + mode indicator on its bottom
@@ -3377,32 +3340,11 @@ impl PromptWidget {
         // Trailing pad mirrors the leading pad above.
         left_spans.push(Span::styled(" ", pad_style));
 
-        // Build right-side spans: "multiline" indicator.
-        let mut right_spans: Vec<Span<'static>> = Vec::new();
-        if info.multiline {
-            right_spans.push(Span::styled("multiline", flag_style));
-        }
-
-        if !right_spans.is_empty() {
-            // Pad the right side so it doesn't sit flush against the ╯ corner.
-            right_spans.push(Span::styled(" ", pad_style));
-            let right_line = Line::from(right_spans);
-            let right_w = right_line.width() as u16;
-            let left_line = Line::from(left_spans);
-            let left_w = (left_line.width() as u16).min(area.width.saturating_sub(right_w + 1));
-            // Right-align both parts: [left][gap][right]
-            let total_w = left_w + 1 + right_w; // 1 for gap
-            let x = area.x + area.width.saturating_sub(total_w);
-            buf.set_line_safe(x, area.y, &left_line, left_w);
-            let rx = area.x + area.width.saturating_sub(right_w);
-            buf.set_line_safe(rx, area.y, &right_line, right_w);
-        } else {
-            // Right-align: clamp to area width so text doesn't overflow borders.
-            let line = Line::from(left_spans);
-            let text_w = (line.width() as u16).min(area.width);
-            let x = area.x + area.width.saturating_sub(text_w);
-            buf.set_line_safe(x, area.y, &line, text_w);
-        }
+        // Right-align: clamp to area width so text doesn't overflow borders.
+        let line = Line::from(left_spans);
+        let text_w = (line.width() as u16).min(area.width);
+        let x = area.x + area.width.saturating_sub(text_w);
+        buf.set_line_safe(x, area.y, &line, text_w);
     }
 }
 

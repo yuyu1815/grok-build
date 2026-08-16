@@ -425,7 +425,9 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_priority: None,
             hint_key_display: None,
             requires_confirmation: false,
-            long_help: None,
+            long_help: Some(
+                "Submits the current composer text. Bare Enter always sends when idle or queues while the agent is running.\nUse Shift+Enter or Alt+Enter to insert a newline; pasted multiline text is preserved.",
+            ),
         },
         ActionDef {
             id: ActionId::FocusPrompt,
@@ -671,21 +673,6 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
         // Prompt history has no key chord (Ctrl+R is deliberately unbound):
         // `/history` opens the search panel; Up on an empty prompt browses.
         ActionDef {
-            id: ActionId::ToggleMultiline,
-            label: "multiline",
-            description: "Toggle multiline",
-            default_key: key!('m', CONTROL),
-            alt_keys: vec![],
-            category: Category::Input,
-            context: When::PromptFocused,
-            hint_priority: None,
-            hint_key_display: None,
-            requires_confirmation: false,
-            long_help: Some(
-                "Toggles a persistent multi-line prompt so the editor stays expanded for composing longer messages.\nInsert newlines with Shift+Enter or Alt+Enter (or a trailing backslash); bare Enter still sends.\nCtrl+M toggles multiline in the prompt; off the prompt it opens the model picker.",
-            ),
-        },
-        ActionDef {
             id: ActionId::BashMode,
             label: "shell",
             description: "Shell mode (type ! on empty prompt)",
@@ -804,7 +791,7 @@ pub fn default_actions(mouse_reporting_toggle_enabled: bool) -> Vec<ActionDef> {
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Opens the model picker to switch the model for this session; the choice applies to later turns.\nBound to Ctrl+M, but while the prompt is focused that chord toggles multiline instead.\nReach it from the scrollback or the command palette.",
+                "Opens the model picker to switch the model for this session; the choice applies to later turns.\nBound to Ctrl+M throughout the unobstructed agent screen, including the prompt, scrollback, and normal panes. Press Ctrl+M again to close without applying the highlighted selection.\nThe chord is consumed while another modal, overlay, confirmation, search, dropdown, popup, or foreground input is active, and is a no-op on the dashboard.\nIt is also available through /models and the command palette.",
             ),
         },
         ActionDef {

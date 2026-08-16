@@ -327,7 +327,6 @@ pub fn render_dashboard(
         // replaces the dispatch box, which would otherwise own the overlay).
         let voice_listening = state.voice_listening;
         let voice_interim = state.voice_interim.clone();
-        let multiline = state.multiline_mode;
         let peeked_row = state.peek.as_ref().map(|p| p.row.clone());
         let question_pending = state.peek.as_ref().is_some_and(|p| p.question.is_some());
         let (empty_hint, has_scrollback) = match peeked_row.as_ref() {
@@ -370,7 +369,6 @@ pub fn render_dashboard(
                 &theme,
                 voice_listening,
                 voice_interim.as_deref(),
-                multiline,
                 Some(layout.list).filter(|r| r.area() > 0),
                 live_tail,
                 empty_hint,
@@ -2699,14 +2697,13 @@ fn paint_dispatch_config_badge(
         DashboardDispatchMode::Normal => {}
     }
 
-    if model_label.is_empty() && flags.is_empty() && !state.multiline_mode {
+    if model_label.is_empty() && flags.is_empty() {
         return;
     }
 
     let info = PromptInfo {
         model_name: &model_label,
         flags: &flags,
-        multiline: state.multiline_mode,
         usage_warning: None,
         usage_warning_critical: false,
     };
@@ -3407,18 +3404,7 @@ fn render_footer(
     // newline). Hardcoded in the dispatch / peek key handlers, not a
     // registry action, so the chip is built directly.
     let send_open = key!('s', CONTROL);
-    // Multiline: bare Enter inserts a newline; Shift+Enter (or Alt+Enter
-    // when the terminal can't distinguish Shift+Enter) sends — same as
-    // the agent prompt keybar.
-    let send_key = if state.multiline_mode {
-        if crate::terminal::terminal_context().shift_enter_unavailable() {
-            key!(Enter, ALT)
-        } else {
-            key!(Enter, SHIFT)
-        }
-    } else {
-        enter
-    };
+    let send_key = enter;
     let stop = resolve(crate::actions::ActionId::DashboardStop, key!('x', CONTROL));
     let help = resolve(
         crate::actions::ActionId::DashboardShortcutsHelp,
@@ -3427,8 +3413,8 @@ fn render_footer(
 
     let help_hint = HintItem::new(help, "shortcuts");
 
-    // Submit chord is `send_key` (Enter, or Shift/Alt+Enter in multiline).
-    // Ctrl+S is send+open. Empty draft: create/open on the submit chord;
+    // Submit chord is bare Enter. Ctrl+S is send+open. Empty draft:
+    // create/open on Enter;
     // non-empty: send.
     let button_focused = state.new_agent_button_focused;
     let row_selected = state.selected.is_some();
@@ -8554,14 +8540,12 @@ mod tests {
         );
     }
 
-    /// Multiline compose swaps the submit chord in the footer so it matches
-    /// the Enter ↔ Shift/Alt+Enter behavior (agent keybar parity).
+    /// A multiline draft still advertises bare Enter as send.
     #[test]
-    fn render_footer_multiline_mode_send_uses_shift_or_alt_enter() {
+    fn render_footer_multiline_draft_uses_bare_enter_send() {
         let mut buf = Buffer::empty(Rect::new(0, 0, 200, 1));
         let theme = Theme::current();
         let mut state = DashboardState::new();
-        state.multiline_mode = true;
         state.dispatch.set_text("multi\nline draft");
         let registry = crate::actions::ActionRegistry::defaults();
         render_footer(
@@ -8576,49 +8560,12 @@ mod tests {
         );
         let content = buf_to_text(&buf);
         assert!(
-            content.contains("Shift+Enter:send") || content.contains("Alt+Enter:send"),
-            "multiline footer must advertise Shift/Alt+Enter as send, got: {content:?}",
-        );
-        // Bare Enter:send would appear as "  Enter:send" (footer pad); the
-        // modified chords contain the substring "Enter:send" so avoid that.
-        assert!(
-            !content.contains("  Enter:send"),
-            "multiline footer must not claim bare Enter:send, got: {content:?}",
+            content.contains("Enter:send"),
+            "multiline draft footer must advertise bare Enter as send, got: {content:?}",
         );
         assert!(
             content.contains(":send+open"),
             "Ctrl+S send+open must remain, got: {content:?}",
-        );
-    }
-
-    /// Empty draft under multiline: create is on the submit chord, not bare Enter.
-    #[test]
-    fn render_footer_multiline_empty_create_uses_shift_or_alt_enter() {
-        let mut buf = Buffer::empty(Rect::new(0, 0, 200, 1));
-        let theme = Theme::current();
-        let mut state = DashboardState::new();
-        state.multiline_mode = true;
-        assert!(state.new_agent_button_focused);
-        assert!(state.dispatch.text().trim().is_empty());
-        let registry = crate::actions::ActionRegistry::defaults();
-        render_footer(
-            &mut buf,
-            Rect::new(0, 0, 200, 1),
-            &theme,
-            &state,
-            &registry,
-            None,
-            false,
-            None,
-        );
-        let content = buf_to_text(&buf);
-        assert!(
-            content.contains("Shift+Enter:create") || content.contains("Alt+Enter:create"),
-            "multiline empty footer must advertise Shift/Alt+Enter as create, got: {content:?}",
-        );
-        assert!(
-            !content.contains("  Enter:create"),
-            "multiline empty footer must not claim bare Enter:create, got: {content:?}",
         );
     }
 

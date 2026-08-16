@@ -86,7 +86,6 @@ impl AgentView {
             active_pane: ActivePane::Prompt,
             prompt_mode: PromptMode::Normal,
             prompt_input_mode: PromptInputMode::Normal,
-            multiline_mode: false,
             vim_mode: crate::appearance::cache::load_vim_mode(),
             input_mode: InputMode::Vim,
             bash_turn: false,

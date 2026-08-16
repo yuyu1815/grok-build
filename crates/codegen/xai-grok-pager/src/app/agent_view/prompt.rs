@@ -147,9 +147,7 @@ impl AgentView {
         // text only — it does NOT execute commands.
         //
         // `slash_accepted_send` is set when Enter accepts a no-arg slash
-        // command and needs to fall through to the send path — this flag
-        // bypasses the multiline-mode Enter→newline swap so the command
-        // is actually sent.
+        // command and needs to fall through to the send path.
         let mut slash_accepted_send = false;
         if self.prompt.slash_open() && !self.prompt.file_search_visible() {
             if prompt_paging && registry.matches_id(ActionId::PageUp, key) {
@@ -505,20 +503,7 @@ impl AgentView {
         // `CycleMode` ActionDef carries all encodings; the registry lookup
         // below resolves it (same as `DashboardCycleMode`).
 
-        // 2. Multiline mode: Shift+Enter (or Alt+Enter) sends.
-        //    This must come BEFORE the action registry lookup so that
-        //    Shift+Enter triggers send instead of inserting a newline.
-        //    Apple Terminal: bare Enter may actually be Cmd/Opt+Enter.
-        if self.multiline_mode && crate::input::is_mod_enter(key) {
-            if let Some(text) = self.prompt.try_send() {
-                let action = self.prompt_input_mode.send_action(text);
-                self.prompt_input_mode = PromptInputMode::Normal;
-                return InputOutcome::Action(action);
-            }
-            return InputOutcome::Changed;
-        }
-
-        // 3. Check ActionRegistry for prompt-scoped actions.
+        // 2. Check ActionRegistry for prompt-scoped actions.
         //    SendPrompt is routed here — the widget's try_send() applies guards.
         if let Some(action_id) = registry.lookup(key, When::PromptFocused) {
             match action_id {
@@ -536,28 +521,6 @@ impl AgentView {
                         return InputOutcome::Changed;
                     }
 
-                    // Multiline mode: bare Enter inserts a newline instead of sending.
-                    // Exceptions:
-                    //  - slash_accepted_send: slash dropdown Enter accepted a no-arg
-                    //    command and fell through — must send, not insert newline.
-                    //  - bash mode: Enter should always send.
-                    //  - empty composer + mid-turn queue: force-send the top row
-                    //    (send-now discoverability). Inserting a blank line on an
-                    //    empty prompt is never useful here; same path as normal mode.
-                    if self.multiline_mode
-                        && self.prompt_input_mode != PromptInputMode::Bash
-                        && !slash_accepted_send
-                    {
-                        if matches!(self.prompt_mode, PromptMode::Normal)
-                            && self.prompt.text().trim().is_empty()
-                            && self.session.state.is_turn_running()
-                            && let Some(outcome) = self.try_send_now_queued_from_prompt()
-                        {
-                            return outcome;
-                        }
-                        self.prompt.textarea.insert_str("\n");
-                        return InputOutcome::Changed;
-                    }
                     if let Some(text) = self.prompt.try_send() {
                         // Remember + slash_accepted_send: treat as normal SendPrompt
                         // (the slash path accepted a no-arg command that fell through).
@@ -572,15 +535,11 @@ impl AgentView {
                         self.prompt_input_mode = PromptInputMode::Normal;
                         return InputOutcome::Action(action);
                     }
-                    // Empty (or backslash continuation). Mid-turn + a queued
-                    // follow-up: bare Enter force-sends the top queue row so
-                    // users discover send-now without learning a chord.
-                    // Skip while editing a queued row (edit-mode Enter is
-                    // handled earlier for non-empty; empty must stay a no-op).
-                    // Guard on an actually-empty composer: try_send() also
-                    // returns None after a backslash continuation, which leaves
-                    // the (non-empty) draft in place — that Enter must only
-                    // insert the newline, not fire a queued follow-up.
+                    // Empty composer. Mid-turn + a queued follow-up: bare Enter
+                    // force-sends the top queue row so users discover send-now
+                    // without learning a chord. Skip while editing a queued row
+                    // (edit-mode Enter is handled earlier for non-empty; empty
+                    // must stay a no-op).
                     if matches!(self.prompt_mode, PromptMode::Normal)
                         && self.prompt.text().trim().is_empty()
                         && self.session.state.is_turn_running()
@@ -588,8 +547,7 @@ impl AgentView {
                     {
                         return outcome;
                     }
-                    // try_send() returned None (empty, backslash continuation)
-                    // → backslash continuation mutates widget, need redraw
+                    // try_send() returned None for an empty/whitespace-only draft.
                     return InputOutcome::Changed;
                 }
                 ActionId::InterjectPrompt => {
@@ -625,9 +583,6 @@ impl AgentView {
                         return outcome;
                     }
                     return InputOutcome::Changed;
-                }
-                ActionId::ToggleMultiline => {
-                    return InputOutcome::Action(Action::SetMultilineMode(!self.multiline_mode));
                 }
                 other => {
                     if let Some(outcome) = resolve_action(Some(other)) {
@@ -994,6 +949,36 @@ impl AgentView {
 }
 
 #[cfg(test)]
+mod fixed_enter_tests {
+    use super::*;
+
+    #[test]
+    fn bare_enter_sends_multiline_draft() {
+        let mut agent = super::test_fixtures::make_agent();
+        agent.prompt.set_text("first\nsecond");
+        let outcome =
+            agent.handle_prompt_key_for_test(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SendPrompt(ref text)) if text == "first\nsecond"
+        ));
+    }
+
+    #[test]
+    fn shift_and_alt_enter_insert_newlines() {
+        for modifiers in [KeyModifiers::SHIFT, KeyModifiers::ALT] {
+            let mut agent = super::test_fixtures::make_agent();
+            agent.prompt.set_text("draft");
+            agent.prompt.set_cursor(agent.prompt.text().len());
+            let outcome =
+                agent.handle_prompt_key_for_test(&KeyEvent::new(KeyCode::Enter, modifiers));
+            assert!(matches!(outcome, InputOutcome::Changed));
+            assert_eq!(agent.prompt.text(), "draft\n");
+        }
+    }
+}
+
+#[cfg(test)]
 mod shift_tab_cycle_mode_tests {
     use super::*;
     use crate::app::app_view::InputOutcome;
@@ -1013,17 +998,16 @@ mod shift_tab_cycle_mode_tests {
         }
     }
 
-    /// `is_mod_enter` must not treat Shift+Tab as send when multiline is on.
+    /// Shift+Tab cycles mode without consuming a non-empty draft.
     #[test]
-    fn multiline_shift_tab_still_cycles_mode_with_non_empty_draft() {
+    fn shift_tab_still_cycles_mode_with_non_empty_draft() {
         for shortcut in shift_tab_keys() {
             let mut agent = super::test_fixtures::make_agent();
-            agent.multiline_mode = true;
             agent.prompt.set_text("draft text");
             let outcome = agent.handle_prompt_key_for_test(&shortcut.to_key_event());
             assert!(
                 matches!(outcome, InputOutcome::Action(Action::CycleMode)),
-                "multiline + {shortcut:?} must CycleMode, not send, got {outcome:?}",
+                "{shortcut:?} must CycleMode, not send, got {outcome:?}",
             );
             assert_eq!(
                 agent.prompt.text(),

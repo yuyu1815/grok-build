@@ -5,9 +5,42 @@
 //! way to check their environment and see fix instructions.
 
 use crate::slash::command::{CommandExecCtx, CommandResult, SlashCommand};
-use crate::terminal::TerminalName;
+use crate::terminal::{TerminalContext, TerminalName};
 
 pub struct TerminalSetupCommand;
+
+fn format_newline_env_line(
+    ctx: &TerminalContext,
+    shift_enter_unavailable: bool,
+    wezterm_kkp_off: bool,
+    windows_terminal_needs_alt_enter_binding: bool,
+) -> Option<String> {
+    if !shift_enter_unavailable || wezterm_kkp_off {
+        return None;
+    }
+
+    let detail = if ctx.vte_version.is_some() || ctx.brand == TerminalName::Vte {
+        match ctx.vte_version.as_deref() {
+            Some(v) => format!("VTE {v}; need >= 8200 for Shift+Enter"),
+            None => "legacy VTE; need VTE >= 0.82 for Shift+Enter".to_owned(),
+        }
+    } else if matches!(
+        ctx.brand,
+        TerminalName::VsCode | TerminalName::Cursor | TerminalName::Windsurf | TerminalName::Zed
+    ) {
+        format!("{}: xterm.js can't distinguish Shift+Enter", ctx.brand)
+    } else if ctx.brand == TerminalName::WindowsTerminal {
+        "Windows Terminal + Unix PTY: Shift+Enter == Enter".to_owned()
+    } else {
+        "no Kitty keyboard protocol; Shift+Enter == Enter".to_owned()
+    };
+    let setup = if windows_terminal_needs_alt_enter_binding {
+        "; verify settings.json binding"
+    } else {
+        ""
+    };
+    Some(format!("  newline      Alt+Enter ({detail}{setup})\n"))
+}
 
 impl SlashCommand for TerminalSetupCommand {
     fn name(&self) -> &str {
@@ -51,6 +84,17 @@ impl SlashCommand for TerminalSetupCommand {
         );
         let wezterm_kkp_off = wezterm_warning.is_some();
         warnings.extend(wezterm_warning);
+        // Windows Terminal + Unix PTY (notably WSL): Shift+Enter needs the
+        // Alt+Enter fallback, but WT's stock fullscreen binding consumes it.
+        // Keep this in on-demand diagnostics, alongside the equivalent
+        // WezTerm setup guidance, rather than adding another startup banner.
+        let windows_terminal_alt_enter_warning =
+            crate::diagnostics::windows_terminal_alt_enter_warning(
+                ctx,
+                crate::host::HostOs::current(),
+            );
+        let windows_terminal_needs_alt_enter_binding = windows_terminal_alt_enter_warning.is_some();
+        warnings.extend(windows_terminal_alt_enter_warning);
         // Color not in collect_startup_warnings (noisy on limited terminals).
         let color_level = crate::theme::color_support::get();
         warnings.extend(crate::diagnostics::color_support_warning(
@@ -112,29 +156,18 @@ impl SlashCommand for TerminalSetupCommand {
 
         // Some terminals can't distinguish Shift+Enter from bare Enter at
         // the byte level because the Kitty keyboard protocol isn't
-        // negotiated (VTE < 0.82, or VS Code's xterm.js which mis-encodes
-        // shifted keys). Point users at Alt+Enter, which is reliably
-        // delivered as ESC+CR. Suppressed when the WezTerm warning fired:
-        // stock WezTerm binds Alt+Enter to ToggleFullScreen, so advertising
-        // it would contradict that warning's `\`+Enter guidance.
-        if ctx.shift_enter_unavailable() && !wezterm_kkp_off {
-            let detail = if ctx.vte_version.is_some() || ctx.brand == TerminalName::Vte {
-                match ctx.vte_version.as_deref() {
-                    Some(v) => format!("VTE {v}; need >= 8200 for Shift+Enter"),
-                    None => "legacy VTE; need VTE >= 0.82 for Shift+Enter".to_owned(),
-                }
-            } else if matches!(
-                ctx.brand,
-                TerminalName::VsCode
-                    | TerminalName::Cursor
-                    | TerminalName::Windsurf
-                    | TerminalName::Zed
-            ) {
-                format!("{}: xterm.js can't distinguish Shift+Enter", ctx.brand)
-            } else {
-                "no Kitty keyboard protocol; Shift+Enter == Enter".to_owned()
-            };
-            out.push_str(&format!("  newline      Alt+Enter ({detail})\n"));
+        // negotiated (VTE < 0.82, VS Code's xterm.js, or Windows Terminal
+        // with Unix PTY input). Point users at the approved Alt+Enter newline
+        // chord. Suppressed when the WezTerm warning fired because its setup
+        // path differs; Windows Terminal keeps the row and labels the required
+        // binding change, with the exact fix in the issue below.
+        if let Some(line) = format_newline_env_line(
+            ctx,
+            ctx.shift_enter_unavailable(),
+            wezterm_kkp_off,
+            windows_terminal_needs_alt_enter_binding,
+        ) {
+            out.push_str(&line);
         }
 
         // -- Clipboard --
@@ -195,5 +228,45 @@ impl SlashCommand for TerminalSetupCommand {
         }
 
         CommandResult::Message(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn windows_terminal_ctx() -> TerminalContext {
+        TerminalContext {
+            brand: TerminalName::WindowsTerminal,
+            env_brand: TerminalName::WindowsTerminal,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn windows_terminal_unix_pty_newline_row_requires_binding() {
+        let line = format_newline_env_line(&windows_terminal_ctx(), true, false, true)
+            .expect("Windows Terminal + Unix PTY must show the fallback row");
+        assert_eq!(
+            line,
+            "  newline      Alt+Enter (Windows Terminal + Unix PTY: Shift+Enter == Enter; verify settings.json binding)\n"
+        );
+    }
+
+    #[test]
+    fn native_windows_terminal_newline_row_stays_hidden() {
+        assert!(
+            format_newline_env_line(&windows_terminal_ctx(), false, false, false).is_none(),
+            "native Windows Terminal keeps Shift+Enter and must not advertise the fallback"
+        );
+    }
+
+    #[test]
+    fn wezterm_warning_suppresses_generic_newline_row() {
+        let ctx = TerminalContext {
+            brand: TerminalName::WezTerm,
+            ..Default::default()
+        };
+        assert!(format_newline_env_line(&ctx, true, true, false).is_none());
     }
 }

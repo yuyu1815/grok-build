@@ -921,7 +921,6 @@ pub fn build_hints(
     selected_supports_fullscreen: bool,
     can_demote: bool,
     selected_can_kill: bool,
-    multiline_mode: bool,
     vim_mode: bool,
     is_subagent_view: bool,
     is_turn_running: bool,
@@ -981,24 +980,17 @@ pub fn build_hints(
         }
         ActivePane::Prompt => {
             let mut hints = Vec::new();
-            let newline_key = if shift_enter_unavailable {
-                crate::key!(Enter, ALT)
-            } else {
-                crate::key!(Enter, SHIFT)
-            };
             let submit_label = if is_turn_running { "queue" } else { "send" };
             if let Some(key) = registry.key_for(ActionId::SendPrompt) {
                 if prompt.paste_element_at_cursor().is_some() {
                     hints.push(HintItem::new(key, "expand"));
-                } else if multiline_mode && prompt.can_send() {
-                    hints.push(HintItem::new(newline_key, submit_label));
                 } else if prompt.can_send() {
                     hints.push(HintItem::new(key, submit_label));
                 } else if is_turn_running && has_queued_follow_up {
                     hints.push(HintItem::new(key, "send now"));
                 }
             }
-            if shift_enter_unavailable && !multiline_mode && prompt.can_send() {
+            if shift_enter_unavailable && prompt.can_send() {
                 hints.push(HintItem::new(crate::key!(Enter, ALT), "newline"));
             }
             if prompt.file_ref_near_cursor() {
@@ -1251,7 +1243,6 @@ mod tests {
             selected_supports_fullscreen,
             false,
             false,
-            false,
             vim_mode,
             false,
             false,
@@ -1281,7 +1272,6 @@ mod tests {
             false,
             None,
             true,
-            false,
             false,
             false,
             true,
@@ -1447,7 +1437,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             vim_mode,
             false,
             false,
@@ -1550,7 +1539,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             true,
             false,
             false,
@@ -1566,14 +1554,10 @@ mod tests {
             "ExitSession (home) must not appear in prompt-focused bar"
         );
     }
-    fn prompt_hints_with_text(
-        multiline_mode: bool,
-        shift_enter_unavailable: bool,
-    ) -> Vec<HintItem> {
-        prompt_hints_with_text_and_turn(multiline_mode, shift_enter_unavailable, false)
+    fn prompt_hints_with_text(shift_enter_unavailable: bool) -> Vec<HintItem> {
+        prompt_hints_with_text_and_turn(shift_enter_unavailable, false)
     }
     fn prompt_hints_with_text_and_turn(
-        multiline_mode: bool,
         shift_enter_unavailable: bool,
         is_turn_running: bool,
     ) -> Vec<HintItem> {
@@ -1594,7 +1578,6 @@ mod tests {
             false,
             false,
             false,
-            multiline_mode,
             true,
             false,
             is_turn_running,
@@ -1608,7 +1591,7 @@ mod tests {
     }
     #[test]
     fn prompt_idle_submit_hint_is_send() {
-        let hints = prompt_hints_with_text_and_turn(false, false, false);
+        let hints = prompt_hints_with_text_and_turn(false, false);
         let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
         assert!(
             labels.contains(&"send") && !labels.contains(&"queue"),
@@ -1617,7 +1600,7 @@ mod tests {
     }
     #[test]
     fn prompt_running_submit_hint_is_queue_and_send_now() {
-        let hints = prompt_hints_with_text_and_turn(false, false, true);
+        let hints = prompt_hints_with_text_and_turn(false, true);
         let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
         assert!(
             labels.contains(&"queue"),
@@ -1632,49 +1615,44 @@ mod tests {
             "mid-turn with composer text must advertise the send-now (interject) chord; got {labels:?}"
         );
     }
-    /// Empty composer + mid-turn queue: bare Enter is send-now in both normal
-    /// and multiline modes (multiline only inserts newline when there is text).
+    /// Empty composer + mid-turn queue: bare Enter advertises send-now.
     #[test]
-    fn prompt_empty_mid_turn_queue_advertises_send_now_including_multiline() {
-        for multiline in [false, true] {
-            let prompt = PromptWidget::default();
-            let registry = ActionRegistry::defaults();
-            let hints = build_hints(
-                ActivePane::Prompt,
-                &prompt,
-                &registry,
-                false,
-                None,
-                None,
-                "expand thinking",
-                false,
-                false,
-                None,
-                false,
-                false,
-                false,
-                multiline,
-                true,
-                false,
-                true,
-                true,
-                false,
-                false,
-                false,
-                false,
-                None,
-            );
-            let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
-            assert!(
-                labels.contains(&"send now"),
-                "empty composer mid-turn with queue must advertise Enter:send now \
-                 (multiline={multiline}); got {labels:?}"
-            );
-        }
+    fn prompt_empty_mid_turn_queue_advertises_send_now() {
+        let prompt = PromptWidget::default();
+        let registry = ActionRegistry::defaults();
+        let hints = build_hints(
+            ActivePane::Prompt,
+            &prompt,
+            &registry,
+            false,
+            None,
+            None,
+            "expand thinking",
+            false,
+            false,
+            None,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            None,
+        );
+        let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
+        assert!(
+            labels.contains(&"send now"),
+            "empty composer mid-turn with queue must advertise Enter:send now; got {labels:?}"
+        );
     }
     #[test]
     fn prompt_legacy_vte_adds_alt_enter_newline_hint() {
-        let hints = prompt_hints_with_text(false, true);
+        let hints = prompt_hints_with_text(true);
         let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
         assert!(
             labels.contains(&"newline"),
@@ -1684,66 +1662,12 @@ mod tests {
     }
     #[test]
     fn prompt_modern_terminal_no_newline_hint() {
-        let hints = prompt_hints_with_text(false, false);
+        let hints = prompt_hints_with_text(false);
         let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
         assert!(
             !labels.contains(&"newline"),
             "modern terminals must not show the legacy-VTE newline hint \
              (Shift+Enter works natively); got {labels:?}"
-        );
-    }
-    #[test]
-    fn prompt_multiline_mode_no_extra_newline_hint() {
-        let hints = prompt_hints_with_text(true, true);
-        let labels: Vec<&str> = hints.iter().map(|h| h.label.as_ref()).collect();
-        assert!(
-            !labels.contains(&"newline"),
-            "multiline mode must not show the legacy-VTE newline hint \
-             (Enter already inserts a newline); got {labels:?}"
-        );
-    }
-    #[test]
-    fn prompt_multiline_send_hint_uses_alt_on_legacy_vte() {
-        use crossterm::event::KeyModifiers;
-        let hints = prompt_hints_with_text(true, true);
-        let send_hint = hints
-            .iter()
-            .find(|h| h.label == "send")
-            .expect("multiline mode with text must show a send hint");
-        let key = send_hint
-            .keys
-            .first()
-            .expect("send hint must have at least one key");
-        assert!(
-            key.modifiers.contains(KeyModifiers::ALT),
-            "legacy VTE multiline send hint must advertise Alt+Enter, \
-             got modifiers {:?}",
-            key.modifiers
-        );
-        assert!(
-            !key.modifiers.contains(KeyModifiers::SHIFT),
-            "legacy VTE multiline send hint must NOT advertise Shift+Enter, \
-             got modifiers {:?}",
-            key.modifiers
-        );
-    }
-    #[test]
-    fn prompt_multiline_send_hint_uses_shift_on_modern_terminal() {
-        use crossterm::event::KeyModifiers;
-        let hints = prompt_hints_with_text(true, false);
-        let send_hint = hints
-            .iter()
-            .find(|h| h.label == "send")
-            .expect("multiline mode with text must show a send hint");
-        let key = send_hint
-            .keys
-            .first()
-            .expect("send hint must have at least one key");
-        assert!(
-            key.modifiers.contains(KeyModifiers::SHIFT),
-            "modern terminal multiline send hint must advertise Shift+Enter, \
-             got modifiers {:?}",
-            key.modifiers
         );
     }
     fn layout_with_rows(

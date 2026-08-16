@@ -5,53 +5,6 @@ use crate::app::actions::Effect;
 use crate::app::app_view::{ActiveView, AppView};
 use agent_client_protocol as acp;
 
-/// Set multiline input mode — swap Enter and Shift+Enter behavior.
-///
-/// PAGER-OWNED: ephemeral, no `Effect::PersistSetting`. On the agent
-/// view this is per-session (`AgentView::multiline_mode`); on the
-/// dashboard it lives on `DashboardState::multiline_mode`. Idempotent.
-pub(in crate::app::dispatch) fn set_multiline_mode(app: &mut AppView, new: bool) -> Vec<Effect> {
-    if matches!(app.active_view, ActiveView::AgentDashboard) {
-        let Some(d) = app.dashboard.as_mut() else {
-            return vec![];
-        };
-        if d.multiline_mode == new {
-            return vec![];
-        }
-        d.multiline_mode = new;
-        tracing::info!(
-            target: "settings",
-            key = "multiline_mode",
-            value = new,
-            surface = "dashboard",
-            "setting changed",
-        );
-        app.show_toast(&save_success_toast("Multiline", new));
-        return vec![];
-    }
-
-    let ActiveView::Agent(id) = app.active_view else {
-        return vec![];
-    };
-    let Some(agent) = app.agents.get_mut(&id) else {
-        return vec![];
-    };
-    if agent.multiline_mode == new {
-        return vec![];
-    }
-    agent.multiline_mode = new;
-    // Refresh modal snapshot so the indicator reflects the new value.
-    refresh_open_settings_modals(app);
-    tracing::info!(
-        target: "settings",
-        key = "multiline_mode",
-        value = new,
-        "setting changed",
-    );
-    app.show_toast(&save_success_toast("Multiline", new));
-    vec![]
-}
-
 /// State-only mutation for `render_mermaid`: update the process-wide cache so
 /// every block picks up the new value on the next frame. The cache is the
 /// render-path source of truth; the disk write goes through `PersistSetting`.
@@ -818,8 +771,7 @@ pub(super) fn set_default_selected_permission_inner(
 //   - `set_X`: calls inner, refreshes modals, toasts, emits PersistSetting.
 //   - Rollback (`apply_setting_rollback`) calls inner only — no re-emit.
 //
-// PAGER setters (e.g. `set_multiline_mode`) have no persist/rollback,
-// so they skip the split.
+// PAGER-only setters have no persist/rollback, so they skip the split.
 // ---------------------------------------------------------------------------
 
 /// State-only mutation for `compact_mode`. Updates the in-memory

@@ -348,7 +348,6 @@ impl AgentView {
             selected_supports_fullscreen,
             can_demote,
             selected_can_kill,
-            self.multiline_mode,
             self.vim_mode,
             self.is_subagent_view,
             self.session.state.is_turn_running() && !self.renders_parked(),
@@ -790,10 +789,7 @@ impl AgentView {
             } else {
                 None
             },
-            placeholder_override: if let Some(ph) = self
-                .prompt_input_mode
-                .placeholder_override(self.multiline_mode)
-            {
+            placeholder_override: if let Some(ph) = self.prompt_input_mode.placeholder_override() {
                 Some(ph)
             } else if casual_commenting
                 || self
@@ -2188,7 +2184,6 @@ impl AgentView {
             });
         }
         let mode_flags: &[PromptFlag] = &mode_flags_vec;
-        let multiline = self.multiline_mode;
         let usage_visible = self
             .prompt
             .slash_controller
@@ -2214,7 +2209,6 @@ impl AgentView {
             PromptMode::Normal => PromptInfo {
                 model_name: &model_label,
                 flags: mode_flags,
-                multiline,
                 usage_warning,
                 usage_warning_critical,
             },
@@ -2224,7 +2218,6 @@ impl AgentView {
                 PromptInfo {
                     model_name: &editing_label,
                     flags: mode_flags,
-                    multiline,
                     usage_warning,
                     usage_warning_critical,
                 }
@@ -2234,7 +2227,6 @@ impl AgentView {
             PromptInfo {
                 model_name: label,
                 flags: &[],
-                multiline: false,
                 usage_warning,
                 usage_warning_critical,
             }

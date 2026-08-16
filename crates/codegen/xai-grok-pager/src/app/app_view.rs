@@ -2128,6 +2128,19 @@ impl AppView {
             Event::Key(k) if k.kind != KeyEventKind::Release => Some(k),
             _ => None,
         };
+        if key_event.is_some_and(|key| key!('m', CONTROL).matches(key)) {
+            match self.active_view {
+                ActiveView::AgentDashboard => return InputOutcome::Changed,
+                ActiveView::Agent(_)
+                    if self.pending_action.is_some()
+                        || self.exit_session_pending.is_some()
+                        || !matches!(self.voice_state, VoiceState::Idle) =>
+                {
+                    return InputOutcome::Changed;
+                }
+                ActiveView::Welcome | ActiveView::Agent(_) => {}
+            }
+        }
         if let Event::Resize(_, rows) = ev {
             for agent in self.agents.values_mut() {
                 agent.note_terminal_resize();
@@ -2254,6 +2267,11 @@ impl AppView {
                 },
             ),
             ActiveView::Agent(id) => {
+                if key_event.is_some_and(|key| key!('m', CONTROL).matches(key))
+                    && self.import_claude_modal.is_some()
+                {
+                    return InputOutcome::Changed;
+                }
                 let overlay_active = self
                     .dashboard
                     .as_ref()
@@ -9399,6 +9417,33 @@ pub(crate) mod tests {
         }
         id
     }
+    #[test]
+    fn dashboard_ctrl_m_is_noop_with_or_without_attached_popup() {
+        let mut dashboard = test_app_with_agent();
+        dashboard.active_view = ActiveView::AgentDashboard;
+        dashboard.dashboard = Some(crate::views::dashboard::DashboardState::new());
+        assert!(matches!(
+            dashboard.handle_input(&key_event(KeyCode::Char('m'), KeyModifiers::CONTROL)),
+            InputOutcome::Changed
+        ));
+        assert!(
+            dashboard
+                .agents
+                .values()
+                .all(|agent| agent.active_modal.is_none())
+        );
+
+        let mut popup = test_app_with_agent();
+        let id = attach_popup(&mut popup);
+        assert!(matches!(popup.active_view, ActiveView::AgentDashboard));
+        assert!(matches!(
+            popup.handle_input(&key_event(KeyCode::Char('m'), KeyModifiers::CONTROL)),
+            InputOutcome::Changed
+        ));
+        assert_eq!(popup.dashboard.as_ref().unwrap().attached_agent, Some(id));
+        assert!(popup.agents[&id].active_modal.is_none());
+    }
+
     /// Esc keystroke closes the popup at the
     /// `AppView::handle_input` layer (not the dispatch layer the
     /// other tests exercise).

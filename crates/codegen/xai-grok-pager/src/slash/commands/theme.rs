@@ -298,7 +298,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
@@ -339,7 +338,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
@@ -369,7 +367,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
@@ -397,7 +394,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
@@ -503,7 +499,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },
@@ -530,7 +525,6 @@ mod tests {
                 bundle_state: &bundle,
                 screen_mode: crate::app::ScreenMode::Inline,
                 pager_state: crate::settings::PagerLocalSnapshot {
-                    multiline_mode: false,
                     yolo_mode: false,
                     ..crate::settings::PagerLocalSnapshot::default()
                 },

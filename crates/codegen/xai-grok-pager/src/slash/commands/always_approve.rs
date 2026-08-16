@@ -50,7 +50,6 @@ mod tests {
             bundle_state: bundle,
             screen_mode: crate::app::ScreenMode::Inline,
             pager_state: PagerLocalSnapshot {
-                multiline_mode: false,
                 yolo_mode,
                 ..PagerLocalSnapshot::default()
             },

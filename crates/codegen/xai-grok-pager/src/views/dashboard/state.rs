@@ -709,9 +709,6 @@ pub struct DashboardState {
     pub voice_listening: bool,
     /// Mirror of `AppView::voice_interim` — the live partial transcript.
     pub voice_interim: Option<String>,
-    /// Surface-local compose mode for dispatch + peek (not persisted; not
-    /// shared with agent sessions). `/multiline` or Ctrl+M.
-    pub multiline_mode: bool,
 }
 
 /// Mode staged for the next agent the dashboard spawns. Mirrors the agent
@@ -1390,7 +1387,6 @@ impl DashboardState {
             pending_worktree_attach: false,
             voice_listening: false,
             voice_interim: None,
-            multiline_mode: false,
             // Fresh dashboard with no rows seeded → the `[+ New
             // Agent]` button is the default cursor target. Open
             // sites that want a specific row seeded call
@@ -2871,8 +2867,7 @@ impl DashboardState {
             {
                 return Some(InputOutcome::Changed);
             }
-            let enter_is_newline =
-                focused && compose_enter_is_newline(self.multiline_mode, mod_enter);
+            let enter_is_newline = focused && mod_enter;
             if !enter_is_newline {
                 let Some(row) = self.peek.as_ref().map(|p| p.row.clone()) else {
                     return Some(InputOutcome::Unchanged);
@@ -2893,13 +2888,6 @@ impl DashboardState {
                     attach: false,
                 }));
             }
-        }
-
-        // Ctrl+M: ToggleMultiline is PromptFocused only, so hardcode here.
-        if key!('m', CONTROL).matches(key) {
-            return Some(InputOutcome::Action(Action::SetMultilineMode(
-                !self.multiline_mode,
-            )));
         }
 
         // Space is just text now (the peek is tied to selection, so there
@@ -2990,6 +2978,12 @@ impl DashboardState {
     }
 
     fn handle_key(&mut self, key: &KeyEvent, registry: &ActionRegistry) -> InputOutcome {
+        // Ctrl+M belongs to the Agent models picker. The dashboard, including
+        // its peek composer and search/dropdown states, consumes it as a no-op.
+        if key!('m', CONTROL).matches(key) {
+            return InputOutcome::Changed;
+        }
+
         // Resolve the registry binding up-front — the toast / stop-confirm
         // clear below needs to know whether this key IS the stop key, and
         // it must run before the peek intercept (the lookup itself is a
@@ -3220,7 +3214,7 @@ impl DashboardState {
         // arg suggestions.
         //
         // `slash_accepted_send`: Enter accepted a terminal (no-arg) row and
-        // must fall through to dispatch — bypasses multiline Enter→newline.
+        // must fall through to dispatch.
         let mut slash_accepted_send = false;
         if self.dispatch.slash_open() && !self.search_mode {
             match key.code {
@@ -3413,11 +3407,6 @@ impl DashboardState {
             return self.dispatch_send_action(true);
         }
 
-        // Ctrl+M: ToggleMultiline is PromptFocused only, so hardcode here.
-        if key!('m', CONTROL).matches(key) && !self.search_mode {
-            return InputOutcome::Action(Action::SetMultilineMode(!self.multiline_mode));
-        }
-
         if matches!(key.code, KeyCode::Enter) {
             // Overview focused: attach / create (or send if button + draft).
             if self.list_focused && key.modifiers.is_empty() {
@@ -3439,9 +3428,9 @@ impl DashboardState {
                 self.dispatch.set_text("");
                 return InputOutcome::Changed;
             }
-            // slash_accepted_send: no-arg slash accept must submit, not newline.
-            let enter_is_newline =
-                !slash_accepted_send && compose_enter_is_newline(self.multiline_mode, mod_enter);
+            // Modified Enter always inserts a newline. A bare Enter that
+            // accepted a terminal slash row falls through and submits it.
+            let enter_is_newline = !slash_accepted_send && mod_enter;
             // Expand paste/file chips only for real bare Enter. Apple Terminal
             // rescue yields bare Enter while is_mod_enter is true — that must
             // send/newline, not expand (peek already gates the same way).
@@ -4335,13 +4324,6 @@ impl DashboardState {
     }
 }
 
-/// Strict Enter swap for compose surfaces (agent prompt parity).
-/// Multiline off: Shift/Alt (or rescued) Enter → newline.
-/// Multiline on: bare Enter → newline; Shift/Alt → send/create/open.
-fn compose_enter_is_newline(multiline: bool, mod_enter: bool) -> bool {
-    multiline != mod_enter
-}
-
 /// Exhaustive map from `ActionId` → `InputOutcome` for
 /// dashboard-focused actions. Adding a new `Dashboard*` `ActionId`
 /// without wiring it here is a compile error (the `_` arm is gone).
@@ -4430,7 +4412,6 @@ fn dashboard_action_for_id(
         | ActionId::NextModel
         | ActionId::CancelTurn
         | ActionId::ToggleYolo
-        | ActionId::ToggleMultiline
         | ActionId::FocusPrompt
         | ActionId::FocusScrollback
         | ActionId::CopyBlockContent
@@ -6070,7 +6051,7 @@ mod tests {
     }
 
     /// Shift+Enter / Alt+Enter insert a newline into the focused peek
-    /// reply (multiline compose) instead of sending — the reply text
+    /// reply instead of sending — the reply text
     /// grows and no action is emitted.
     #[test]
     fn peek_shift_enter_inserts_newline() {
@@ -6093,42 +6074,6 @@ mod tests {
         let alt_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
         let _ = state.handle_key(&alt_enter, &reg);
         assert_eq!(state.peek_reply.text().matches('\n').count(), 2);
-    }
-
-    /// With multiline_mode on, peek bare Enter inserts a newline; Shift+Enter sends.
-    #[test]
-    fn peek_multiline_mode_swaps_enter() {
-        use crate::app::actions::Action;
-        let mut state = state_with_open_peek();
-        state.multiline_mode = true;
-        if let Some(p) = state.peek.as_mut() {
-            p.focused = true;
-        }
-        state.peek_reply.set_text("line one");
-        let reg = crate::actions::ActionRegistry::defaults();
-
-        let bare = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &reg);
-        assert!(
-            matches!(bare, InputOutcome::Changed),
-            "bare Enter in multiline peek must insert newline, got {bare:?}"
-        );
-        assert!(
-            state.peek_reply.text().contains('\n'),
-            "got {:?}",
-            state.peek_reply.text()
-        );
-
-        let shift = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &reg);
-        match shift {
-            InputOutcome::Action(Action::DashboardPeekReply {
-                text,
-                attach: false,
-                ..
-            }) => {
-                assert!(text.contains("line one"), "peek reply text: {text:?}");
-            }
-            other => panic!("Shift+Enter in multiline peek must send, got {other:?}"),
-        }
     }
 
     /// Enter with an empty reply opens the peeked agent rather than
@@ -7341,8 +7286,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Reconciled dispatch-input features: slash commands, Alt+Enter
-    // multiline, vim-gated j/k, and paste — layered on top of the
+    // Reconciled dispatch-input features: slash commands, modified-Enter
+    // newlines, vim-gated j/k, and paste — layered on top of the
     // reply-mode / search-mode base.
     // -----------------------------------------------------------------
 
@@ -7362,8 +7307,8 @@ mod tests {
         }
     }
 
-    /// Alt+Enter AND Shift+Enter insert a newline (multiline compose)
-    /// in the dispatch input rather than dispatching — "send + open"
+    /// Alt+Enter AND Shift+Enter insert a newline in the dispatch input
+    /// rather than dispatching — "send + open"
     /// moved to Ctrl+S so both Enter-modifier chords are free for
     /// newlines (matching the agent prompt).
     #[test]
@@ -7388,102 +7333,17 @@ mod tests {
         }
     }
 
+    /// Ctrl+M is reserved for the Agent models picker and is consumed on the dashboard.
     #[test]
-    fn compose_enter_is_newline_matrix() {
-        // Strict swap: (multiline, mod_enter) → is_newline
-        assert!(!compose_enter_is_newline(false, false));
-        assert!(compose_enter_is_newline(false, true));
-        assert!(compose_enter_is_newline(true, false));
-        assert!(!compose_enter_is_newline(true, true));
-    }
-
-    /// With multiline_mode on, bare Enter inserts a newline (does not
-    /// dispatch) and Shift/Alt+Enter send — the agent-prompt swap.
-    #[test]
-    fn multiline_mode_swaps_enter_and_shift_enter() {
-        use crate::app::actions::Action;
-        let reg = crate::actions::ActionRegistry::defaults();
-        let mut state = make_state_with_selection();
-        state.multiline_mode = true;
-        state.dispatch.set_text("line one");
-
-        let bare = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &reg);
-        assert!(
-            matches!(bare, InputOutcome::Changed),
-            "bare Enter in multiline must insert newline, got {bare:?}"
-        );
-        assert!(
-            state.dispatch.text().contains('\n'),
-            "bare Enter must insert a newline, got {:?}",
-            state.dispatch.text()
-        );
-
-        // After newline, Shift+Enter should dispatch the draft.
-        let shift = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &reg);
-        match shift {
-            InputOutcome::Action(Action::DashboardDispatch {
-                text,
-                attach: false,
-            }) => {
-                assert!(text.contains("line one"), "dispatch text: {text:?}");
-            }
-            other => panic!("Shift+Enter in multiline must dispatch, got {other:?}"),
-        }
-    }
-
-    /// Multiline empty bare Enter inserts a newline (strict swap); Shift+Enter
-    /// open/create/attach.
-    #[test]
-    fn multiline_mode_empty_bare_enter_is_newline() {
-        use crate::app::actions::Action;
-        let reg = crate::actions::ActionRegistry::defaults();
-        let mut state = make_state_with_selection();
-        state.multiline_mode = true;
-        state.dispatch.set_text("");
-        let bare = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &reg);
-        assert!(
-            matches!(bare, InputOutcome::Changed),
-            "empty bare Enter in multiline must insert newline, got {bare:?}"
-        );
-        assert!(
-            state.dispatch.text().contains('\n'),
-            "got {:?}",
-            state.dispatch.text()
-        );
-
-        state.dispatch.set_text("");
-        match state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), &reg) {
-            InputOutcome::Action(Action::DashboardAttach(id)) => {
-                assert_eq!(id, DashboardRowId::TopLevel(AgentId(0)));
-            }
-            other => panic!("empty Shift+Enter in multiline must attach, got {other:?}"),
-        }
-    }
-
-    /// Ctrl+M toggles multiline via SetMultilineMode (same chord as agent).
-    #[test]
-    fn ctrl_m_toggles_multiline_mode() {
-        use crate::app::actions::Action;
+    fn ctrl_m_is_noop() {
         let reg = crate::actions::ActionRegistry::defaults();
         let mut state = DashboardState::new();
-        assert!(!state.multiline_mode);
         let outcome = state.handle_key(
             &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
             &reg,
         );
-        match outcome {
-            InputOutcome::Action(Action::SetMultilineMode(true)) => {}
-            other => panic!("Ctrl+M must emit SetMultilineMode(true), got {other:?}"),
-        }
-        state.multiline_mode = true;
-        let outcome = state.handle_key(
-            &KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
-            &reg,
-        );
-        match outcome {
-            InputOutcome::Action(Action::SetMultilineMode(false)) => {}
-            other => panic!("Ctrl+M when on must emit SetMultilineMode(false), got {other:?}"),
-        }
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(state.dispatch.text().is_empty());
     }
 
     /// Bare `?` opens shortcuts when the draft is empty (input-focused) or
@@ -7630,10 +7490,9 @@ mod tests {
         }
     }
 
-    /// Multiline must not treat Shift+Tab as the submit chord (is_mod_enter
-    /// requires KeyCode::Enter).
+    /// Shift+Tab cycles mode without consuming a non-empty draft.
     #[test]
-    fn multiline_shift_tab_cycles_mode_with_non_empty_draft() {
+    fn shift_tab_cycles_mode_with_non_empty_draft() {
         let reg = crate::actions::ActionRegistry::defaults();
         for key in [
             KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
@@ -7641,12 +7500,11 @@ mod tests {
             KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT),
         ] {
             let mut state = DashboardState::new();
-            state.multiline_mode = true;
             state.dispatch.set_text("draft text");
             let outcome = state.handle_key(&key, &reg);
             assert!(
                 matches!(outcome, InputOutcome::Action(Action::DashboardCycleMode)),
-                "multiline + {key:?} must DashboardCycleMode, not send, got {outcome:?}",
+                "{key:?} must DashboardCycleMode, not send, got {outcome:?}",
             );
             assert_eq!(
                 state.dispatch.text(),
@@ -7864,12 +7722,10 @@ mod tests {
         assert_eq!(state.peek_reply.text(), pasted);
     }
 
-    /// Multiline peek still expands paste chips before treating bare Enter
-    /// as a newline (dispatch + agent order).
+    /// Peek still expands paste chips before bare Enter can submit.
     #[test]
-    fn multiline_peek_enter_on_paste_chip_expands() {
+    fn peek_enter_on_paste_chip_expands_without_extra_newline() {
         let mut state = state_with_open_peek();
-        state.multiline_mode = true;
         let reg = crate::actions::ActionRegistry::defaults();
         state.peek.as_mut().unwrap().focused = true;
         let pasted = "a\nb\nc";
@@ -7879,7 +7735,7 @@ mod tests {
         let outcome = state.handle_key(&KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &reg);
         assert!(
             matches!(outcome, InputOutcome::Changed),
-            "multiline Enter on peek chip must expand, got {outcome:?}"
+            "Enter on peek chip must expand, got {outcome:?}"
         );
         assert!(
             state.peek_reply.textarea.elements().is_empty(),

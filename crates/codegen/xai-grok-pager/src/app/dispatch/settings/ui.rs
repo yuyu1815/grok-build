@@ -7,9 +7,9 @@ use super::setters::{
     set_default_selected_permission_inner, set_display_refresh_auto_cadence_inner,
     set_fork_secondary_model_inner, set_group_tool_verbs_inner, set_hunk_tracker_mode_inner,
     set_invert_scroll_inner, set_keep_text_selection_inner, set_max_thoughts_width_inner,
-    set_multiline_mode, set_page_flip_on_send_inner, set_prompt_suggestions_inner,
-    set_remember_tool_approvals_inner, set_render_mermaid_inner, set_respect_manual_folds_inner,
-    set_screen_mode_inner, set_scroll_lines_inner, set_scroll_mode_inner, set_scroll_speed_inner,
+    set_page_flip_on_send_inner, set_prompt_suggestions_inner, set_remember_tool_approvals_inner,
+    set_render_mermaid_inner, set_respect_manual_folds_inner, set_screen_mode_inner,
+    set_scroll_lines_inner, set_scroll_mode_inner, set_scroll_speed_inner,
     set_show_thinking_blocks_inner, set_show_tips_inner, set_simple_mode_inner, set_theme_inner,
     set_timeline_inner, set_timestamps, set_timestamps_inner, set_vim_mode_inner,
     set_voice_capture_mode_inner, set_voice_stt_language_inner,
@@ -67,7 +67,6 @@ pub(crate) fn refresh_open_settings_modals(app: &mut AppView) {
             state.rebuild_rows();
             state.ui_snapshot = ui_snapshot.clone();
             state.pager_snapshot = crate::settings::PagerLocalSnapshot {
-                multiline_mode: agent.multiline_mode,
                 yolo_mode: agent.session.is_yolo(),
                 auto_mode: agent.session.is_auto(),
                 current_model_name: agent.session.models.current_model_name(),
@@ -180,7 +179,6 @@ pub(in crate::app::dispatch) fn dispatch_open_settings(app: &mut AppView) -> Vec
     tracing::info!(target: "settings", "opened modal");
 
     let pager_snapshot = crate::settings::PagerLocalSnapshot {
-        multiline_mode: agent.multiline_mode,
         yolo_mode: agent.session.is_yolo(),
         auto_mode: agent.session.is_auto(),
         current_model_name: agent.session.models.current_model_name(),
@@ -396,19 +394,6 @@ pub(in crate::app::dispatch) fn dispatch_confirm_reset_setting(
     }
 }
 
-/// Toggle multiline input mode (Ctrl+M keybinding path). Delegates
-/// to `set_multiline_mode` (PAGER-OWNED, per-agent ephemeral).
-pub(in crate::app::dispatch) fn dispatch_toggle_multiline(app: &mut AppView) -> Vec<Effect> {
-    let ActiveView::Agent(id) = app.active_view else {
-        return vec![];
-    };
-    let Some(agent) = app.agents.get(&id) else {
-        return vec![];
-    };
-    let new = !agent.multiline_mode;
-    set_multiline_mode(app, new)
-}
-
 /// Toggle compact mode (keybinding path). Delegates to the
 /// registry-driven `set_compact_mode` so the cache, modal snapshot,
 /// and `Effect::PersistSetting` all flow through one path.
@@ -430,8 +415,7 @@ pub(in crate::app::dispatch) fn dispatch_toggle_compact_mode(app: &mut AppView) 
 /// Delegates to the registry-driven `set_vim_mode` so the cache, modal
 /// snapshot, toast, and `Effect::PersistSetting` (which writes
 /// `[ui].vim_mode` to config.toml) all flow through one path — matching
-/// the `dispatch_toggle_multiline` / `dispatch_toggle_compact_mode` /
-/// `dispatch_toggle_timestamps` pattern.
+/// the `dispatch_toggle_compact_mode` / `dispatch_toggle_timestamps` pattern.
 pub(in crate::app::dispatch) fn dispatch_toggle_vim_mode(app: &mut AppView) -> Vec<Effect> {
     // Toggle the EFFECTIVE value (the pager cache) so `/vim-mode` works
     // from ANY view — including the session-less dashboard. Previously
@@ -571,22 +555,7 @@ pub(in crate::app::dispatch) fn dispatch_toggle_mouse_capture(app: &mut AppView)
     );
 }
 
-/// Helper to read the active agent's `multiline_mode` for the
-/// pager-local snapshot used in idempotent-reset detection. Returns
-/// `false` if no active agent (no Settings modal would be open in
-/// that state, so the value doesn't matter — but the helper has to
-/// return SOMETHING).
-fn agent_multiline_mode(app: &AppView) -> bool {
-    if let ActiveView::Agent(id) = app.active_view
-        && let Some(agent) = app.agents.get(&id)
-    {
-        return agent.multiline_mode;
-    }
-    false
-}
-
-/// Helper to read the active agent's `yolo_mode`. See
-/// [`agent_multiline_mode`] for the no-agent fallback rationale.
+/// Helper to read the active agent's `yolo_mode`.
 fn agent_yolo_mode(app: &AppView) -> bool {
     if let ActiveView::Agent(id) = app.active_view
         && let Some(agent) = app.agents.get(&id)
@@ -596,8 +565,7 @@ fn agent_yolo_mode(app: &AppView) -> bool {
     false
 }
 
-/// Helper to read the active agent's `auto_mode`. See
-/// [`agent_multiline_mode`] for the no-agent fallback rationale.
+/// Helper to read the active agent's `auto_mode`.
 fn agent_auto_mode(app: &AppView) -> bool {
     if let ActiveView::Agent(id) = app.active_view
         && let Some(agent) = app.agents.get(&id)
@@ -620,8 +588,7 @@ fn agent_plan_mode(app: &AppView) -> bool {
 
 /// Helper to read the active agent's currently-selected model
 /// display name. Returns `None` when no agent is active OR when the
-/// catalog hasn't loaded yet (e.g. early startup). See
-/// [`agent_multiline_mode`] for the no-agent fallback rationale.
+/// catalog hasn't loaded yet (e.g. early startup).
 ///
 /// Used by the `default_model` row's `current_value_for`.
 fn agent_current_model_name(app: &AppView) -> Option<String> {
@@ -657,7 +624,6 @@ fn agent_available_models(app: &AppView) -> Vec<(String, acp::ModelId)> {
 /// Build a `PagerLocalSnapshot` from the current `AppView`.
 pub(crate) fn build_pager_snapshot(app: &AppView) -> crate::settings::PagerLocalSnapshot {
     crate::settings::PagerLocalSnapshot {
-        multiline_mode: agent_multiline_mode(app),
         yolo_mode: agent_yolo_mode(app),
         auto_mode: agent_auto_mode(app),
         current_model_name: agent_current_model_name(app),
@@ -709,7 +675,6 @@ pub(in crate::app::dispatch) fn action_for_reset(
         ("contextual_hints.ssh_wrap", SettingValue::Bool(b)) => {
             Some(Action::SetContextualHintSshWrap(*b))
         }
-        ("multiline_mode", SettingValue::Bool(b)) => Some(Action::SetMultilineMode(*b)),
         ("render_mermaid", SettingValue::Enum(s)) => {
             crate::appearance::RenderMermaid::from_canonical(s).map(Action::SetRenderMermaid)
         }

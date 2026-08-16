@@ -168,16 +168,6 @@ can also change mode with `Shift+Tab` (cycle), `Ctrl+O`, or `/settings`.
 /auto
 ```
 
-### `/multiline`
-
-Toggle multiline input mode. When enabled, `Enter` inserts a newline and `Shift+Enter` (or `Alt+Enter`) sends the message. Mid-turn, bare `Enter` on an empty composer still force-sends the top queued follow-up (send now).
-
-```
-/multiline
-```
-
-Aliases: `/ml`
-
 ### `/history`
 
 Open the prompt-history search: fuzzy-search this session's prompts, newest first — type to filter, press `Enter`/`Tab` to drop a match back into the prompt.

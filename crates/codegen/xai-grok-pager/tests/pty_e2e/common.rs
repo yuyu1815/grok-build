@@ -387,7 +387,7 @@ pub(crate) const CTRL_L: &[u8] = b"\x0c";
 pub(crate) const CTRL_O: &[u8] = b"\x0f";
 
 /// Suffix of the mid-turn send-now tip: `Queued · Enter to send now` (or the
-/// interject chord in multiline). Chord-agnostic like [`UNDO_TIP_SENTINEL`].
+/// terminal-specific interject chord). Chord-agnostic like [`UNDO_TIP_SENTINEL`].
 pub(crate) const SEND_NOW_TIP_SENTINEL: &str = "to send now";
 
 // NOTE: The SessionStart hook exactly-once e2e test is deferred.

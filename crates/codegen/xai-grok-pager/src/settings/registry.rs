@@ -22,7 +22,7 @@ pub type SettingKey = &'static str;
 /// Ownership class for a setting — the pager vs. shell ownership taxonomy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingOwner {
-    /// In-memory pager state; no disk write (e.g. `multiline_mode`).
+    /// In-memory pager state; no disk write.
     Pager,
     /// Shell schema, shell-mediated write, no pager-side cache.
     Shell,
@@ -232,8 +232,6 @@ pub enum SettingValue {
 /// `refresh_open_settings_modals` after every mutation.
 #[derive(Debug, Clone)]
 pub struct PagerLocalSnapshot {
-    /// Whether multiline input mode is active.
-    pub multiline_mode: bool,
     /// Whether YOLO mode (always-approve) is active on the active agent.
     pub yolo_mode: bool,
     /// Whether Auto (LLM classifier) mode is active on the active agent.
@@ -285,7 +283,6 @@ pub struct PagerLocalSnapshot {
 impl Default for PagerLocalSnapshot {
     fn default() -> Self {
         Self {
-            multiline_mode: false,
             yolo_mode: false,
             auto_mode: false,
             current_model_name: None,
@@ -515,8 +512,6 @@ pub fn current_value_for(
         "keep_text_selection" => Some(SettingValue::Enum(
             crate::appearance::cache::load_keep_text_selection().as_canonical(),
         )),
-        // PAGER — read from snapshot.
-        "multiline_mode" => Some(SettingValue::Bool(pager.multiline_mode)),
         // PAGER — read from process-wide cache (snapshot mirror keeps
         // the modal in sync with the live cache value).
         "vim_mode" => Some(SettingValue::Bool(pager.vim_mode)),
@@ -1135,12 +1130,6 @@ mod tests {
                 continue;
             }
             match (meta.key, &meta.kind) {
-                ("multiline_mode", SettingKind::Bool { default }) => {
-                    assert_eq!(
-                        *default, pager.multiline_mode,
-                        "multiline_mode default drifts from PagerLocalSnapshot::default()"
-                    );
-                }
                 ("respect_manual_folds", SettingKind::Bool { default }) => {
                     assert_eq!(
                         *default, pager.respect_manual_folds,

@@ -42,6 +42,10 @@ pub enum WarningCategory {
     /// is byte-identical to Enter and can't insert newlines — and WezTerm's
     /// default Alt+Enter binding (ToggleFullScreen) eats the fallback chord.
     WezTermKittyKeyboardOff,
+    /// Windows Terminal with Unix PTY input (notably WSL), where Shift+Enter
+    /// collapses to Enter and the stock Alt+Enter binding (ToggleFullscreen)
+    /// consumes Grok's fallback chord before it reaches the PTY.
+    WindowsTerminalAltEnterBinding,
     /// Wayland session whose compositor lacks the data-control clipboard
     /// protocol (GNOME ≤ 47), so every native copy rides a focus-dependent
     /// path (arboard via the XWayland selection bridge, `wl-copy`'s
@@ -315,9 +319,10 @@ pub fn wezterm_kitty_keyboard_warning(
             None,
         );
         warning.note = Some(
-            "Type `\\` then Enter to insert a newline. The pager doesn't negotiate the \
-             kitty keyboard protocol over SSH yet; `enable_kitty_keyboard = true` in \
-             wezterm.lua fixes local WezTerm sessions only."
+            "Use a terminal that reports Shift+Enter distinctly, or configure an available \
+             terminal keybinding to send Alt+Enter. The pager doesn't negotiate the kitty \
+             keyboard protocol over SSH yet; `enable_kitty_keyboard = true` in wezterm.lua \
+             fixes local WezTerm sessions only."
                 .to_string(),
         );
         return Some(warning);
@@ -329,8 +334,40 @@ pub fn wezterm_kitty_keyboard_warning(
         Some("~/.config/wezterm/wezterm.lua"),
     );
     warning.note = Some(
-        "Restart WezTerm after the change. Until then, type `\\` then Enter to insert \
-         a newline."
+        "Restart WezTerm after the change. Until then, rebind WezTerm's Alt+Enter so \
+         Grok can receive the newline chord."
+            .to_string(),
+    );
+    Some(warning)
+}
+
+/// Warn when Windows Terminal's stock Alt+Enter binding consumes Grok's
+/// newline fallback in a Unix PTY session (notably WSL).
+///
+/// Native Windows applications receive Win32 console input and retain the
+/// Shift modifier, so they do not need this fallback. Non-Windows hosts receive
+/// PTY bytes; because Grok does not negotiate KKP for Windows Terminal,
+/// Shift+Enter collapses to bare Enter and Alt+Enter must reach the PTY as
+/// `ESC`+`CR`.
+///
+/// `host_os` is injected so the host-aware classification stays pure and can
+/// be covered by a deterministic matrix test.
+pub fn windows_terminal_alt_enter_warning(
+    ctx: &TerminalContext,
+    host_os: crate::host::HostOs,
+) -> Option<TerminalWarning> {
+    if ctx.brand != TerminalName::WindowsTerminal || host_os == crate::host::HostOs::Windows {
+        return None;
+    }
+
+    let mut warning = TerminalWarning::new(
+        WarningCategory::WindowsTerminalAltEnterBinding,
+        "Windows Terminal + Unix PTY: verify Alt+Enter is not bound to fullscreen",
+        Some(r#"{ "id": null, "keys": "alt+enter" }"#),
+        Some(r#"the "keybindings" array in Windows Terminal settings.json"#),
+    );
+    warning.note = Some(
+        "Alternatively add the sendInput action and keybinding shown by `/docs Terminal Support and Troubleshooting`; it must send `\\u001b\\r` (ESC+CR). Grok cannot inspect Windows Terminal's Windows-side settings from this PTY, so this is a setup check even if you already changed the binding. F11 remains fullscreen."
             .to_string(),
     );
     Some(warning)
@@ -1686,8 +1723,8 @@ mod tests {
             Some("~/.config/wezterm/wezterm.lua")
         );
         assert!(
-            w.note.as_deref().is_some_and(|n| n.contains("\\")),
-            "note must mention the backslash+Enter workaround"
+            w.note.as_deref().is_some_and(|n| n.contains("Alt+Enter")),
+            "note must mention the Alt+Enter fallback"
         );
     }
 
@@ -1734,8 +1771,8 @@ mod tests {
         assert_eq!(w.category, WarningCategory::WezTermKittyKeyboardOff);
         // The pager never negotiates KKP for Unknown brands, so the
         // wezterm.lua change cannot fix SSH sessions — the SSH variant
-        // must NOT advertise it as the fix, and must lead with the
-        // backslash+Enter workaround instead.
+        // must NOT advertise it as the fix, and must lead with an honest
+        // terminal-keybinding fallback instead.
         assert!(
             w.fix.is_none(),
             "SSH variant must not advertise a config fix it can't honor"
@@ -1744,8 +1781,8 @@ mod tests {
         assert!(
             w.note
                 .as_deref()
-                .is_some_and(|n| n.starts_with("Type `\\`")),
-            "SSH note must lead with the backslash+Enter workaround"
+                .is_some_and(|n| n.starts_with("Use a terminal")),
+            "SSH note must lead with the terminal-keybinding fallback"
         );
     }
 
@@ -1791,6 +1828,59 @@ mod tests {
         };
         assert_eq!(ctx.brand, TerminalName::Unknown);
         assert!(wezterm_kitty_keyboard_warning(&ctx, false, Some("WezTerm 20240203")).is_none());
+    }
+
+    // -- Windows Terminal + Unix PTY Alt+Enter binding -------------------------
+
+    fn windows_terminal_ctx() -> TerminalContext {
+        TerminalContext {
+            brand: TerminalName::WindowsTerminal,
+            env_brand: TerminalName::WindowsTerminal,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn windows_terminal_alt_enter_warning_is_host_aware() {
+        use crate::host::HostOs;
+
+        let ctx = windows_terminal_ctx();
+        assert!(windows_terminal_alt_enter_warning(&ctx, HostOs::Windows).is_none());
+        for host in [HostOs::Linux, HostOs::Macos, HostOs::Other] {
+            let warning = windows_terminal_alt_enter_warning(&ctx, host)
+                .expect("Windows Terminal with Unix PTY input must warn");
+            assert_eq!(
+                warning.category,
+                WarningCategory::WindowsTerminalAltEnterBinding
+            );
+            assert!(warning.message.contains("verify Alt+Enter"));
+            assert_eq!(
+                warning.fix.as_deref(),
+                Some(r#"{ "id": null, "keys": "alt+enter" }"#)
+            );
+            assert_eq!(
+                warning.config_path.as_deref(),
+                Some(r#"the "keybindings" array in Windows Terminal settings.json"#)
+            );
+            assert!(
+                warning.note.as_deref().is_some_and(|note| {
+                    note.contains("sendInput")
+                        && note.contains("\\u001b\\r")
+                        && note.contains("/docs Terminal Support and Troubleshooting")
+                        && note.contains("cannot inspect")
+                        && note.contains("F11")
+                }),
+                "warning must offer the exact docs path, disclose the setup-check limitation, and preserve the fullscreen path"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_terminal_alt_enter_warning_ignores_other_terminals() {
+        assert!(
+            windows_terminal_alt_enter_warning(&plain_terminal_ctx(), crate::host::HostOs::Linux)
+                .is_none()
+        );
     }
 
     // -- assemble_startup_warnings: banner ordering ----------------------------

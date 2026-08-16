@@ -463,11 +463,6 @@ pub fn default_palette_entries(sharing_enabled: bool) -> Vec<PaletteEntry> {
             command: PaletteCommand::SlashCommand("/always-approve".into()),
         },
         PaletteEntry {
-            label: "Multiline Input".into(),
-            shortcut: "/multiline".into(),
-            command: PaletteCommand::SlashCommand("/multiline".into()),
-        },
-        PaletteEntry {
             label: "Tools".into(),
             shortcut: String::new(),
             command: PaletteCommand::SectionHeader("Tools".into()),

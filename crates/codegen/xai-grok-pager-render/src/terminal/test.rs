@@ -1652,21 +1652,27 @@ fn shift_enter_unavailable_windows_refined_brand_stays_env_unknown() {
         multiplexer: MultiplexerKind::Undetected,
         ..Default::default()
     };
-    assert!(ctx.shift_enter_unavailable());
+    assert!(ctx.shift_enter_unavailable_on_host(crate::host::HostOs::Windows));
 }
 
 #[test]
-fn shift_enter_available_positively_detected_windows_terminal() {
+fn shift_enter_windows_terminal_depends_on_host_input_backend() {
+    use crate::host::HostOs;
+
     // WT detected via WT_SESSION/TERM_PROGRAM: both brand fields are WT.
-    // The Unknown gate must not fire; Shift+Enter follows the WT path
-    // (KKP is skipped for WT, but that is a separate, pre-existing choice).
+    // Native Windows applications receive Win32 console records and retain
+    // Shift. Unix/WSL applications receive PTY bytes; because KKP is skipped
+    // for WT, Shift+Enter collapses to the same CR as Enter.
     let ctx = TerminalContext {
         brand: TerminalName::WindowsTerminal,
         env_brand: TerminalName::WindowsTerminal,
         multiplexer: MultiplexerKind::Undetected,
         ..Default::default()
     };
-    assert!(!ctx.shift_enter_unavailable());
+    assert!(!ctx.shift_enter_unavailable_on_host(HostOs::Windows));
+    assert!(ctx.shift_enter_unavailable_on_host(HostOs::Linux));
+    assert!(ctx.shift_enter_unavailable_on_host(HostOs::Macos));
+    assert!(ctx.shift_enter_unavailable_on_host(HostOs::Other));
 }
 
 #[test]

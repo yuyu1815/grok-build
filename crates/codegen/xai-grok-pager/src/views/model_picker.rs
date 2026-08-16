@@ -171,7 +171,7 @@ impl ModelPicker {
             let chrome_config = self.modal_config(false, &[]);
             match mw::handle_modal_key(&mut self.window, key, &chrome_config) {
                 ModalWindowOutcome::CloseRequested => {
-                    if !self.picker.query.is_empty() {
+                    if !self.picker.query().is_empty() {
                         self.picker.clear_query();
                         // Esc clear is also the Vim transition back to nav mode,
                         // so the next Esc closes rather than requiring a third press.
@@ -189,7 +189,7 @@ impl ModelPicker {
             // Left/Right cycle effort only outside a query. While a query exists,
             // PickerInput owns both keys as cursor movement.
             if matches!(key.code, KeyCode::Left | KeyCode::Right)
-                && self.picker.query.is_empty()
+                && self.picker.query().is_empty()
                 && !self.picker.selection_hidden
                 && !self.picker.tabs_focused
             {
@@ -200,14 +200,14 @@ impl ModelPicker {
         }
 
         let config = self.picker_config();
-        let query_before = self.picker.query.clone();
+        let query_before = self.picker.query().to_owned();
         let outcome = picker::handle_picker_input(
             event,
             &mut self.picker,
             self.filtered_indices.len(),
             &config,
         );
-        if matches!(outcome, PickerOutcome::Changed) && self.picker.query != query_before {
+        if matches!(outcome, PickerOutcome::Changed) && self.picker.query() != query_before {
             self.refresh_filter();
         }
         match outcome {
@@ -350,7 +350,7 @@ impl ModelPicker {
     }
 
     fn refresh_filter(&mut self) {
-        let query = self.picker.query.to_lowercase();
+        let query = self.picker.query().to_lowercase();
         self.filtered_indices = self
             .entries
             .iter()
@@ -548,13 +548,12 @@ mod tests {
     fn snapshot_filter_searches_name_id_and_description() {
         for query in ["alpha", "alpha-id", "reasoning"] {
             let mut picker = ModelPicker::new(&sample_models(), false);
-            picker.picker.query = query.into();
-            picker.picker.query_cursor = query.len();
+            picker.picker.set_query(query);
             picker.refresh_filter();
             assert_eq!(picker.filtered_indices, vec![0]);
         }
         let mut picker = ModelPicker::new(&sample_models(), false);
-        picker.picker.query = "plain".into();
+        picker.picker.set_query("plain");
         picker.refresh_filter();
         assert_eq!(picker.filtered_indices, vec![1]);
     }
@@ -581,13 +580,12 @@ mod tests {
     #[test]
     fn left_right_move_query_cursor_instead_of_cycling_effort() {
         let mut picker = ModelPicker::new(&sample_models(), false);
-        picker.picker.query = "ab".into();
-        picker.picker.query_cursor = 2;
+        picker.picker.set_query("ab");
         assert_eq!(
             picker.handle_event(&key(KeyCode::Left)),
             ModelPickerOutcome::Changed
         );
-        assert_eq!(picker.picker.query_cursor, 1);
+        assert_eq!(picker.picker.query_cursor(), 1);
         assert!(!picker.entries[0].effort_touched);
     }
 
@@ -621,13 +619,12 @@ mod tests {
     #[test]
     fn escape_clears_query_then_closes() {
         let mut picker = ModelPicker::new(&sample_models(), false);
-        picker.picker.query = "alpha".into();
-        picker.picker.query_cursor = 5;
+        picker.picker.set_query("alpha");
         assert_eq!(
             picker.handle_event(&key(KeyCode::Esc)),
             ModelPickerOutcome::Changed
         );
-        assert!(picker.picker.query.is_empty());
+        assert!(picker.picker.query().is_empty());
         assert_eq!(
             picker.handle_event(&key(KeyCode::Esc)),
             ModelPickerOutcome::Closed
@@ -723,8 +720,7 @@ mod tests {
     #[test]
     fn vim_escape_still_clears_then_closes() {
         let mut picker = ModelPicker::new(&sample_models(), true);
-        picker.picker.query = "alpha".into();
-        picker.picker.query_cursor = 5;
+        picker.picker.set_query("alpha");
         assert_eq!(
             picker.handle_event(&key(KeyCode::Esc)),
             ModelPickerOutcome::Changed

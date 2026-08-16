@@ -555,10 +555,9 @@ fn render_setting_row_shows_full_label_when_one_line_fits() {
     );
 }
 
-/// The default registry contains Appearance settings
-/// (3 bools + 3 enums + 1 int = 7 entries), the Editor entry
-/// `multiline_mode`, the Agent entries `permission_mode` and
-/// `plan_mode`, the Privacy entry `coding_data_sharing`, the
+/// The default registry contains Appearance settings, Editor input
+/// settings, the Agent entries `permission_mode` and `plan_mode`, the
+/// Privacy entry `coding_data_sharing`, the
 /// Models entry `default_model`, and the Advanced entries
 /// `show_tips` and `auto_update`. `default_reasoning_effort` and
 /// `auto_compact_threshold_percent` are not exposed in the modal.
@@ -648,8 +647,6 @@ fn rows_contain_categories_and_settings_through_pr_14() {
             "scroll_lines",
             "invert_scroll",
             "keep_text_selection",
-            // PAGER-owned multiline (Editor category).
-            "multiline_mode",
             // SHELL-owned prompt_suggestions (Editor; tab autocomplete
             // ghost text, live cache).
             "prompt_suggestions",

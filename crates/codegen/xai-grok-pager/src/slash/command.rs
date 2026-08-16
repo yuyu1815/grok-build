@@ -116,10 +116,7 @@ pub struct CommandExecCtx<'a> {
     pub bundle_state: &'a BundleState,
     pub(crate) screen_mode: crate::app::ScreenMode,
     /// Snapshot of the active agent's PAGER-owned settings, built at
-    /// command-build time by the dispatcher. Slash commands like
-    /// `/multiline` read this to compute `!current` and dispatch a
-    /// typed `Action::SetX(new)` — the dispatcher remains the single
-    /// source of truth for the actual state mutation.
+    /// command-build time by the dispatcher.
     pub(crate) pager_state: crate::settings::PagerLocalSnapshot,
 }
 
@@ -199,9 +196,8 @@ pub trait SlashCommand: Send + Sync {
     ///
     /// A handful of session-scoped commands have a meaningful session-less
     /// interpretation: `/model` and `/plan` configure the *next* agent the
-    /// dashboard spawns; `/multiline` toggles compose mode on the dashboard
-    /// inputs. Those override this to `true` so they appear in the dashboard
-    /// dropdown even though `session_scoped()` is `true`. Has no effect for
+    /// dashboard spawns. Those override this to `true` so they appear in the
+    /// dashboard dropdown even though `session_scoped()` is `true`. Has no effect for
     /// non-session-scoped commands (they're always offered).
     ///
     /// Defaults to `false`.

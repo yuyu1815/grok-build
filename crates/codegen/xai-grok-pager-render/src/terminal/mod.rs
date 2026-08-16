@@ -450,14 +450,24 @@ impl TerminalContext {
     ///    `== "vscode"` and [xterm.js#5823](https://github.com/xtermjs/xterm.js/issues/5823)).
     ///    Without KKP, xterm.js sends a bare `CR` for `Shift+Enter`,
     ///    byte-for-byte identical to `Enter`.
-    /// 3. **Unidentified terminals with no multiplexer**, where the pager
+    /// 3. **Windows Terminal with Unix PTY input** (notably WSL). The Unix
+    ///    process receives byte-stream input, and the pager skips KKP for
+    ///    Windows Terminal, so `Shift+Enter` collapses to bare `CR`. Native
+    ///    Windows console input remains distinguishable.
+    /// 4. **Unidentified terminals with no multiplexer**, where the pager
     ///    also skips KKP (no positive evidence of support — typically
     ///    VS Code's xterm.js reached over SSH, where `TERM_PROGRAM` isn't
     ///    forwarded and the brand falls back to `Unknown`).
     ///
-    /// In every case `Alt+Enter` (delivered as `ESC`+`CR`) is the reliable
-    /// newline chord and is what the UI advertises.
+    /// In every case `Alt+Enter` (delivered as `ESC`+`CR`) is the
+    /// protocol-independent newline fallback and is what the UI advertises.
+    /// The outer terminal must pass that chord through; notably, stock Windows
+    /// Terminal consumes it for fullscreen until the binding is changed.
     pub fn shift_enter_unavailable(&self) -> bool {
+        self.shift_enter_unavailable_on_host(HostOs::current())
+    }
+
+    fn shift_enter_unavailable_on_host(&self, host: HostOs) -> bool {
         let is_vte = self.is_vte_based(); // WHY: central helper + version gating
         if is_vte {
             return match self
@@ -480,6 +490,14 @@ impl TerminalContext {
                 | TerminalName::Windsurf
                 | TerminalName::Zed
         ) {
+            return true;
+        }
+
+        // Native Windows applications receive Win32 console key records, which
+        // preserve the Shift modifier. A Unix process under Windows Terminal
+        // (notably WSL) receives PTY bytes instead; because WT is in the KKP
+        // skip list, Shift+Enter is then the same bare CR as Enter.
+        if self.brand == TerminalName::WindowsTerminal && host != HostOs::Windows {
             return true;
         }
 

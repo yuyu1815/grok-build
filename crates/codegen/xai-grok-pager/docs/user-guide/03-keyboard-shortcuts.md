@@ -121,8 +121,7 @@ Actions that affect the agent session, available from the agent screen.
 |-----|---------|--------|
 | `Ctrl+P` | Agent screen | Open the command palette |
 | `?` (Shift+/) | Agent screen | Open the command palette (alt binding) |
-| `Ctrl+M` | Agent screen | Open the model picker / switch model |
-| `Ctrl+M` | Prompt focused | Toggle multiline input mode |
+| `Ctrl+M` | Unobstructed agent screen (prompt, scrollback, or normal panes) | Open the model picker / switch model; press again to close without selecting |
 | `Ctrl+C` | Agent screen | Cancel the current turn (or clear non-empty draft first; see Escape table) |
 | `Ctrl+O` | Agent screen | Toggle always-approve (YOLO) mode |
 | `Ctrl+S` | Agent screen | Open the session picker (resume a previous session) |
@@ -137,7 +136,7 @@ Actions that affect the agent session, available from the agent screen.
 | `Ctrl+.` (alt: `Ctrl+X`) | Agent screen | Open the keyboard shortcuts help |
 | `F2` (alt: `Ctrl+,` / `Cmd+,`) | Agent screen | Open the settings modal |
 
-**Note:** `Ctrl+M` is context-dependent. When the prompt is focused, it toggles multiline input mode. Otherwise, it opens the model picker.
+**Note:** `Ctrl+M` is disabled while another modal, overlay, search, dropdown, confirmation, or foreground input surface is active. It is a no-op on the dashboard.
 
 **Note:** `Ctrl+'` is a Windows alt for `Ctrl+;` — some Windows consoles drop the `Ctrl` modifier on punctuation keys.
 
@@ -187,7 +186,7 @@ While the agent is generating:
 | Apple Terminal | `Ctrl+O` | `Ctrl+Enter`, `Ctrl+I` | Send now |
 | VS Code family (VS Code, Cursor, Windsurf, Zed) | **`Ctrl+L`** | *(none)* | Send now (`Ctrl+I` not used — Tab / host chat; plugins via `/plugins`) |
 
-In `/multiline` mode, `Shift+Enter` (or `Alt+Enter`) sends while plain `Enter` inserts a newline — except on an **empty** composer mid-turn with a queued follow-up, where plain `Enter` still **send now**s the top row (same as normal mode). (`Ctrl+Enter` is send-now mid-turn when bound on non–VS Code family; it does not submit a new idle turn.)
+Bare `Enter` always submits or queues the composer. `Shift+Enter` or `Alt+Enter` inserts a newline. (`Ctrl+Enter` is send-now mid-turn when bound on non–VS Code family; it does not submit a new idle turn.)
 
 Send-now is intentionally interruptive — it reads as "stop what you're doing and take this". To hand the agent a note **without** stopping it, queue with plain `Enter`; the agent picks it up at the next turn boundary.
 
@@ -293,7 +292,7 @@ Focus prompt:     i, Tab, or Space
 ```
 Send:             Enter
 Newline:          Shift+Enter or Alt+Enter
-Multiline:        Ctrl+M (toggle)
+Model picker:     Ctrl+M
 Paste:            Ctrl+V (text, files, screenshots on macOS/Linux)
 Selected text:    Middle click or Shift+Insert (Linux X11/XWayland PRIMARY)
 Paste image:      Alt+V (Windows only — for screenshots / "Copy Image")
@@ -328,7 +327,7 @@ Rewind (idle):    Esc Esc within 800ms (empty prompt + messages)
 
 ```
 Command palette:  Ctrl+P or ?
-Model picker:     Ctrl+M (from scrollback)
+Model picker:     Ctrl+M (unobstructed agent screen)
 Cancel:           Ctrl+C (see Escape table)
 Always-approve:   Ctrl+O (toggle YOLO)
 New session:      Ctrl+N (press again, then choose normal/worktree)

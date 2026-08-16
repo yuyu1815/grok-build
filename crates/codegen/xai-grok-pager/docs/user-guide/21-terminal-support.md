@@ -151,7 +151,7 @@ Zellij recommends this approach for TUI users.
 
 ### Problem: `Ctrl+Enter` doesn't interject in WezTerm
 
-**Cause**: WezTerm ships with the Kitty keyboard protocol disabled. Grok relies on it to tell `Ctrl+Enter` (interject) and `Shift+Enter` (send in multiline mode) apart from plain `Enter`. Most other terminals enable the protocol when Grok requests it.
+**Cause**: WezTerm ships with the Kitty keyboard protocol disabled. Grok relies on it to tell `Ctrl+Enter` (interject) and `Shift+Enter` (insert newline) apart from plain `Enter`. Most other terminals enable the protocol when Grok requests it.
 
 For the same reason, in Apple Terminal, Grok binds `Ctrl+O` to interject.
 
@@ -177,7 +177,7 @@ table.insert(config.keys, {
 })
 ```
 
-### Problem: `Shift+Enter` doesn't insert a newline in VS Code
+### Problem: `Shift+Enter` doesn't insert a newline in VS Code or Windows Terminal + WSL
 
 **Cause**: VS Code's integrated terminal (and the Cursor / Windsurf / Zed
 forks) use xterm.js, which only partially implements the Kitty keyboard
@@ -191,11 +191,62 @@ This also affects VS Code reached **over SSH** (e.g. into a devbox or
 container): `TERM_PROGRAM` isn't forwarded, so Grok sees an `Unknown`
 terminal and skips the protocol for the same reason.
 
-**Fix**: Use **`Alt+Enter`** to insert a newline. xterm.js delivers it
-reliably as `ESC`+`CR` regardless of the keyboard protocol, and Grok's
+**Windows Terminal running Grok inside WSL** has the same limitation for a
+different input-path reason: Grok skips KKP for Windows Terminal, and the
+Linux process receives Unix PTY bytes, so `Shift+Enter` collapses to plain
+`Enter`. Grok running natively on Windows instead receives Win32 console key
+records and can distinguish the Shift modifier.
+
+**Fix for VS Code / xterm.js**: Use **`Alt+Enter`** to insert a newline.
+xterm.js delivers it as `ESC`+`CR` regardless of the keyboard protocol. Grok's
 prompt hint bar advertises `Alt+Enter: newline` whenever it detects this
-situation. Run `/terminal-setup` to confirm — the `newline` row shows
-`Alt+Enter` when `Shift+Enter` is unavailable.
+situation.
+
+**Windows Terminal + WSL requires one additional setup step.** Stock Windows
+Terminal binds `Alt+Enter` to `Terminal.ToggleFullscreen`, so it consumes the
+chord before WSL's Unix PTY can receive `ESC`+`CR`. Either unbind `Alt+Enter`
+so it passes through, or map it explicitly to `sendInput`.
+
+To unbind it, add this entry to the top-level `keybindings` array in Windows
+Terminal `settings.json` (merge it into the existing array):
+
+```json
+{
+  "keybindings": [
+    { "id": null, "keys": "alt+enter" }
+  ]
+}
+```
+
+For an explicit and deterministic Grok mapping, add an action that sends
+`ESC`+`CR`, then bind `Alt+Enter` to it (merge these entries into any existing
+`actions` and `keybindings` arrays):
+
+```json
+{
+  "actions": [
+    {
+      "command": { "action": "sendInput", "input": "\u001b\r" },
+      "id": "User.GrokAltEnter"
+    }
+  ],
+  "keybindings": [
+    { "keys": "alt+enter", "id": "User.GrokAltEnter" }
+  ]
+}
+```
+
+`F11` remains bound to `Terminal.ToggleFullscreen` in the Windows Terminal
+defaults. Open `settings.json` with `Ctrl+Shift+,` (or hold **Shift** while
+selecting **Settings** from the Windows Terminal dropdown), save it, then retry
+the chord. Run `/terminal-setup` to review the environment: on Windows Terminal
++ WSL the `newline` row shows `Alt+Enter` with `verify settings.json binding`,
+followed by the setup check and the unbind entry. Because Grok runs inside the
+Unix PTY, it cannot inspect the Windows-side Terminal settings to tell whether
+you already applied the change. For the explicit `sendInput` JSON from inside
+Grok, run `/docs Terminal Support and Troubleshooting` and open this section.
+Native Windows Terminal continues to use `Shift+Enter` without this setup
+because Win32 console input preserves the Shift modifier.
 
 ### Problem: Mouse scrolling stops working (native scrollbar takes over)
 

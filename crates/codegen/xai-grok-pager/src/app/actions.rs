@@ -428,11 +428,6 @@ pub enum Action {
     /// that preserves the `default` canonical (the `bool` variant
     /// collapses `default` to `ask`).
     SetPermissionMode(PermissionModeKind),
-    /// Toggle multiline input mode (swap Enter and Shift+Enter behavior).
-    ToggleMultiline,
-    /// Set multiline input mode (swap Enter and Shift+Enter behavior).
-    /// Pager-owned, NOT persisted to disk — reset each session.
-    SetMultilineMode(bool),
     /// Open the prompt-history search panel on the active agent (composer
     /// as filter query). Dispatched by `/history`.
     OpenHistorySearch,

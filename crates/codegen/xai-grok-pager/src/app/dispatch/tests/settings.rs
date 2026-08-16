@@ -749,33 +749,6 @@ fn dispatch_confirm_reset_setting_cancel_preserves_modal_state() {
         _ => panic!("expected Settings modal after Cancel"),
     }
 }
-/// `ConfirmResetSetting { Reset }` on a
-/// PAGER-owned setting (`multiline_mode`) flips the agent's flag
-/// back to default WITHOUT emitting any `Effect` (PAGER setters
-/// short-circuit on no-disk-write). Pins the cross-owner
-/// behavioral parity.
-#[test]
-fn dispatch_confirm_reset_setting_reset_dispatches_typed_setter_for_pager_bool() {
-    use crate::views::modal::ResetSettingsResult;
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(app.agents[&AgentId(0)].multiline_mode);
-    setup_reset_confirm_open(&mut app, "multiline_mode");
-    let effects = dispatch(
-        Action::ConfirmResetSetting {
-            choice: ResetSettingsResult::Reset,
-        },
-        &mut app,
-    );
-    assert!(
-        effects.is_empty(),
-        "PAGER reset must NOT emit Effects (in-memory only), got {effects:?}",
-    );
-    assert!(
-        !app.agents[&AgentId(0)].multiline_mode,
-        "agent.multiline_mode must be reset to default",
-    );
-}
 /// Idempotent Reset is gated. When
 /// the focused row is already at its registered default, the
 /// Reset branch emits a short "already at default" toast and
@@ -1245,9 +1218,6 @@ fn move_setting_away_from_default(app: &mut AppView, key: crate::settings::Setti
         "contextual_hints.ssh_wrap" => {
             let _ = dispatch(Action::SetContextualHintSshWrap(false), app);
         }
-        "multiline_mode" => {
-            let _ = dispatch(Action::SetMultilineMode(true), app);
-        }
         "render_mermaid" => {
             let _ = dispatch(
                 Action::SetRenderMermaid(crate::appearance::RenderMermaid::Off),
@@ -1542,217 +1512,10 @@ fn dispatch_open_settings_double_dispatch_panics_in_debug() {
     let _ = dispatch(Action::OpenSettings, &mut app);
     let _ = dispatch(Action::OpenSettings, &mut app);
 }
-/// `set_multiline_mode(app, true)` mutates the active agent's
-/// flag, fires a toast, and emits NO effects.
-#[test]
-fn set_multiline_mode_mutates_agent_and_emits_no_effect() {
-    let mut app = test_app_with_agent();
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-    let effects = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(
-        effects.is_empty(),
-        "PAGER-owned setter must NOT emit Effect::PersistSetting, got {effects:?}",
-    );
-    assert!(
-        app.agents[&AgentId(0)].multiline_mode,
-        "agent.multiline_mode must reflect the new value",
-    );
-}
-/// Idempotent fast path: re-emitting the same value is a UX
-/// no-op (no toast, no Effect).
-///
-/// **Contract divergence from SHARED setters:**
-/// `set_compact_mode_inner` only skips
-/// the `app.set_appearance` fan-out — the outer `set_compact_mode`
-/// still toasts AND emits `Effect::PersistSetting` on every
-/// dispatch, including no-ops. PAGER setters can be stricter
-/// because there's no disk write to confirm: re-toasting on a
-/// same-value re-dispatch is pure UI noise, so we skip the toast
-/// at the outer level too.
-#[test]
-fn set_multiline_mode_idempotent_no_toast() {
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    let agent = app.agents.get_mut(&AgentId(0)).unwrap();
-    assert!(agent.toast.is_some(), "first set must toast");
-    agent.toast = None;
-    let effects = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(effects.is_empty());
-    assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
-        "redundant set must not re-toast",
-    );
-    assert!(
-        app.agents[&AgentId(0)].multiline_mode,
-        "idempotent re-set must preserve value",
-    );
-}
-/// Initial-idempotence: dispatching the same value as the agent's
-/// default produces no toast and no effect.
-/// Pins "no UX side effects on a redundant initial dispatch" —
-/// matches the user-visible "open modal, click Space twice on a
-/// default-false setting" flow.
-#[test]
-fn set_multiline_mode_initial_same_value_is_no_op() {
-    let mut app = test_app_with_agent();
-    let effects = dispatch(Action::SetMultilineMode(false), &mut app);
-    assert!(effects.is_empty());
-    assert!(
-        app.agents[&AgentId(0)].toast.is_none(),
-        "matching-default dispatch must not toast",
-    );
-}
-/// Toast string format matches the `"\u{2713} {label}: {value}"`
-/// format exactly. Exact-equality strictly catches
-/// format drift (e.g., dropping the `:` separator, adding suffix)
-/// that substring `contains` checks would miss.
-#[test]
-fn set_multiline_mode_toast_format() {
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    let toast = app.agents[&AgentId(0)]
-        .toast
-        .as_ref()
-        .map(|(s, _)| s.clone())
-        .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} Multiline: on");
-    let _ = dispatch(Action::SetMultilineMode(false), &mut app);
-    let toast = app.agents[&AgentId(0)]
-        .toast
-        .as_ref()
-        .map(|(s, _)| s.clone())
-        .expect("toast must be set");
-    assert_eq!(toast, "\u{2713} Multiline: off");
-}
-/// No active agent → no-op (no panic, no effect, no mutation).
-/// Differs from `set_simple_mode_no_op_when_no_active_agent`: SHARED
-/// settings persist globally even without an agent, but PAGER
-/// settings have nowhere to write without an agent's state to
-/// mutate.
-#[test]
-fn set_multiline_mode_no_op_when_no_active_agent() {
-    let mut app = test_app();
-    let compact_before = app.current_ui.compact_mode;
-    let timestamps_before = app.current_ui.show_timestamps;
-    let simple_before = app.current_ui.simple_mode;
-    let effects = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(
-        effects.is_empty(),
-        "no active agent → no Effect (the setting is per-agent)",
-    );
-    assert_eq!(app.current_ui.compact_mode, compact_before);
-    assert_eq!(app.current_ui.show_timestamps, timestamps_before);
-    assert_eq!(app.current_ui.simple_mode, simple_before);
-    assert!(
-        matches!(app.active_view, ActiveView::Welcome),
-        "active_view must not flip on no-agent dispatch",
-    );
-}
-/// Dashboard surface owns its own compose flag: `SetMultilineMode` /
-/// `/multiline` flip `dashboard.multiline_mode` and leave agent flags alone.
-#[test]
-fn set_multiline_mode_on_dashboard_toggles_dashboard_not_agents() {
-    let mut app = test_app_with_agent();
-    insert_placeholder_agent(&mut app, AgentId(1));
-    app.dashboard = Some(crate::views::dashboard::DashboardState::new());
-    app.active_view = ActiveView::AgentDashboard;
-    assert!(!app.dashboard.as_ref().unwrap().multiline_mode);
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-    assert!(!app.agents[&AgentId(1)].multiline_mode);
-    let effects = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(effects.is_empty());
-    assert!(
-        app.dashboard.as_ref().unwrap().multiline_mode,
-        "dashboard flag must flip on"
-    );
-    assert!(
-        !app.agents[&AgentId(0)].multiline_mode && !app.agents[&AgentId(1)].multiline_mode,
-        "agent flags must stay put"
-    );
-    let _ = dispatch(Action::SetMultilineMode(false), &mut app);
-    assert!(!app.dashboard.as_ref().unwrap().multiline_mode);
-    let _ = dispatch_dashboard_dispatch_slash(&mut app, "/multiline".into());
-    assert!(
-        app.dashboard.as_ref().unwrap().multiline_mode,
-        "/multiline must toggle dashboard on"
-    );
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-}
-/// Multi-agent fan-out. `set_multiline_mode`
-/// mutates only the ACTIVE agent's `multiline_mode`, never
-/// other agents in the registry. The setter currently uses
-/// `app.agents.get_mut(&active)` (index by active), but a
-/// future refactor that loops over `app.agents.values_mut()`
-/// or that touches SHARED `app.current_ui` would silently
-/// regress this contract — without a multi-agent test, the
-/// regression wouldn't surface until the user opened two
-/// agents and noticed cross-contamination.
-#[test]
-fn set_multiline_mode_mutates_only_active_agent_not_others() {
-    let mut app = test_app_with_agent();
-    insert_placeholder_agent(&mut app, AgentId(1));
-    assert!(!app.agents[&AgentId(0)].multiline_mode);
-    assert!(!app.agents[&AgentId(1)].multiline_mode);
-    let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    assert!(
-        app.agents[&AgentId(0)].multiline_mode,
-        "active agent (id=0) must flip to true",
-    );
-    assert!(
-        !app.agents[&AgentId(1)].multiline_mode,
-        "non-active agent (id=1) must NOT be touched — PAGER-owned \
-             setters address the active agent only",
-    );
-}
-/// Regression test.
-///
-/// Open the settings modal, dispatch `SetMultilineMode(true)`,
-/// assert the modal's `pager_snapshot.multiline_mode` is refreshed
-/// to `true`. Without `refresh_open_settings_modals`, the snapshot
-/// stays at the open-time value and the user gets stuck — the
-/// indicator shows the wrong state AND subsequent toggles are
-/// no-ops via the idempotent guard.
-#[test]
-fn set_multiline_mode_refreshes_open_modal_pager_snapshot() {
-    use crate::views::modal::ActiveModal;
-    let mut app = test_app_with_agent();
-    let _ = dispatch(Action::OpenSettings, &mut app);
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("expected Settings modal after OpenSettings dispatch")
-    };
-    assert!(
-        !state.pager_snapshot.multiline_mode,
-        "snapshot at open should be false (agent default)",
-    );
-    let _ = dispatch(Action::SetMultilineMode(true), &mut app);
-    let agent = app.agents.get(&AgentId(0)).unwrap();
-    let Some(ActiveModal::Settings { state }) = &agent.active_modal else {
-        panic!("Settings modal must remain open across the dispatch")
-    };
-    assert!(
-        state.pager_snapshot.multiline_mode,
-        "snapshot must be refreshed to true after SetMultilineMode(true) — \
-             stale-snapshot bug (Round-2 Issue 1) would leave it false",
-    );
-    let cur_value = crate::settings::current_value_for(
-        "multiline_mode",
-        &state.ui_snapshot,
-        &state.pager_snapshot,
-    )
-    .expect("multiline_mode must resolve");
-    assert_eq!(
-        cur_value,
-        crate::settings::SettingValue::Bool(true),
-        "current_value_for must read the refreshed snapshot",
-    );
-}
 /// Regression test (SHARED path).
 ///
-/// Same bug pattern as the multiline test above, but for
-/// `compact_mode` (SHARED). The bug is fixed for the entire
-/// SHARED family by calling `refresh_open_settings_modals` from
-/// every `set_X` outer, not just for multiline.
+/// `compact_mode` (SHARED) refreshes the open modal snapshot by calling
+/// `refresh_open_settings_modals` from the outer setter.
 #[test]
 fn set_compact_mode_refreshes_open_modal_ui_snapshot() {
     use crate::views::modal::ActiveModal;
@@ -3232,8 +2995,7 @@ fn rollback_auto_light_theme_with_auto_value_clears_to_none() {
 }
 /// Setter refreshes the open settings modal
 /// snapshot so the indicator reflects the new value before the
-/// shell's CurrentModeUpdate round-trip. Mirrors
-/// `set_multiline_mode_refreshes_open_modal_pager_snapshot`.
+/// shell's CurrentModeUpdate round-trip.
 #[test]
 fn set_plan_mode_refreshes_open_modal_pager_snapshot() {
     use crate::views::modal::ActiveModal;

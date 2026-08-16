@@ -468,7 +468,6 @@ fn paint_peek_config_badge(
     theme: &Theme,
     panel: &PeekPanelState,
     reply: &crate::views::prompt_widget::PromptWidget,
-    multiline: bool,
 ) {
     use crate::views::prompt_widget::{PromptFlag, PromptInfo};
 
@@ -501,13 +500,12 @@ fn paint_peek_config_badge(
             bold: false,
         });
     }
-    if model_label.is_empty() && flags.is_empty() && !multiline {
+    if model_label.is_empty() && flags.is_empty() {
         return;
     }
     let info = PromptInfo {
         model_name: &model_label,
         flags: &flags,
-        multiline,
         usage_warning: None,
         usage_warning_critical: false,
     };
@@ -566,7 +564,6 @@ pub fn render_peek_panel(
     theme: &Theme,
     voice_listening: bool,
     voice_interim: Option<&str>,
-    multiline: bool,
     overlay_area: Option<Rect>,
     live_tail: Option<PeekLiveTailArgs<'_>>,
     empty_hint: Option<&str>,
@@ -599,7 +596,7 @@ pub fn render_peek_panel(
     // Covers every peek mode (summary, QA, approval) since it sits on the
     // border, outside the content rows. Painted after the block so it
     // overwrites the plain `╰──╯` fill.
-    paint_peek_config_badge(buf, area, theme, panel, reply, multiline);
+    paint_peek_config_badge(buf, area, theme, panel, reply);
 
     // Record badge on the top border while the mic is hot — the peek panel
     // replaces the dispatch box, so without this a capture started with a row
@@ -1277,7 +1274,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             Some(PeekLiveTailArgs { scrollback: &sb }),
             None,
@@ -1316,7 +1312,6 @@ mod tests {
                 &theme,
                 false,
                 None,
-                false,
                 None,
                 None,
                 None,
@@ -1361,7 +1356,6 @@ mod tests {
                 &theme,
                 false,
                 None,
-                false,
                 None,
                 None,
                 None,
@@ -1469,7 +1463,6 @@ mod tests {
             &theme,
             true,
             Some("hello there"),
-            false,
             None,
             None,
             None,
@@ -1547,7 +1540,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1613,7 +1605,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1652,7 +1643,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1692,7 +1682,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1737,7 +1726,6 @@ mod tests {
                 &theme,
                 false,
                 None,
-                false,
                 None,
                 None,
                 None,
@@ -1806,7 +1794,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1861,7 +1848,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1914,7 +1900,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -1972,7 +1957,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -2035,7 +2019,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -2090,7 +2073,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -2132,7 +2114,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             None,
             None,
             None,
@@ -2178,7 +2159,6 @@ mod tests {
             &theme,
             false,
             None,
-            false,
             Some(overlay),
             None,
             None,
@@ -2241,7 +2221,7 @@ mod tests {
         let mut reply = test_reply();
         reply.set_text("alpha\nbravo\ncharlie");
         let res = render_peek_panel(
-            &mut buf, area, &panel, &mut reply, &theme, false, None, false, None, None, None,
+            &mut buf, area, &panel, &mut reply, &theme, false, None, None, None, None,
         );
         let rect = res.reply_rect.expect("reply rect must be reported");
         assert!(

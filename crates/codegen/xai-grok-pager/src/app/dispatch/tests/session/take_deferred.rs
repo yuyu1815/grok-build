@@ -183,16 +183,28 @@ fn stashed_model_keeps_model_when_unsupported() {
 }
 
 #[test]
-fn effort_only_accepts_max_as_xhigh() {
-    let models = models_with_current(true);
+fn effort_only_keeps_max_distinct_from_xhigh() {
+    let mut models = models_with_current(true);
+    let current = models.current.clone().unwrap();
+    models.available.get_mut(&current).unwrap().meta = Some(
+        serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEffort": "medium",
+            "reasoningEfforts": [
+                { "id": "xhigh", "value": "xhigh", "label": "X-High" },
+                { "id": "max", "value": "max", "label": "Max" },
+            ],
+        })
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
+
     let out = take_deferred_model_switch(None, &models, Some("max"));
     assert_eq!(
         out,
         DeferredSwitchOutcome {
-            switch: Some((
-                models.current.clone().unwrap(),
-                Some(ReasoningEffort::Xhigh)
-            )),
+            switch: Some((current, Some(ReasoningEffort::Max))),
             effort_error: None,
         }
     );

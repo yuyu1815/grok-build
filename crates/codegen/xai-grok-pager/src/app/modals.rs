@@ -126,6 +126,15 @@ impl AgentView {
             return InputOutcome::Changed;
         };
 
+        // Ctrl+M toggles the models picker closed without applying the
+        // highlighted selection.
+        if matches!(modal, ActiveModal::ModelsPicker { .. })
+            && crate::key!('m', CONTROL).matches(key)
+        {
+            self.active_modal = None;
+            return InputOutcome::Changed;
+        }
+
         // Picker-based modals: route Esc through ModalWindow chrome first,
         // then delegate remaining keys to the picker input handler.
         if matches!(modal, ActiveModal::ModelsPicker { .. }) {

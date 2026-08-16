@@ -40,7 +40,7 @@ Or use the alias:
 
 ### Model Picker (Ctrl+M)
 
-Press `Ctrl+M` from the scrollback pane to open the model picker. It lists all available models, both built-in and custom, and lets you switch with a single keystroke. With the prompt focused, `Ctrl+M` toggles multiline input instead -- use `/model` to switch without leaving the prompt.
+Press `Ctrl+M` from an unobstructed Agent screen — including the prompt, scrollback, and normal panes — to open the model picker. It lists all available models, both built-in and custom, and lets you switch with a single keystroke. Press `Ctrl+M` again to close the picker without applying its highlighted selection. The picker is also available through `/models` and the command palette.
 
 ### Config Default
 

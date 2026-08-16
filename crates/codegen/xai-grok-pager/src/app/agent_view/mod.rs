@@ -295,7 +295,7 @@ pub use super::queue_edit::PromptMode;
 /// `Normal` is the default. Each variant changes the prompt's visual appearance
 /// (accent color, prefix, placeholder) and the action dispatched on Enter.
 ///
-/// Orthogonal to `multiline_mode` ... and `PromptMode` ... and `InputMode`...
+/// Orthogonal to `PromptMode` and `InputMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PromptInputMode {
     /// Standard prompt: Enter sends `Action::SendPrompt`.
@@ -325,17 +325,11 @@ impl PromptInputMode {
             PromptInputMode::Remember => Some(("# ", theme.accent_remember)),
         }
     }
-    pub fn placeholder_override(self, multiline: bool) -> Option<&'static str> {
+    pub fn placeholder_override(self) -> Option<&'static str> {
         match self {
             PromptInputMode::Normal | PromptInputMode::Bash => None,
             PromptInputMode::Feedback => Some("Type your feedback..."),
-            PromptInputMode::Remember => {
-                if multiline {
-                    Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
-                } else {
-                    Some("Save a memory note... (Shift+Enter for multiline)")
-                }
-            }
+            PromptInputMode::Remember => Some("Save a memory note... (Shift+Enter for newline)"),
         }
     }
     pub fn prompt_info_override(self) -> Option<&'static str> {
@@ -786,9 +780,6 @@ pub struct AgentView {
     pub prompt_mode: PromptMode,
     /// Current special prompt input mode (Normal/Bash/Feedback/Remember).
     pub prompt_input_mode: PromptInputMode,
-    /// Multiline input mode: swap Enter (insert newline) and Shift+Enter (send).
-    /// Toggled by `Ctrl+M` or `/multiline`. Not persisted across sessions.
-    pub multiline_mode: bool,
     /// Vim-mode scrollback keybindings. When `false` (default), bare-letter
     /// and Shift+letter scrollback bindings (j/k, h/l, g/G, y/Y, o/O, r,
     /// x, e/E, L/H, plus the `i` FocusPrompt alt) are suppressed and the
@@ -2004,7 +1995,6 @@ fn resolve_action(action_id: Option<ActionId>) -> Option<InputOutcome> {
         | ActionId::OpenModelsPicker => return None,
         ActionId::DumpInputLog => return None,
         ActionId::ToggleYolo => return None,
-        ActionId::ToggleMultiline => return None,
         ActionId::InterjectPrompt => return None,
         ActionId::EnableVoiceMode => Action::EnableVoiceMode,
         ActionId::VoiceToggle => Action::VoiceToggle,
@@ -3272,25 +3262,15 @@ mod prompt_input_mode_tests {
     }
     #[test]
     fn placeholder_override_returns_expected_for_each_variant() {
-        assert_eq!(PromptInputMode::Normal.placeholder_override(false), None);
-        assert_eq!(PromptInputMode::Normal.placeholder_override(true), None);
-        assert_eq!(PromptInputMode::Bash.placeholder_override(false), None);
-        assert_eq!(PromptInputMode::Bash.placeholder_override(true), None);
+        assert_eq!(PromptInputMode::Normal.placeholder_override(), None);
+        assert_eq!(PromptInputMode::Bash.placeholder_override(), None);
         assert_eq!(
-            PromptInputMode::Feedback.placeholder_override(false),
+            PromptInputMode::Feedback.placeholder_override(),
             Some("Type your feedback...")
         );
         assert_eq!(
-            PromptInputMode::Feedback.placeholder_override(true),
-            Some("Type your feedback...")
-        );
-        assert_eq!(
-            PromptInputMode::Remember.placeholder_override(false),
-            Some("Save a memory note... (Shift+Enter for multiline)")
-        );
-        assert_eq!(
-            PromptInputMode::Remember.placeholder_override(true),
-            Some("Save a memory note... (Enter for newline, Shift+Enter to save)")
+            PromptInputMode::Remember.placeholder_override(),
+            Some("Save a memory note... (Shift+Enter for newline)")
         );
     }
     #[test]

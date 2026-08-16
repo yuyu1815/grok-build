@@ -42,7 +42,6 @@ const ALL_SETTINGS_EXERCISED: &[&str] = &[
     "auto_dark_theme",
     "auto_light_theme",
     "render_mermaid",
-    "multiline_mode",
     "permission_mode",
     "default_model",
     "max_thoughts_width",
@@ -215,9 +214,6 @@ fn assert_set_bool_action(outcome: SettingsKeyOutcome, key: &str, expected: bool
         }
         ("simple_mode", Action::SetSimpleMode(b)) => {
             assert_eq!(b, expected, "SetSimpleMode value differs from expected")
-        }
-        ("multiline_mode", Action::SetMultilineMode(b)) => {
-            assert_eq!(b, expected, "SetMultilineMode value differs from expected")
         }
         ("vim_mode", Action::SetVimMode(b)) => {
             assert_eq!(b, expected, "SetVimMode value differs from expected")
@@ -1752,7 +1748,6 @@ fn registry_kind_membership_through_pr_14() {
             "collapsed_edit_blocks",
             "invert_scroll",
             "display_refresh_auto_cadence",
-            "multiline_mode",
             "prompt_suggestions",
             "respect_manual_folds",
             "show_thinking_blocks",
@@ -1915,7 +1910,6 @@ fn defaults_round_trip_through_registry() {
             "auto_dark_theme" => SettingValue::Enum("groknight"),
             "auto_light_theme" => SettingValue::Enum("grokday"),
             "render_mermaid" => SettingValue::Enum("auto"),
-            "multiline_mode" => SettingValue::Bool(false),
             "permission_mode" => SettingValue::Enum("ask"),
             "default_model" => SettingValue::String(String::new()),
             "max_thoughts_width" => SettingValue::Int(120),
@@ -2005,7 +1999,6 @@ fn settings_value_payload_matches_kind() {
             | SettingsKeyOutcome::Action(Action::SetTimeline(_))
             | SettingsKeyOutcome::Action(Action::SetPageFlipOnSend(_))
             | SettingsKeyOutcome::Action(Action::SetSimpleMode(_))
-            | SettingsKeyOutcome::Action(Action::SetMultilineMode(_))
             | SettingsKeyOutcome::Action(Action::SetVimMode(_))
             | SettingsKeyOutcome::Action(Action::SetRememberToolApprovals(_))
             | SettingsKeyOutcome::Action(Action::SetAskUserQuestionTimeoutEnabled(_))
@@ -2726,130 +2719,6 @@ fn pr4_mouse_click_in_theme_picker_is_no_op() {
 }
 
 // ---------------------------------------------------------------------------
-// `multiline_mode` (first PAGER-owned setting)
-//
-// Unlike the SHARED bools (which round-trip through
-// `Effect::PersistSetting` and the shell), `multiline_mode` is
-// PAGER-owned: state lives on `AgentView.multiline_mode`, the modal
-// reads from `PagerLocalSnapshot`, and the dispatcher's
-// `set_multiline_mode` is the single mutation owner. No disk persist,
-// no `Effect`, no toast on the no-op fast path.
-//
-// These tests mirror the keyboard + mouse coverage promised by
-// `ALL_SETTINGS_EXERCISED` — same rigor as `compact_mode` et al.
-// ---------------------------------------------------------------------------
-
-/// Keyboard Space on the multiline row dispatches the typed setter
-/// with the inverted snapshot value (default false → true). The modal
-/// builds the bool from `PagerLocalSnapshot.multiline_mode` via the
-/// `current_value_for` arm.
-#[test]
-fn pr5_space_on_multiline_mode_dispatches_typed_setter() {
-    let mut s = make_state();
-    navigate_to(&mut s, "multiline_mode");
-    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
-    assert_set_bool_action(outcome, "multiline_mode", true);
-}
-
-/// Enter on the multiline row also toggles (same Bool semantics as
-/// compact_mode / show_timestamps / simple_mode). Pins the contract
-/// that Bool row Enter and Space behave identically across both
-/// SHELL/SHARED and PAGER-owned settings.
-#[test]
-fn pr5_enter_on_multiline_mode_dispatches_typed_setter() {
-    let mut s = make_state();
-    navigate_to(&mut s, "multiline_mode");
-    let outcome = handle_settings_key(&mut s, &press(KeyCode::Enter));
-    assert_set_bool_action(outcome, "multiline_mode", true);
-}
-
-/// Two-stage select-then-toggle for `multiline_mode` mouse path.
-#[test]
-fn pr5_mouse_click_on_multiline_mode_two_stage_toggles() {
-    let mut s = make_state();
-    synth_rects(&mut s);
-    let row_y = row_idx_for(&s, "multiline_mode") as u16;
-
-    // First click: select-only (initial focus is on compact_mode).
-    // Click at column=10 (outside the indicator hit-rect 0..5).
-    let outcome = handle_settings_mouse(
-        &mut s,
-        MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        10,
-        row_y,
-    );
-    assert!(
-        matches!(outcome, SettingsKeyOutcome::Changed),
-        "first click on a different row body should only select, got: {outcome:?}"
-    );
-    assert_eq!(
-        s.selected, row_y as usize,
-        "first click must move selection to multiline_mode row",
-    );
-
-    // Second click on the now-focused row: toggle.
-    let outcome = handle_settings_mouse(
-        &mut s,
-        MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        10,
-        row_y,
-    );
-    assert_set_bool_action(outcome, "multiline_mode", true);
-}
-
-/// Value-column click on `multiline_mode` toggles in one click.
-#[test]
-fn pr5_mouse_click_on_multiline_indicator_toggles_in_one_click() {
-    let mut s = make_state();
-    synth_rects(&mut s);
-    let row_y = row_idx_for(&s, "multiline_mode") as u16;
-    let outcome = handle_settings_mouse(
-        &mut s,
-        MouseEventKind::Down(crossterm::event::MouseButton::Left),
-        72,
-        row_y,
-    );
-    assert_set_bool_action(outcome, "multiline_mode", true);
-}
-
-/// Snapshot `multiline_mode: true` → Space dispatches `SetMultilineMode(false)`.
-#[test]
-fn pr5_snapshot_when_on_dispatches_off() {
-    let snapshot = PagerLocalSnapshot {
-        multiline_mode: true,
-        yolo_mode: false,
-        ..PagerLocalSnapshot::default()
-    };
-    let mut s = SettingsModalState::new(
-        Arc::new(SettingsRegistry::defaults()),
-        UiConfig::default(),
-        snapshot,
-    );
-    navigate_to(&mut s, "multiline_mode");
-    let outcome = handle_settings_key(&mut s, &press(KeyCode::Char(' ')));
-    assert_set_bool_action(outcome, "multiline_mode", false);
-}
-
-/// `multiline_mode` lives under Editor, not Appearance.
-#[test]
-fn pr5_multiline_mode_renders_under_editor_category() {
-    let reg = SettingsRegistry::defaults();
-    let meta = reg
-        .find("multiline_mode")
-        .expect("multiline_mode must be registered");
-    assert_eq!(
-        meta.category,
-        SettingCategory::Editor,
-        "multiline_mode must live under Editor"
-    );
-    assert_eq!(
-        meta.owner,
-        SettingOwner::Pager,
-        "multiline_mode must be PAGER-owned"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // permission_mode (security-relevant Enum, no preview)
 // ---------------------------------------------------------------------------
 
@@ -2903,12 +2772,10 @@ fn pr6_current_value_for_reads_pager_snapshot() {
     let ui = UiConfig::default();
 
     let off_snap = PagerLocalSnapshot {
-        multiline_mode: false,
         yolo_mode: false,
         ..PagerLocalSnapshot::default()
     };
     let on_snap = PagerLocalSnapshot {
-        multiline_mode: false,
         yolo_mode: true,
         ..PagerLocalSnapshot::default()
     };
@@ -3088,7 +2955,6 @@ fn pr6_permission_mode_picker_esc_does_not_dispatch_action() {
 #[test]
 fn pr6_picker_seeds_choices_idx_from_pager_snapshot_yolo_true() {
     let snapshot = PagerLocalSnapshot {
-        multiline_mode: false,
         yolo_mode: true,
         auto_mode_gate: true,
         ..PagerLocalSnapshot::default()
@@ -6496,8 +6362,7 @@ fn pr14_model_family_settings_are_discoverable_via_search() {
 
 /// Keyboard Space on the vim_mode row dispatches the typed setter
 /// with the inverted snapshot value (default false → true). Same
-/// shape as the `multiline_mode` test above; both rows are
-/// PAGER-owned Bool settings.
+/// with the inverted snapshot value (default false → true).
 #[test]
 fn vim_mode_space_dispatches_typed_setter() {
     let mut s = make_state();
@@ -7418,27 +7283,6 @@ fn prompt_suggestions_renders_under_editor_category_shell_owned() {
         SettingKind::Bool { default } => assert!(*default, "default must be true"),
         other => panic!("expected Bool kind for prompt_suggestions, got {other:?}"),
     }
-    // Must sit immediately below multiline_mode in the registry order.
-    let keys: Vec<&str> = reg
-        .all()
-        .iter()
-        .filter(|m| m.category == SettingCategory::Editor)
-        .map(|m| m.key)
-        .collect();
-    let multiline_idx = keys
-        .iter()
-        .position(|k| *k == "multiline_mode")
-        .expect("multiline_mode in Editor");
-    let prompt_idx = keys
-        .iter()
-        .position(|k| *k == "prompt_suggestions")
-        .expect("prompt_suggestions in Editor");
-    assert_eq!(
-        multiline_idx + 1,
-        prompt_idx,
-        "prompt_suggestions must be immediately below multiline_mode; \
-         Editor order: {keys:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------

@@ -38,7 +38,6 @@ pub mod loop_cmd;
 pub mod mcps;
 pub mod model;
 pub mod models;
-pub mod multiline;
 pub mod new;
 pub mod personas;
 pub mod plan;
@@ -80,7 +79,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(docs::DocsCommand),
         Arc::new(home::HomeCommand),
         Arc::new(new::NewCommand),
-        
         Arc::new(fork::ForkCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(copy::CopyCommand),
@@ -97,7 +95,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(effort::EffortCommand),
         Arc::new(always_approve::AlwaysApproveCommand),
         Arc::new(auto::AutoCommand),
-        Arc::new(multiline::MultilineCommand),
         Arc::new(compact_mode::CompactModeCommand),
         Arc::new(vim_mode::VimModeCommand),
         Arc::new(plugin::HooksCommand),
@@ -119,7 +116,6 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(mcps::McpsCommand),
         Arc::new(btw::BtwCommand),
         Arc::new(recap::RecapCommand),
-        
         Arc::new(terminal_setup::TerminalSetupCommand),
         Arc::new(voice::VoiceCommand),
         Arc::new(loop_cmd::LoopCommand),
@@ -188,7 +184,6 @@ mod tests {
             bundle_state: &DEFAULT_BUNDLE_STATE,
             screen_mode: crate::app::ScreenMode::Inline,
             pager_state: crate::settings::PagerLocalSnapshot {
-                multiline_mode: false,
                 yolo_mode: false,
                 ..crate::settings::PagerLocalSnapshot::default()
             },

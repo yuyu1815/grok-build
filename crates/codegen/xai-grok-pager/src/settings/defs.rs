@@ -814,18 +814,6 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: true,
             hidden_in_minimal: false,
         },
-        // PAGER-owned; default pinned by `defaults_match_pager_state`.
-        SettingMeta {
-            key: "multiline_mode",
-            category: SettingCategory::Editor,
-            owner: SettingOwner::Pager,
-            label: "Multiline",
-            description: "When on, Enter inserts a newline and Shift+Enter sends. Resets each session.",
-            keywords: &["multiline", "newline", "input", "editor", "enter"],
-            kind: SettingKind::Bool { default: false },
-            restart_required: false,
-            hidden_in_minimal: false,
-        },
         // SHELL-owned. Reads from `pager.current_model_name` (not
         // `cfg.models.default`) so the modal reflects `/model` switches.
         // Empty-string default = "no opinion" / use shell's resolution.
