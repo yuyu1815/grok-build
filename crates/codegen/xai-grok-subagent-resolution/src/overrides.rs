@@ -54,7 +54,7 @@ pub fn resolve_effective_overrides(
     // ── Reasoning effort resolution ──────────────────────────────
     let reasoning_from_override_or_role = overrides
         .reasoning_effort
-        .clone()
+        .map(|effort| effort.as_str().to_string())
         .or_else(|| role.and_then(|r| r.reasoning_effort.clone()));
 
     // ── Capability mode resolution ───────────────────────────────
@@ -218,7 +218,7 @@ mod tests {
         SubagentRuntimeOverrides {
             model: model.map(String::from),
             model_override_provenance: ModelOverrideProvenance::Harness,
-            reasoning_effort: reasoning_effort.map(String::from),
+            reasoning_effort: reasoning_effort.and_then(|value| value.parse().ok()),
             persona: persona.map(String::from),
             capability_mode,
             isolation,

@@ -759,92 +759,43 @@ impl CompactionsRemaining {
     }
 }
 
-/// Reasoning effort level. `None`/`Minimal` are omitted on the Anthropic Messages API.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    None,
-    Minimal,
-    Low,
-    #[default]
-    Medium,
-    High,
-    Xhigh,
-}
+pub use xai_tool_types::ReasoningEffort;
 
-impl ReasoningEffort {
-    pub fn to_responses_api(self) -> crate::rs::ReasoningEffort {
-        match self {
-            Self::None => crate::rs::ReasoningEffort::None,
-            Self::Minimal => crate::rs::ReasoningEffort::Minimal,
-            Self::Low => crate::rs::ReasoningEffort::Low,
-            Self::Medium => crate::rs::ReasoningEffort::Medium,
-            Self::High => crate::rs::ReasoningEffort::High,
-            Self::Xhigh => crate::rs::ReasoningEffort::Xhigh,
-        }
-    }
-
-    /// Inverse of [`to_responses_api`](Self::to_responses_api): the effort the
-    /// Responses API echoes back on `response.reasoning.effort`.
-    pub fn from_responses_api(effort: crate::rs::ReasoningEffort) -> Self {
-        match effort {
-            crate::rs::ReasoningEffort::None => Self::None,
-            crate::rs::ReasoningEffort::Minimal => Self::Minimal,
-            crate::rs::ReasoningEffort::Low => Self::Low,
-            crate::rs::ReasoningEffort::Medium => Self::Medium,
-            crate::rs::ReasoningEffort::High => Self::High,
-            crate::rs::ReasoningEffort::Xhigh => Self::Xhigh,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Minimal => "minimal",
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-            Self::Xhigh => "xhigh",
-        }
-    }
-
-    /// Anthropic Messages API `output_config.effort` string; `None` for unsupported variants.
-    pub fn to_messages_api(self) -> Option<&'static str> {
-        match self {
-            Self::None | Self::Minimal => None,
-            Self::Low => Some("low"),
-            Self::Medium => Some("medium"),
-            Self::High => Some("high"),
-            Self::Xhigh => Some("max"),
-        }
+/// API-specific Responses conversion kept in the sampling layer.
+pub fn reasoning_effort_to_responses_api(effort: ReasoningEffort) -> crate::rs::ReasoningEffort {
+    match effort {
+        ReasoningEffort::None => crate::rs::ReasoningEffort::None,
+        ReasoningEffort::Minimal => crate::rs::ReasoningEffort::Minimal,
+        ReasoningEffort::Low => crate::rs::ReasoningEffort::Low,
+        ReasoningEffort::Medium => crate::rs::ReasoningEffort::Medium,
+        ReasoningEffort::High => crate::rs::ReasoningEffort::High,
+        ReasoningEffort::Xhigh => crate::rs::ReasoningEffort::Xhigh,
     }
 }
 
-impl std::fmt::Display for ReasoningEffort {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+pub fn reasoning_effort_from_responses_api(effort: crate::rs::ReasoningEffort) -> ReasoningEffort {
+    match effort {
+        crate::rs::ReasoningEffort::None => ReasoningEffort::None,
+        crate::rs::ReasoningEffort::Minimal => ReasoningEffort::Minimal,
+        crate::rs::ReasoningEffort::Low => ReasoningEffort::Low,
+        crate::rs::ReasoningEffort::Medium => ReasoningEffort::Medium,
+        crate::rs::ReasoningEffort::High => ReasoningEffort::High,
+        crate::rs::ReasoningEffort::Xhigh => ReasoningEffort::Xhigh,
     }
 }
 
-impl std::str::FromStr for ReasoningEffort {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "none" => Ok(Self::None),
-            "minimal" => Ok(Self::Minimal),
-            "low" => Ok(Self::Low),
-            "medium" => Ok(Self::Medium),
-            "high" => Ok(Self::High),
-            "xhigh" | "max" => Ok(Self::Xhigh), // max is a CLI/UX alias of xhigh
-            _ => Err(format!(
-                "invalid reasoning effort: {s:?} (expected one of: none, minimal, low, medium, high, xhigh, max)"
-            )),
-        }
+/// Anthropic Messages API `output_config.effort` string; `None` for unsupported variants.
+pub fn reasoning_effort_to_messages_api(effort: ReasoningEffort) -> Option<&'static str> {
+    match effort {
+        ReasoningEffort::None | ReasoningEffort::Minimal => None,
+        ReasoningEffort::Low => Some("low"),
+        ReasoningEffort::Medium => Some("medium"),
+        ReasoningEffort::High => Some("high"),
+        ReasoningEffort::Xhigh => Some("max"),
     }
 }
 
-/// Canonical wire parse only (`max` → `Xhigh`); remapped menu ids need a model catalog.
+/// Canonical wire parse only; remapped menu ids need a model catalog.
 pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
     token.parse().ok()
 }
@@ -1224,17 +1175,13 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_from_str_accepts_max_as_xhigh() {
-        assert_eq!(
-            "max".parse::<ReasoningEffort>().unwrap(),
-            ReasoningEffort::Xhigh
-        );
-        assert_eq!(
-            "MAX".parse::<ReasoningEffort>().unwrap(),
-            ReasoningEffort::Xhigh
-        );
+    fn reasoning_effort_from_str_accepts_max_alias() {
         assert_eq!(
             "xhigh".parse::<ReasoningEffort>().unwrap(),
+            ReasoningEffort::Xhigh
+        );
+        assert_eq!(
+            "max".parse::<ReasoningEffort>().unwrap(),
             ReasoningEffort::Xhigh
         );
         assert_eq!(ReasoningEffort::Xhigh.as_str(), "xhigh");

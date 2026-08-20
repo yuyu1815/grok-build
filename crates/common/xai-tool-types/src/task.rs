@@ -4,6 +4,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::ReasoningEffort;
+
 // ───────────────────────────────────────────────────────────────────────────
 // `task` (spawn) tool — Input
 // ───────────────────────────────────────────────────────────────────────────
@@ -102,6 +104,15 @@ pub struct TaskToolInput {
     )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+
+    /// Optional reasoning effort for this subagent spawn.
+    #[schemars(
+        description = "Optional reasoning effort for this agent: \"none\", \"minimal\", \
+            \"low\", \"medium\", \"high\", or \"xhigh\". If omitted, the subagent \
+            inherits its role, persona, agent definition, model, or parent default."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 
     /// Server-injected before execution. Becomes the subagent's session ID.
     #[schemars(skip)]
@@ -1140,6 +1151,26 @@ mod tests {
     }
 
     #[test]
+    fn task_json_rejects_max_reasoning_effort() {
+        let json = serde_json::json!({
+            "prompt": "do the thing",
+            "description": "test",
+            "reasoning_effort": "max"
+        });
+        assert!(serde_json::from_value::<TaskToolInput>(json).is_err());
+    }
+
+    #[test]
+    fn task_schema_reasoning_effort_exposes_six_values_without_max() {
+        let schema = serde_json::to_value(schemars::schema_for!(TaskToolInput)).unwrap();
+        let schema_text = schema.to_string();
+        for value in ReasoningEffort::VALID_VALUES {
+            assert!(schema_text.contains(value), "schema missing {value}");
+        }
+        assert!(!schema_text.contains("\"max\""));
+    }
+
+    #[test]
     fn task_tool_input_model_none_skips_serialize() {
         let input = TaskToolInput {
             prompt: "p".into(),
@@ -1151,6 +1182,7 @@ mod tests {
             resume_from: None,
             cwd: None,
             model: None,
+            reasoning_effort: None,
             task_id: None,
         };
         let value = serde_json::to_value(&input).unwrap();

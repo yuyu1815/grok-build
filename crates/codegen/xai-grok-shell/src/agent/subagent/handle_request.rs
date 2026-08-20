@@ -150,9 +150,20 @@ pub(crate) async fn handle_subagent_request(
     );
     let mut effective_runtime = effective_runtime;
     if effective_runtime.reasoning_effort.is_none() {
-        effective_runtime.reasoning_effort = definition
-            .effort
-            .map(|e| <&str>::from(e).to_string());
+        effective_runtime.reasoning_effort = definition.effort.map(|effort| {
+            let effort: xai_grok_sampling_types::ReasoningEffort = match effort {
+                xai_grok_agent::config::Effort::Low => xai_grok_sampling_types::ReasoningEffort::Low,
+                xai_grok_agent::config::Effort::Medium => {
+                    xai_grok_sampling_types::ReasoningEffort::Medium
+                }
+                xai_grok_agent::config::Effort::High => xai_grok_sampling_types::ReasoningEffort::High,
+                xai_grok_agent::config::Effort::XHigh => {
+                    xai_grok_sampling_types::ReasoningEffort::Xhigh
+                }
+                xai_grok_agent::config::Effort::Max => xai_grok_sampling_types::ReasoningEffort::Xhigh,
+            };
+            effort.as_str().to_string()
+        });
     }
     {
         use xai_tool_types::SubagentIsolationMode;

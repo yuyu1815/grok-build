@@ -1,5 +1,6 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+use xai_tool_types::ReasoningEffort;
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, make_request, test_gateway,
 };
@@ -1460,7 +1461,7 @@ fn partial_override_fills_from_role() {
 #[test]
 fn reasoning_effort_explicit_overrides_role() {
     let overrides = SubagentRuntimeOverrides {
-        reasoning_effort: Some("high".into()),
+        reasoning_effort: Some(ReasoningEffort::High),
         ..Default::default()
     };
     let role = xai_grok_subagent_resolution::config::SubagentRole {
@@ -1641,7 +1642,7 @@ fn reasoning_effort_precedence_explicit_over_role_over_persona() {
     };
     let overrides = SubagentRuntimeOverrides {
         persona: Some("dev".into()),
-        reasoning_effort: Some("high".into()),
+        reasoning_effort: Some(ReasoningEffort::High),
         ..Default::default()
     };
     let r = resolve_effective_overrides(&overrides, Some(&role), &personas, None, None);
@@ -3252,6 +3253,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
         info: crate::agent::config::ModelInfo {
             user_selectable: true,
             id: None,
+            provider: crate::provider::ProviderId::Xai,
             model: model_id.to_string(),
             base_url: String::new(),
             name: None,
