@@ -1816,6 +1816,7 @@ fn show_tasks_lists_a_scheduled_task() {
                 created_at: std::time::Instant::now(),
                 next_fire_at: None,
                 tag: "loop".to_string(),
+                last_subagent_id: None,
             },
         );
     }
