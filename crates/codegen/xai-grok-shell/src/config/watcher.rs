@@ -678,15 +678,14 @@ mod tests {
         fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
         fs::write(&auth_path, "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(50)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(&auth_path, r#"{"new":"token"}"#).unwrap();
         wait_ms(300);
@@ -717,15 +716,14 @@ mod tests {
         fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
         fs::write(&auth_path, "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(50)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
         wait_ms(150);
         while rx.try_recv().is_ok() {} // drain any startup noise
 
@@ -769,15 +767,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("config.toml"), "").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(50)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(tmp.path().join("config.toml"), "[ui]\ntheme = \"dark\"").unwrap();
         wait_ms(300);
@@ -803,15 +800,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("models_cache.json"), "{}").unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(50)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(
             tmp.path().join("models_cache.json"),
@@ -834,15 +830,14 @@ mod tests {
     fn watcher_ignores_unrelated_files() {
         let tmp = TempDir::new().unwrap();
 
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(50)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(50)),
+        )
+        .expect("watcher should start");
 
         fs::write(tmp.path().join("leader.log"), "log line").unwrap();
         fs::write(tmp.path().join("leader.lock"), "12345").unwrap();
@@ -860,15 +855,14 @@ mod tests {
 
         // Use a long debounce (500ms) so all rapid writes (50ms total)
         // land in a single debounce window regardless of platform.
-        let (_w, mut rx) =
-            ConfigFileWatcher::start(
-                tmp.path(),
-                &crate::auth::default_auth_path(tmp.path()),
-                &[],
-                None,
-                Some(Duration::from_millis(500)),
-            )
-            .expect("watcher should start");
+        let (_w, mut rx) = ConfigFileWatcher::start(
+            tmp.path(),
+            &crate::auth::default_auth_path(tmp.path()),
+            &[],
+            None,
+            Some(Duration::from_millis(500)),
+        )
+        .expect("watcher should start");
 
         wait_ms(200);
 

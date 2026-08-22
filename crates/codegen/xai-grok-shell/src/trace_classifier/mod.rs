@@ -2157,7 +2157,8 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string()).expect("write auth.json");
+        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
+            .expect("write auth.json");
     }
 
     /// `auth.json` with no scope entries — equivalent to "user never
@@ -2188,7 +2189,8 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string()).expect("write auth.json");
+        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
+            .expect("write auth.json");
     }
 
     /// Write an expired OIDC entry with NO `refresh_token`. The
@@ -2206,7 +2208,8 @@ mod tests {
                 "user_id": "test-user",
             }
         });
-        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string()).expect("write auth.json");
+        std::fs::write(grok_home.join("auth").join("grok.json"), body.to_string())
+            .expect("write auth.json");
     }
 
     /// F20: `resolve_api_key` precedence (flag > env > error). Now

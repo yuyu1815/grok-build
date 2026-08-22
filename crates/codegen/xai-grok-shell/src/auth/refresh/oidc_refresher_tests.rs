@@ -682,9 +682,8 @@ async fn lock_timeout_falls_through_to_refresh() {
     mgr.hot_swap(expired);
 
     // Hold the lock file externally so the refresher times out.
-    let lock_path = crate::auth::storage::lock_path_for_auth(
-        &dir.path().join("auth").join("grok.json"),
-    );
+    let lock_path =
+        crate::auth::storage::lock_path_for_auth(&dir.path().join("auth").join("grok.json"));
     std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
