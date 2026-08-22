@@ -105,11 +105,8 @@ pub const MAX_DEFAULT_MODEL_LEN: usize = 256;
 /// Empty string clears the field (falls back to remote/built-in default).
 /// Length over [`MAX_DEFAULT_MODEL_LEN`] returns `Err`.
 pub async fn set_default_model(value: String) -> Result<()> {
-    super::campaigns::persist_models_default(
-        if value.is_empty() { None } else { Some(value) },
-        None,
-    )
-    .await
+    super::campaigns::persist_models_default(if value.is_empty() { None } else { Some(value) })
+        .await
 }
 
 /// Persist `[ui].fork_secondary_model` via `update_config`.

@@ -152,10 +152,10 @@ fn pump_until(
 /// `GROK_LOCAL_AUTH=1` in the spawn env so the shell's scope-key lookup
 /// resolves this entry.
 fn seed_fake_oauth_local_issuer(content: &ContentController, user: &str) {
-    let grok_home = content.home().join(".grok");
-    std::fs::create_dir_all(&grok_home).expect("create temp .grok");
+    let auth_dir = content.home().join(".grok").join("auth");
+    std::fs::create_dir_all(&auth_dir).expect("create temp auth dir");
     std::fs::write(
-        grok_home.join("auth.json"),
+        auth_dir.join("grok.json"),
         format!(
             r#"{{
   "http://localhost:22255::b1a00492-073a-47ea-816f-4c329264a828": {{

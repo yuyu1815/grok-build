@@ -12,6 +12,10 @@ use xai_grok_agent::prompt::skills::SkillsConfig;
 static SAVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub async fn save_config(config: &Config) -> Result<()> {
+    save_config_removing(config, &[]).await
+}
+
+async fn save_config_removing(config: &Config, removals: &[(&str, &str)]) -> Result<()> {
     let _guard = SAVE_LOCK.lock().await;
 
     let path = user_config_path();
@@ -44,6 +48,11 @@ pub async fn save_config(config: &Config) -> Result<()> {
     merge_section(table, "harness", &config.harness);
     merge_section(table, "session", &config.session);
     merge_ask_user_question_section(table, &config.ask_user_question);
+    for &(section, key) in removals {
+        if let Some(section) = table.get_mut(section).and_then(TomlValue::as_table_mut) {
+            section.remove(key);
+        }
+    }
 
     if config.skills == SkillsConfig::default() {
         table.remove("skills");
@@ -228,11 +237,21 @@ pub async fn update_config<F>(f: F) -> Result<()>
 where
     F: FnOnce(&mut Config),
 {
+    update_config_removing(f, &[]).await
+}
+
+/// Update settings while explicitly deleting modeled optional keys whose
+/// `None` serialization would otherwise leave the old value in place during
+/// the preservation merge.
+pub(crate) async fn update_config_removing<F>(f: F, removals: &[(&str, &str)]) -> Result<()>
+where
+    F: FnOnce(&mut Config),
+{
     let root: TomlValue =
         crate::config::load_from_disk().unwrap_or_else(|_| TomlValue::Table(TomlMap::new()));
     let mut cfg = load_config_from_toml(&root);
     f(&mut cfg);
-    save_config(&cfg).await
+    save_config_removing(&cfg, removals).await
 }
 
 #[cfg(test)]

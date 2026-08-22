@@ -442,7 +442,7 @@ pub fn cached_token_auth_method() -> acp::AuthMethod {
             acp::AuthMethodId::new(CACHED_TOKEN_AUTH_METHOD_ID),
             "cached_token".to_string(),
         )
-        .description(Some("Cached token from ~/.grok/auth.json".to_string())),
+        .description(Some("Cached token from ~/.grok/auth/grok.json".to_string())),
     )
 }
 

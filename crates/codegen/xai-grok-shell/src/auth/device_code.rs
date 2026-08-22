@@ -204,7 +204,7 @@ pub async fn request_device_code(
 
 /// Poll the token endpoint until the user approves (or denies / expires).
 ///
-/// On success, persists credentials to `~/.grok/auth.json` and returns
+/// On success, persists credentials to `~/.grok/auth/grok.json` and returns
 /// the authenticated `GrokAuth`.
 ///
 /// Callers should have already displayed `device_code.verification_uri`
@@ -701,7 +701,7 @@ pub(crate) mod tests {
             "rejected login must not persist credentials",
         );
         assert!(
-            !grok_home.join("auth.json").exists(),
+            !grok_home.join("auth").join("grok.json").exists(),
             "rejected login must not write auth.json",
         );
     }

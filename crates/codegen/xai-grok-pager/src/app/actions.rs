@@ -577,6 +577,8 @@ pub enum Action {
     /// Open the settings modal (F2, `/settings`, command palette).
     /// If already open, closes it instead of stacking.
     OpenSettings,
+    /// Open the cohesive one-screen model picker (`/models`).
+    OpenModelsPicker,
     /// Open the command palette (`/help`). The keybinding path (Ctrl+P) opens it
     /// directly in `handle_agent_action`; this lets a slash command reach the
     /// same modal through dispatch.
@@ -1543,11 +1545,6 @@ pub enum Effect {
         mode: crate::app::app_view::WorktreeMode,
         config_key: &'static str,
     },
-    /// Persist preferred model (and effort if Some) to config.toml.
-    PersistPreferredModel {
-        model_id: acp::ModelId,
-        reasoning_effort: Option<ReasoningEffort>,
-    },
     /// Persist the permission mode to config.toml and notify the agent
     /// via ACP. See [`PermissionModePersist`] for rollback semantics.
     PersistPermissionMode {
@@ -2261,9 +2258,6 @@ pub enum TaskResult {
         session_id: acp::SessionId,
         subagent_id: String,
         outcome: SubagentKillOutcome,
-    },
-    PreferredModelPersisted {
-        result: Result<(), String>,
     },
     /// Manual `/compact` command completed.
     CompactComplete {

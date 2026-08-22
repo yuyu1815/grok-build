@@ -1173,27 +1173,7 @@ impl AgentView {
                 });
                 InputOutcome::Changed
             }
-            ActionId::ModelPicker => {
-                let command = "model";
-                if let Some(cmd) = self.prompt.slash_controller.registry().get(command) {
-                    let ctx = self.prompt.slash_controller.app_ctx(&self.session.models);
-                    if let Some(items) = cmd.suggest_args(&ctx, "")
-                        && !items.is_empty()
-                    {
-                        self.active_modal = Some(crate::views::modal::ActiveModal::ArgPicker {
-                            command: command.to_string(),
-                            args_query: String::new(),
-                            items: items.clone(),
-                            original_items: items,
-                            state: crate::views::picker::PickerState::input_active(),
-                            previous_palette: None,
-                            window: crate::views::modal_window::ModalWindowState::new(),
-                        });
-                        return InputOutcome::Changed;
-                    }
-                }
-                InputOutcome::Changed
-            }
+            ActionId::OpenModelsPicker => InputOutcome::Action(Action::OpenModelsPicker),
             ActionId::ShortcutsHelp => {
                 use crate::views::shortcuts_help;
                 let reg = crate::actions::ActionRegistry::defaults();
@@ -1299,9 +1279,13 @@ impl AgentView {
 }
 #[cfg(test)]
 mod command_palette_input_default_tests {
+    use super::AgentPane;
     use super::test_fixtures::make_agent;
-    use crate::actions::ActionId;
+    use crate::actions::{ActionId, ActionRegistry};
+    use crate::app::actions::Action;
+    use crate::app::app_view::InputOutcome;
     use crate::views::modal::ActiveModal;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     /// Type-to-find: the command palette opens directly in INPUT mode
     /// (`search_active = true`) so a letter filters immediately. Under vim, Esc
     /// drops to nav and `i` re-enters input (covered by the PTY scenario).
@@ -1316,6 +1300,37 @@ mod command_palette_input_default_tests {
             state.search_active,
             "command palette must open in input mode (search_active=true)"
         );
+    }
+
+    #[test]
+    fn ctrl_m_routes_through_open_models_picker_action() {
+        let mut agent = make_agent();
+        agent.set_active_pane(AgentPane::Scrollback, false);
+        let outcome = agent.handle_input(
+            &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)),
+            &ActionRegistry::defaults(),
+        );
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::OpenModelsPicker)
+        ));
+        assert!(
+            agent.active_modal.is_none(),
+            "the keybinding handler must not open the legacy model ArgPicker directly"
+        );
+    }
+
+    #[test]
+    fn prompt_focused_ctrl_m_keeps_multiline_precedence() {
+        let mut agent = make_agent();
+        let outcome = agent.handle_input(
+            &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)),
+            &ActionRegistry::defaults(),
+        );
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetMultilineMode(true))
+        ));
     }
 }
 #[cfg(test)]

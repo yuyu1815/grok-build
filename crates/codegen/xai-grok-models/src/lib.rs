@@ -1,10 +1,13 @@
-//! Default model IDs loaded from `default_models.json` at runtime.
-//! Edit that JSON file to change them.
+//! Built-in model IDs and model-specific metadata for the Grok CLI.
 //!
-//! At runtime each model is resolved via:
-//!   CLI flag > ENV var > config.toml > remote settings > these defaults
+//! Default model IDs are loaded from `default_models.json`. At runtime each model
+//! is resolved via CLI flag > ENV var > config.toml > remote settings > defaults.
 
 use std::sync::LazyLock;
+
+mod reasoning_effort;
+
+pub use reasoning_effort::{ReasoningEffortPolicy, reasoning_effort_policy_for_model};
 
 /// The raw JSON, embedded at compile time. Re-exported through the
 /// `xai_grok_shell::models` facade and consumed by `agent::config`, so it must

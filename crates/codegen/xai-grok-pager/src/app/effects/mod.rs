@@ -1834,24 +1834,6 @@ pub(crate) fn execute(
             );
             persist_hint(tasks, config_key, mode.as_config_str(), "worktree mode");
         }
-        Effect::PersistPreferredModel { model_id, reasoning_effort } => {
-            let model_id_str = model_id.0.to_string();
-            tasks
-                .spawn(async move {
-                    let result = xai_grok_shell::util::config::persist_models_default(
-                            Some(model_id_str),
-                            reasoning_effort,
-                        )
-                        .await
-                        .map_err(|e| e.to_string());
-                    if let Err(ref e) = result {
-                        tracing::warn!("failed to save default model preference: {e}");
-                    }
-                    TaskResult::PreferredModelPersisted {
-                        result,
-                    }
-                });
-        }
         Effect::PersistPermissionMode { canonical, session_id, persist } => {
             let tx = acp_tx.clone();
             tasks
@@ -3975,10 +3957,9 @@ pub(crate) fn execute(
                                 return None;
                             }
                             let grok_home = xai_grok_shell::util::grok_home::grok_home();
-                            let store = xai_grok_shell::auth::read_auth_json(
-                                    &grok_home.join("auth.json"),
-                                )
-                                .ok()?;
+                            let auth_path =
+                                xai_grok_config::selected_auth_path(&grok_home);
+                            let store = xai_grok_shell::auth::read_auth_json(&auth_path).ok()?;
                             let scope = xai_grok_shell::auth::GrokComConfig::default()
                                 .auth_scope();
                             let auth = xai_grok_shell::auth::lookup_auth(

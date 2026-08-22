@@ -13,7 +13,7 @@ use super::cta::{
     handle_plugin_cta_catalog_loaded, handle_plugin_cta_debounce_expired,
     handle_plugin_cta_mcps_loaded,
 };
-use super::ctx::{find_agent_by_session_id, get_active_agent_mut};
+use super::ctx::find_agent_by_session_id;
 use super::notes::{handle_btw_response, handle_memory_note_saved};
 use super::prompt::{
     defer_to_open_reload_window, handle_compact_complete, handle_prompt_response,
@@ -419,16 +419,6 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
                         )
                     });
                 agent.show_toast(&format!("Send now failed — requeued: {error}"));
-            }
-            vec![]
-        }
-        TaskResult::PreferredModelPersisted { result } => {
-            if let Err(err) = result
-                && let Some(agent) = get_active_agent_mut(app)
-            {
-                agent.scrollback.push_block(RenderBlock::system(format!(
-                    "Couldn't save preferred model: {err} (still active for this session)"
-                )));
             }
             vec![]
         }
