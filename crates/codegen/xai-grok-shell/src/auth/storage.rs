@@ -18,10 +18,7 @@ pub(crate) fn ensure_auth_parent(auth_path: &Path) -> std::io::Result<()> {
 pub(crate) fn lock_path_for_auth(auth_path: &Path) -> PathBuf {
     auth_path.with_file_name(format!(
         "{}.lock",
-        auth_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
+        auth_path.file_name().unwrap_or_default().to_string_lossy()
     ))
 }
 
