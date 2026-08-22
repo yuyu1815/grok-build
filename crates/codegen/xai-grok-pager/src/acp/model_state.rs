@@ -231,8 +231,8 @@ impl ModelState {
         {
             return Some(option.value);
         }
-        // Canonical level (e.g. "high", "max"→xhigh) only if the model menu
-        // actually offers that value — not free-form power-user aliases that
+        // Canonical level (e.g. "high" or "max") only if the model menu
+        // actually offers that distinct value — not free-form power-user values that
         // would 400 on the server (e.g. `none` on grok-4.5).
         let parsed = token.parse::<ReasoningEffort>().ok()?;
         options
@@ -553,6 +553,28 @@ mod tests {
         assert!(state.resolve_effort_token("minimal").is_none());
         assert!(state.resolve_effort_token("none").is_none());
         assert!(state.resolve_effort_token("bogus").is_none());
+    }
+
+    #[test]
+    fn resolve_effort_token_keeps_max_distinct_from_xhigh() {
+        let both = state_with_meta(Some(serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [
+                { "value": "xhigh", "label": "X-High" },
+                { "value": "max", "label": "Max" },
+            ],
+        })));
+        assert_eq!(
+            both.resolve_effort_token("xhigh"),
+            Some(ReasoningEffort::Xhigh)
+        );
+        assert_eq!(both.resolve_effort_token("max"), Some(ReasoningEffort::Max));
+
+        let xhigh_only = state_with_meta(Some(serde_json::json!({
+            "supportsReasoningEffort": true,
+            "reasoningEfforts": [{ "value": "xhigh", "label": "X-High" }],
+        })));
+        assert!(xhigh_only.resolve_effort_token("max").is_none());
     }
 
     #[test]

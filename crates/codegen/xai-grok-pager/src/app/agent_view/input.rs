@@ -1279,6 +1279,7 @@ impl AgentView {
 }
 #[cfg(test)]
 mod command_palette_input_default_tests {
+    use super::AgentPane;
     use super::test_fixtures::make_agent;
     use crate::actions::{ActionId, ActionRegistry};
     use crate::app::actions::Action;
@@ -1304,6 +1305,7 @@ mod command_palette_input_default_tests {
     #[test]
     fn ctrl_m_routes_through_open_models_picker_action() {
         let mut agent = make_agent();
+        agent.set_active_pane(AgentPane::Scrollback, false);
         let outcome = agent.handle_input(
             &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)),
             &ActionRegistry::defaults(),
@@ -1316,6 +1318,19 @@ mod command_palette_input_default_tests {
             agent.active_modal.is_none(),
             "the keybinding handler must not open the legacy model ArgPicker directly"
         );
+    }
+
+    #[test]
+    fn prompt_focused_ctrl_m_keeps_multiline_precedence() {
+        let mut agent = make_agent();
+        let outcome = agent.handle_input(
+            &Event::Key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL)),
+            &ActionRegistry::defaults(),
+        );
+        assert!(matches!(
+            outcome,
+            InputOutcome::Action(Action::SetMultilineMode(true))
+        ));
     }
 }
 #[cfg(test)]

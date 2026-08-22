@@ -1543,11 +1543,6 @@ pub enum Effect {
         mode: crate::app::app_view::WorktreeMode,
         config_key: &'static str,
     },
-    /// Persist preferred model (and effort if Some) to config.toml.
-    PersistPreferredModel {
-        model_id: acp::ModelId,
-        reasoning_effort: Option<ReasoningEffort>,
-    },
     /// Persist the permission mode to config.toml and notify the agent
     /// via ACP. See [`PermissionModePersist`] for rollback semantics.
     PersistPermissionMode {
@@ -2261,9 +2256,6 @@ pub enum TaskResult {
         session_id: acp::SessionId,
         subagent_id: String,
         outcome: SubagentKillOutcome,
-    },
-    PreferredModelPersisted {
-        result: Result<(), String>,
     },
     /// Manual `/compact` command completed.
     CompactComplete {

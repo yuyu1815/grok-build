@@ -1834,24 +1834,6 @@ pub(crate) fn execute(
             );
             persist_hint(tasks, config_key, mode.as_config_str(), "worktree mode");
         }
-        Effect::PersistPreferredModel { model_id, reasoning_effort } => {
-            let model_id_str = model_id.0.to_string();
-            tasks
-                .spawn(async move {
-                    let result = xai_grok_shell::util::config::persist_models_default(
-                            Some(model_id_str),
-                            reasoning_effort,
-                        )
-                        .await
-                        .map_err(|e| e.to_string());
-                    if let Err(ref e) = result {
-                        tracing::warn!("failed to save default model preference: {e}");
-                    }
-                    TaskResult::PreferredModelPersisted {
-                        result,
-                    }
-                });
-        }
         Effect::PersistPermissionMode { canonical, session_id, persist } => {
             let tx = acp_tx.clone();
             tasks

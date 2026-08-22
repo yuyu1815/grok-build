@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(
@@ -1077,14 +1073,7 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                     };
                     agent.scrollback.push_block(RenderBlock::system(msg));
                 }
-                if unchanged {
-                    vec![]
-                } else {
-                    vec![Effect::PersistPreferredModel {
-                        model_id: model_id.clone(),
-                        reasoning_effort: resolved_effort,
-                    }]
-                }
+                vec![]
             }
             Err(SwitchModelError::IncompatibleAgent { .. }) => {
                 if let Some(ref prev) = prev_model_id {

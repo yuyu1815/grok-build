@@ -839,9 +839,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             };
             if agent.session.models.is_empty() {
-                agent.scrollback.push_system(crate::scrollback::blocks::system::SystemBlock::new(
-                    "No available models",
-                ));
+                agent
+                    .scrollback
+                    .push_block(crate::scrollback::block::RenderBlock::system(
+                        "No available models",
+                    ));
                 return vec![];
             }
             agent.active_modal = Some(crate::views::modal::ActiveModal::ModelsPicker {
